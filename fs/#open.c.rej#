@@ -1,0 +1,12 @@
+--- fs/open.c
++++ fs/open.c
+@@ -816,8 +816,7 @@
+          return ERR_PTR(error);
+ 
+        f->f_flags = flags;
+-       f->f_path = *path;
+-       error = do_dentry_open(f, NULL, cred);
++       error = vfs_open(path, f, cred);
+        if (!error) {
+           error = open_check_o_direct(f);
+                 if (error) {

@@ -1,0 +1,712 @@
+=================================================================================
+P4080 Frame Manager Device Bindings
+Copyright 2008 Freescale Semiconductor Inc.
+Version 1, September 16, 2008
+
+CONTENTS
+  - FMan Node
+  - FMan Port Node
+  - FMan MURAM Node
+  - FMan Parser Node
+  - FMan KeyGen Node
+  - FMan Coarse-Classification Node
+  - FMan Policer Node
+  - FMan dTSEC/XGEC Node
+  - FMan MDIO Node
+  - Example
+
+NOTE: The bindings described in this document are preliminary and subject to
+change.
+
+=================================================================================
+FMan Node
+
+DESCRIPTION
+
+Due to the fact that the FMan is an aggregation of sub-engines (ports, MACs,
+KeyGen, etc.) the FMan node will have child nodes for each of them. In order for
+these child nodes to be probed by the kernel, the FMan node must be "simple-bus"
+compatible.
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: Must include "fsl,fman" and "simple-bus"
+
+  - #address-cells
+      Usage: required
+      Value type: <u32>
+      Definition: A standard property.  Defines the number of cells
+          for representing physical addresses in child nodes.  Must
+          have a value of 1.
+
+  - #size-cells
+      Usage: required
+      Value type: <u32>
+      Definition: A standard property.  Defines the number of cells
+          for representing the size of physical addresses in
+          child nodes.  Must have a value of 1.
+
+  - cell-index
+      Usage: required
+      Value type: <u32>
+      Definition: Specifies the index of the FMan unit. In P4080 there
+          two FMan blocks.
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical
+          address and length of the FMan configuration (SkyBlue)
+          registers
+
+  - ranges
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          and length of the FMan memory space
+ 
+  - clock-frequency
+      Usage: required  
+      Value type: <u32>
+      Definition: Specifies the FM clock frequency in Hz units.
+
+Note(s): All other standard properties (see the ePAPR) are allowed but are
+         optional.
+
+=================================================================================
+FMan MURAM Node
+
+DESCRIPTION
+
+FMan Internal memory - shared between all the FMan modules.
+It contains data structures that are common and written to or read by the modules.
+FMan internal memory is split into the following parts:
+ Packet buffering (Tx/Rx FIFOs)
+ Coarse classification table
+ Frames internal context
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: Must include "fsl,fman-muram"
+
+  - ranges
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          and length of the FMan memory space
+
+EXAMPLE
+
+muram@0 {
+	compatible = "fsl,fman-muram";
+	ranges = <0 0x000000 0x28000>;
+};
+
+=================================================================================
+FMan Port Node
+
+DESCRIPTION
+
+The Frame Manager (FMan) supports several types of hardware ports:
+ Ethernet receiver (RX)
+ Ethernet transmitter (TX)
+ Offline (O/H) 
+ Host command (O/H)
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-port".
+          An OH must include "fsl,fman-port-hc" for Host-Command port
+          or "fsl,fman-port-op" for Offline-Parsing port.
+          The Rx port must include "fsl,fman-port-rx" or "fsl,fman-port-xgrx"
+          for 10G Rx ports.
+          The Tx port must include "fsl,fman-port-tx" or "fsl,fman-port-xgtx"
+          for 10G Tx ports.
+
+  - cell-index
+      Usage: optional
+      Value type: <u32>
+      Definition: Specifies the index of the FMan Port unit. Note that there are
+          types of ports: host-command/offline-parsing, Rx, 10G Rx, Tx and 10G Tx
+          ports. The index is the port location according to its memory-map.
+          I.e. the index is relative for each group/type of ports (rx, 10grx, tx,
+          10gtx, oh).
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the port configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+  - fsl,liodn
+      Usage: see definition
+      Value type: <u32>
+      Definition: The logical I/O device number (LIODN) for this
+          device.  The LIODN is a number expressed by this device
+          and used to perform look-ups in the IOMMU (PAMU) address
+          table when performing DMAs.  This property is required
+          if the PAMU is enabled.
+
+  - fsl,qman-channel-id
+      Usage: required for Tx, HC, and OP ports, unused for Rx ports.
+      Value type <u32>
+      Definition: Specifies the channel to dequeue from for this port.
+
+Note(s): All other standard properties (see the ePAPR) are allowed but are
+         optional.
+
+EXAMPLE
+
+fman0_tx0: port@a8000 {
+	cell-index = <0>;
+	compatible = "fsl,p4080-fman-port-1g-tx", "fsl,fman-port-1g-tx";
+	reg = <0xa8000 0x1000>;
+	fsl,qman-channel-id = <0x47>;
+};
+
+=================================================================================
+FMan Parser Node
+
+DESCRIPTION
+
+The FMan Parser parses incoming frames and generates parser results that
+contain header types and indexes to the headers
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-parser".
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the KeyGen configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+EXAMPLE
+
+parser@80000 {
+	compatible = "fsl,fman-parser";
+	reg = <0x80000 0x1000>;
+};
+
+=================================================================================
+FMan KeyGen Node
+
+DESCRIPTION
+
+KeyGen - key generator module.
+ This module determines how frames are distributed to a range of FQs
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-keygen".
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the KeyGen configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+EXAMPLE
+
+keygen@c1000 {
+	compatible = "fsl,fman-keygen";
+	reg = <0xc1000 0x1000>;
+};
+
+=================================================================================
+FMan Coarse-Classification Node
+
+DESCRIPTION
+
+The Coarse Classification block is a tree data structure inside the FMan controller
+that provides exact matching by searching predefined classification tables.
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-cc".
+
+EXAMPLE
+
+cc: {
+	compatible = "fsl,fman-cc";
+};
+
+=================================================================================
+FMan Policer Node
+
+DESCRIPTION
+
+The Ploicer provides means to configure policy profiles that are used to
+prioritize a flow of frames over the other
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-policer".
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the KeyGen configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+EXAMPLE
+
+policer@c2000 {
+	compatible = "fsl,fman-policer";
+	reg = <0xc2000 0x1000>;
+};
+
+=================================================================================
+FMan common BMI Node
+
+DESCRIPTION
+
+Tha BMI is the FMan interfacet to the Buffer Manager (BMan)
+which allocates/deallocates frames buffers
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-bmi".
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the KeyGen configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+EXAMPLE
+
+bmi@80000 {
+	compatible = "fsl,p4080-fman-bmi", "fsl,fman-bmi";
+	reg = <0x80000 0x400>;
+};
+
+=================================================================================
+FMan common QMI Node
+
+DESCRIPTION
+
+The QMI is the FMan interface to the Queue Manager (QMan)
+It dequeues/enqueues frame descriptors (FD) from/to the QMan
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-qmi".
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the KeyGen configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+EXAMPLE
+
+bmi@80400 {
+	compatible = "fsl,p4080-fman-qmi", "fsl,fman-qmi";
+	reg = <0x80400 0x400>;
+};
+
+=================================================================================
+FMan dTSEC/XGEC Node
+
+DESCRIPTION
+
+dTSEC/XGEC are the Ethernet network interfaces
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-mac".
+      dTSEC MAC must include "fsl,fman-mac-dtsec".
+      10G MAC must include "fsl,fman-mac-xgec".
+
+  - cell-index
+      Usage: optional
+      Value type: <u32>
+      Definition: Specifies the index of the FMan MAC unit. Note that there are
+          types of MACs: dTSEC and XGMAC. The index is the MAC location according
+          to its memory-map. I.e. the index is relative for each group/type of MACs.
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the MAC configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+  - fsl,port-handles
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: An array of two phandles-- the first references the
+          FMan RX port and the second the TX port used by this MAC.
+
+  - local-mac-address
+      Usage: required
+      Value type: <prop-encoded-array>, encoded as array of 6 hex numbers
+      Definition: Specifies IEEE 802.3 MAC address for this MAC.
+
+  - phy-handle
+      Usage: required
+      Value type: <phandle>
+      Definition: Specifies the PHY connected to this MAC
+
+  - phy-connection-type
+      Usage: required
+      Value type: <string>
+      Definition: Specifies the PHY type connected to this MAC.
+          Defaults to "mii".  See the ePAPR for further details.
+
+Note(s): All other standard properties (see the ePAPR) are allowed but are
+         optional.
+
+EXAMPLE
+
+enet0: ethernet@e0000 {
+	cell-index = <0>;
+	compatible = "fsl,p4080-fman-1g-mac", "fsl,fman-1g-mac";
+	reg = <0xe0000 0x1000>;
+	fsl,port-handles = <&fman0_rx0 &fman0_tx0>;
+	phy-handle = <&phy0>;
+	phy-connection-type = "rgmii-id";
+};
+
+=================================================================================
+FMan MDIO Node
+
+DESCRIPTION
+
+The MDIO is a bus to which network PHY devices are attached. Each PHY device on
+the MDIO bus should be represented by a child node.
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.  Must include "fsl,fman-mdio".
+
+  - #address-cells
+      Usage: required
+      Value type: <u32>
+      Definition: A standard property.  Defines the number of cells
+          for representing physical addresses in child node.  Must
+          have a value of 1.
+
+  - #size-cells
+      Usage: required
+      Value type: <u32>
+      Definition: A standard property.  Must be 0.
+
+  - reg
+      Usage: required
+      Value type: <prop-encoded-array>
+      Definition: A standard property.  Specifies the physical address
+          offset and length of the MDIO configuration (SkyBlue)
+          registers within the Fman node's address space.
+
+Note(s): All other standard properties (see the ePAPR) are allowed but are
+         optional.
+
+EXAMPLE
+
+mdio@e1000 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	compatible = "fsl,fman-mdio";
+	reg = <0xe1000 0x1000>;
+	interrupts = <100 1>;
+
+	phy0: ethernet-phy@0 {
+		reg = <0>;
+	};
+};
+
+=================================================================================
+Example
+
+fman0: fman@400000 {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	cell-index = <0>;
+	compatible = "fsl,p4080-fman", "fsl,fman", "simple-bus";
+	ranges = <0 0x400000 0x100000>;
+	reg = <0x400000 0x100000>;
+	clock-frequency = <666>;
+	interrupts = <96 2 16 2>;
+	interrupt-parent = <&mpic>;
+
+	cc@0 {
+		compatible = "fsl,p4080-fman-cc", "fsl,fman-cc";
+	};
+
+	parser@c7000 {
+		compatible = "fsl,p4080-fman-parser", "fsl,fman-parser";
+		reg = <0xc7000 0x1000>;
+	};
+
+	keygen@c1000 {
+		compatible = "fsl,p4080-fman-keygen", "fsl,fman-keygen";
+		reg = <0xc1000 0x1000>;
+	};
+
+	policer@c0000 {
+		compatible = "fsl,p4080-fman-policer", "fsl,fman-policer";
+		reg = <0xc0000 0x1000>;
+	};
+
+	muram@0 {
+		compatible = "fsl,p4080-fman-muram", "fsl,fman-muram";
+		reg = <0x0 0x28000>;
+	};
+
+	bmi@80000 {
+		compatible = "fsl,p4080-fman-bmi", "fsl,fman-bmi";
+		reg = <0x80000 0x400>;
+	};
+
+	qmi@80400 {
+		compatible = "fsl,p4080-fman-qmi", "fsl,fman-qmi";
+		reg = <0x80400 0x400>;
+	};
+
+	fman0_oh0: port@81000 {
+		cell-index = <0>;
+		compatible = "fsl,p4080-fman-port-oh", "fsl,fman-port-oh";
+		reg = <0x81000 0x1000>;
+		fsl,qman-channel-id = <0x40>;
+	};
+	fman0_oh1: port@82000 {
+		cell-index = <1>;
+		compatible = "fsl,p4080-fman-port-oh", "fsl,fman-port-oh";
+		reg = <0x82000 0x1000>;
+		fsl,qman-channel-id = <0x41>;
+	};
+	fman0_oh2: port@83000 {
+		cell-index = <2>;
+		compatible = "fsl,p4080-fman-port-oh", "fsl,fman-port-oh";
+		reg = <0x83000 0x1000>;
+		fsl,qman-channel-id = <0x42>;
+	};
+	fman0_oh3: port@84000 {
+		cell-index = <3>;
+		compatible = "fsl,p4080-fman-port-oh", "fsl,fman-port-oh";
+		reg = <0x84000 0x1000>;
+		fsl,qman-channel-id = <0x43>;
+	};
+	fman0_oh4: port@85000 {
+		cell-index = <4>;
+		compatible = "fsl,p4080-fman-port-oh", "fsl,fman-port-oh";
+		reg = <0x85000 0x1000>;
+		fsl,qman-channel-id = <0x44>;
+	};
+	fman0_oh5: port@86000 {
+		cell-index = <5>;
+		compatible = "fsl,p4080-fman-port-oh", "fsl,fman-port-oh";
+		reg = <0x86000 0x1000>;
+		fsl,qman-channel-id = <0x45>;
+	};
+	fman0_oh6: port@87000 {
+		cell-index = <6>;
+		compatible = "fsl,p4080-fman-port-oh", "fsl,fman-port-oh";
+		reg = <0x87000 0x1000>;
+		fsl,qman-channel-id = <0x46>;
+	};
+
+	fman0_rx0: port@88000 {
+		cell-index = <0>;
+		compatible = "fsl,p4080-fman-port-1g-rx", "fsl,fman-port-1g-rx";
+		reg = <0x88000 0x1000>;
+	};
+	fman0_rx1: port@89000 {
+		cell-index = <1>;
+		compatible = "fsl,p4080-fman-port-1g-rx", "fsl,fman-port-1g-rx";
+		reg = <0x89000 0x1000>;
+	};
+	fman0_rx2: port@8a000 {
+		cell-index = <2>;
+		compatible = "fsl,p4080-fman-port-1g-rx", "fsl,fman-port-1g-rx";
+		reg = <0x8a000 0x1000>;
+	};
+	fman0_rx3: port@8b000 {
+		cell-index = <3>;
+		compatible = "fsl,p4080-fman-port-1g-rx", "fsl,fman-port-1g-rx";
+		reg = <0x8b000 0x1000>;
+	};
+	fman0_rx4: port@90000 {
+		cell-index = <0>;
+		compatible = "fsl,p4080-fman-port-10g-rx", "fsl,fman-port-10g-rx";
+		reg = <0x90000 0x1000>;
+	};
+
+	fman0_tx0: port@a8000 {
+		cell-index = <0>;
+		compatible = "fsl,p4080-fman-port-1g-tx", "fsl,fman-port-1g-tx";
+		reg = <0xa8000 0x1000>;
+		fsl,qman-channel-id = <0x47>;
+	};
+	fman0_tx1: port@a9000 {
+		cell-index = <1>;
+		compatible = "fsl,p4080-fman-port-1g-tx", "fsl,fman-port-1g-tx";
+		reg = <0xa9000 0x1000>;
+		fsl,qman-channel-id = <0x48>;
+	};
+	fman0_tx2: port@aa000 {
+		cell-index = <2>;
+		compatible = "fsl,p4080-fman-port-1g-tx", "fsl,fman-port-1g-tx";
+		reg = <0xaa000 0x1000>;
+		fsl,qman-channel-id = <0x49>;
+	};
+	fman0_tx3: port@ab000 {
+		cell-index = <3>;
+		compatible = "fsl,p4080-fman-port-1g-tx", "fsl,fman-port-1g-tx";
+		reg = <0xab000 0x1000>;
+		fsl,qman-channel-id = <0x4a>;
+	};
+	fman0_tx4: port@b0000 {
+		cell-index = <0>;
+		compatible = "fsl,p4080-fman-port-10g-tx", "fsl,fman-port-10g-tx";
+		reg = <0xb0000 0x1000>;
+		fsl,qman-channel-id = <0x4b>;
+	};
+
+	enet0: ethernet@e0000 {
+		cell-index = <0>;
+		compatible = "fsl,p4080-fman-1g-mac", "fsl,fman-1g-mac";
+		reg = <0xe0000 0x1000>;
+		fsl,port-handles = <&fman0_rx0 &fman0_tx0>;
+		phy-handle = <&phy0>;
+		phy-connection-type = "rgmii-id";
+	};
+
+	mdio@e1000 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "fsl,fman-mdio";
+		reg = <0xe1000 0x1000>;
+		interrupts = <100 1>;
+
+		phy0: ethernet-phy@0 {
+			reg = <0>;
+		};
+	};
+
+	enet1: ethernet@e2000 {
+		cell-index = <1>;
+		compatible = "fsl,p4080-fman-1g-mac", "fsl,fman-1g-mac";
+		reg = <0xe2000 0x1000>;
+		fsl,port-handles = <&fman0_rx1 &fman0_tx1>;
+		phy-handle = <&phy1>;
+		phy-connection-type = "rgmii-id";
+	};
+
+	mdio@e3000 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "fsl,fman-mdio";
+		reg = <0xe3000 0x1000>;
+		interrupts = <100 1>;
+
+		phy1: ethernet-phy@0 {
+			reg = <0>;
+		};
+	};
+
+	enet2: ethernet@e4000 {
+		cell-index = <2>;
+		compatible = "fsl,p4080-fman-1g-mac", "fsl,fman-1g-mac";
+		reg = <0xe4000 0x1000>;
+		fsl,port-handles = <&fman0_rx2 &fman0_tx2>;
+		phy-handle = <&phy2>;
+		phy-connection-type = "rgmii-id";
+	};
+
+	mdio@e5000 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "fsl,fman-mdio";
+		reg = <0xe5000 0x1000>;
+		interrupts = <100 1>;
+
+		phy2: ethernet-phy@0 {
+			reg = <0>;
+		};
+	};
+
+	enet3: ethernet@e6000 {
+		cell-index = <3>;
+		compatible = "fsl,p4080-fman-1g-mac", "fsl,fman-1g-mac";
+		reg = <0xe6000 0x1000>;
+		fsl,port-handles = <&fman0_rx3 &fman0_tx3>;
+		phy-handle = <&phy3>;
+		phy-connection-type = "rgmii-id";
+	};
+
+	mdio@e7000 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "fsl,fman-mdio";
+		reg = <0xe7000 0x1000>;
+		interrupts = <100 1>;
+
+		phy3: ethernet-phy@0 {
+			reg = <0>;
+		};
+	};
+
+	enet4: ethernet@f0000 {
+		cell-index = <0>;
+		compatible = "fsl,p4080-fman-10g-mac", "fsl,fman-10g-mac";
+		reg = <0xf0000 0x1000>;
+		fsl,port-handles = <&fman0_rx4 &fman0_tx4>;
+		phy-handle = <&phy4>;
+		phy-connection-type = "rgmii-id";
+	};
+
+	mdio@f1000 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "fsl,fman-mdio";
+		reg = <0xf1000 0x1000>;
+		interrupts = <100 1>;
+
+		phy4: ethernet-phy@0 {
+			reg = <0>;
+		};
+	};
+};

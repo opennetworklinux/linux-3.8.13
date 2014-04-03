@@ -1,0 +1,8 @@
+config VFIO_FSL_PCI_EP
+	tristate "VFIO support for Freescale PCI Endpoint devices"
+	depends on VFIO && EVENTFD
+	help
+	  Support for the Freescale PCI EP driver. This is required to make
+	  use of PCI EP drivers using the VFIO framework.
+
+	  If you don't know what to do here, say N.

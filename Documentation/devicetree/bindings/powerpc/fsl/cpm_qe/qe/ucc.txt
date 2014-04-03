@@ -1,0 +1,109 @@
+* UCC (Unified Communications Controllers)
+
+Required properties:
+- device_type : should be "network", "hldc", "uart", "transparent"
+  "bisync", "atm", "tdm" or "serial".
+- compatible : Describes the specific device attached to the UCC.
+  Examples include "ucc_geth", "fsl_atm", "ucc_uart" and "fsl,ucc-tdm".
+- cell-index : the ucc number(1-8), corresponding to UCCx in UM.
+- reg : Offset and length of the register set for the device
+- interrupts : <a b> where a is the interrupt number and b is a
+  field that represents an encoding of the sense and level
+  information for the interrupt.  This should be encoded based on
+  the information in section 2) depending on the type of interrupt
+  controller you have.
+- interrupt-parent : the phandle for the interrupt controller that
+  services interrupts for this device.
+- pio-handle : The phandle for the Parallel I/O port configuration.
+- port-number : for UART drivers, the port number to use, between 0 and 3.
+  This usually corresponds to the /dev/ttyQE device, e.g. <0> = /dev/ttyQE0.
+  The port number is added to the minor number of the device.  Unlike the
+  CPM UART driver, the port-number is required for the QE UART driver.
+- soft-uart : for UART drivers, if specified this means the QE UART device
+  driver should use "Soft-UART" mode, which is needed on some SOCs that have
+  broken UART hardware.  Soft-UART is provided via a microcode upload.
+- rx-clock-name: the UCC receive clock source
+  "none": clock source is disabled
+  "brg1" through "brg16": clock source is BRG1-BRG16, respectively
+  "clk1" through "clk24": clock source is CLK1-CLK24, respectively
+- tx-clock-name: the UCC transmit clock source
+  "none": clock source is disabled
+  "brg1" through "brg16": clock source is BRG1-BRG16, respectively
+  "clk1" through "clk24": clock source is CLK1-CLK24, respectively
+The following two properties are deprecated.  rx-clock has been replaced
+with rx-clock-name, and tx-clock has been replaced with tx-clock-name.
+Drivers that currently use the deprecated properties should continue to
+do so, in order to support older device trees, but they should be updated
+to check for the new properties first.
+- rx-clock : represents the UCC receive clock source.
+  0x00 : clock source is disabled;
+  0x1~0x10 : clock source is BRG1~BRG16 respectively;
+  0x11~0x28: clock source is QE_CLK1~QE_CLK24 respectively.
+- tx-clock: represents the UCC transmit clock source;
+  0x00 : clock source is disabled;
+  0x1~0x10 : clock source is BRG1~BRG16 respectively;
+  0x11~0x28: clock source is QE_CLK1~QE_CLK24 respectively.
+
+Required properties for network device_type:
+- mac-address : list of bytes representing the ethernet address.
+- phy-handle : The phandle for the PHY connected to this controller.
+
+Recommended properties:
+- phy-connection-type : a string naming the controller/PHY interface type,
+  i.e., "mii" (default), "rmii", "gmii", "rgmii", "rgmii-id" (Internal
+  Delay), "rgmii-txid" (delay on TX only), "rgmii-rxid" (delay on RX only),
+  "tbi", or "rtbi".
+
+Required properties for fsl, ucc-tdm, compatible:
+- fsl,rx-sync-clock, fsl,tx-sync-clock: the TDM sync clock source for
+  receive/transmit
+  "none": clock source is disabled
+  "rsync_pin" : clock source is TDM_A1 RSYNC pin
+  "brg9" through "brg15" : clock source is BRG9-BRG15, respectively
+- fsl,tdm-tx-timeslot, fsl,tdm-rx-timeslot: time slot mask for transmit/receive
+  Each bit (LSB first) corresponds to a time slot. The time slot is enabled
+  if the bit is set
+- fsl,tdm-id : It is the tdm port number. e.g. P1021E has 4 ports -  port
+	A/B/C/D mapping to number 0/1/2/3.
+- fsl,tdm-framer-type : It should be "t1" or "e1", "t1" for T1 line rate, and
+	"e1" for E1 line rate
+- fsl,tdm-mode : It is tsa working mode. It should be "normal" or
+	"internal-loopback"
+- fsl,siram-entry-id : This number is used for setting index siram entry
+	It should be 0/2/4.../14. Each TDM should not use the same number
+	with others
+Example:
+	ucc@2000 {
+		device_type = "network";
+		compatible = "ucc_geth";
+		cell-index = <1>;
+		reg = <2000 200>;
+		interrupts = <a0 0>;
+		interrupt-parent = <700>;
+		mac-address = [ 00 04 9f 00 23 23 ];
+		rx-clock = "none";
+		tx-clock = "clk9";
+		phy-handle = <212000>;
+		phy-connection-type = "gmii";
+		pio-handle = <140001>;
+	};
+
+	tdmc: ucc@2400 {
+		compatible = "fsl,ucc-tdm";
+		cell-index = <5>;
+		reg = <0x2400 0x200>;
+		interrupts = <40>;
+		interrupt-parent = <&qeic>;
+		rx-clock-name = "clk7";
+		tx-clock-name = "clk13";
+		fsl,rx-sync-clock = "rsync_pin";
+		fsl,tx-sync-clock = "tsync_pin";
+		fsl,tx-timeslot = <0x00ffffff>;
+		fsl,rx-timeslot = <0x00ffffff>;
+		pio-handle = <&pio_tdmc>;
+		fsl,tdm-framer-type = "t1";
+		fsl,tdm-mode = "normal";
+		fsl,tdm-id = <2>;
+		fsl,siram-entry-id = <4>;
+		phy-handle = <&tdmphy>;
+	};

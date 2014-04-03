@@ -1,0 +1,134 @@
+config FSL_DPAA_ETH
+	bool "DPAA Ethernet"
+	depends on FSL_SOC && FSL_BMAN && FSL_QMAN && FSL_FMAN
+	select PHYLIB
+	---help---
+	  Data Path Acceleration Architecture Ethernet driver, supporting the
+	  Freescale QorIQ chips.
+
+config FSL_DPAA_OFFLINE_PORTS
+	bool "Offline Ports support"
+	depends on FSL_DPAA_ETH
+	default y
+	---help---
+	  The Offline Parsing / Host Command ports (short: OH ports, of Offline ports) provide
+	  most of the functionality of the regular, online ports, except they receive their
+	  frames from a core or an accelerator on the SoC, via QMan frame queues,
+	  rather than directly from the network.
+	  Offline ports are configured via PCD (Parse-Classify-Distribute) schemes, just like
+	  any online FMan port. They deliver the processed frames to frame queues, according
+	  to the applied PCD configurations.
+
+	  Choosing this feature will not impact the functionality and/or performance of the system,
+	  so it is safe to have it.
+
+config FSL_DPAA_ETH_SG_SUPPORT
+	bool
+
+choice FSL_DPAA_ETH_OPTIMIZE
+	prompt "Optimization choices for the DPAA Ethernet driver"
+	depends on FSL_DPAA_ETH
+	default FSL_DPAA_ETH_OPTIMIZE_FOR_IPFWD
+	---help---
+	  Compile-time switch between driver optimizations for forwarding use-cases and
+	  termination scenarios.
+
+	config FSL_DPAA_ETH_OPTIMIZE_FOR_IPFWD
+		bool "Optimize for forwarding"
+		select FSL_DPAA_TX_RECYCLE if FMAN_T4240
+		select FMAN_RESOURCE_ALLOCATION_ALGORITHM if (FMAN_P3040_P4080_P5020 || FMAN_P1023)
+		---help---
+		  Optimize the DPAA-Ethernet driver for IP/IPSec forwarding use-cases.
+		  This option disabled SG support in the DPAA Ethernet driver.
+
+	config FSL_DPAA_ETH_OPTIMIZE_FOR_TERM
+		bool "Optimize for termination"
+		select FSL_DPAA_ETH_SG_SUPPORT
+		---help---
+		  Optimize the DPAA-Ethernet driver for termination (TCP, UDP) use-cases.
+		  In particular, this choice enables Scatter-Gather (SG) support
+		  in the driver, which is momentarily not accessible otherwise.
+endchoice
+
+config FSL_DPAA_TX_RECYCLE
+	bool
+	depends on FMAN_T4240
+
+config FSL_DPAA_1588
+	tristate "IEEE 1588-compliant timestamping"
+	depends on FSL_DPAA_ETH
+	default n
+	---help---
+	 Enable IEEE1588 support code.
+
+config FSL_DPAA_TS
+	tristate "Linux compliant timestamping"
+	depends on FSL_DPAA_ETH
+	default n
+	---help---
+	  Enable Linux API compliant timestamping support.
+
+choice FSL_DPAA_ETH_WQ_ASSIGN
+	prompt "WorkQueue assignment scheme for FrameQueues"
+	depends on FSL_DPAA_ETH
+	default FSL_DPAA_ETH_WQ_MULTI
+	---help---
+	  Selects the FrameQueue to WorkQueue assignment scheme.
+
+	config FSL_DPAA_ETH_WQ_LEGACY
+		bool "Legacy WQ assignment"
+		---help---
+		  Statically-defined FQIDs are round-robin assigned to all WQs (0..7). PCD queues are always
+		  in this category. Other frame queues may be those used for "MAC-less" or "shared MAC" configurations
+		  of the driver.
+		  Dynamically-defined FQIDs all go to WQ7.
+	config FSL_DPAA_ETH_WQ_MULTI
+	bool "Multi-WQ assignment"
+	---help---
+	  Tx Confirmation FQs go to WQ1.
+	  Rx Default, Tx and PCD FQs go to WQ3.
+	  Rx Error and Tx Error FQs go to WQ2.
+endchoice
+
+config FSL_DPAA_ETH_USE_NDO_SELECT_QUEUE
+	bool "Use driver's Tx queue selection mechanism"
+	default y
+	depends on FSL_DPAA_ETH
+	---help---
+	  The DPAA-Ethernet driver defines a ndo_select_queue() callback for optimal selection
+	  of the egress FQ. That will override the XPS support for this netdevice.
+	  If for whatever reason you want to be in control of the egress FQ-to-CPU selection and mapping,
+	  or simply don't want to use the driver's ndo_select_queue() callback, then unselect this
+	  and use the standard XPS support instead.
+
+config FSL_DPAA_ETH_MAX_BUF_COUNT
+	int "Maximum nuber of buffers in private bpool"
+	depends on FSL_DPAA_ETH
+	range 64 2048
+	default "128"
+	---help---
+	  The maximum number of buffers to be by default allocated in the DPAA-Ethernet private port's
+	  buffer pool. One needn't normally modify this, as it has probably been tuned for performance
+	  already. This cannot be lower than DPAA_ETH_REFILL_THRESHOLD.
+
+config FSL_DPAA_ETH_REFILL_THRESHOLD
+	int "Private bpool refill threshold"
+	depends on FSL_DPAA_ETH
+	range 32 FSL_DPAA_ETH_MAX_BUF_COUNT
+	default "80"
+	---help---
+	  The DPAA-Ethernet driver will start replenishing buffer pools whose count
+	  falls below this threshold. This must be related to DPAA_ETH_MAX_BUF_COUNT. One needn't normally
+	  modify this value unless one has very specific performance reasons.
+
+config FSL_DPAA_ETH_UNIT_TESTS
+	bool
+	depends on FSL_DPAA_ETH
+	default n
+
+config FSL_DPAA_ETH_DEBUGFS
+	tristate "DPAA Ethernet debugfs interface"
+	depends on DEBUG_FS && FSL_DPAA_ETH
+	default y
+	---help---
+	  This option compiles debugfs code for the DPAA Ethernet driver.

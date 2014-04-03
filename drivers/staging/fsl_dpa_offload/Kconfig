@@ -1,0 +1,16 @@
+
+config FSL_DPA_OFFLOAD
+	tristate "Freescale Datapath Offloading Driver"
+	depends on FSL_FMAN
+	select CRC8
+	default n
+	---help---
+		The driver supports DPAA offloading capabilities.
+		    * Classifier component makes possible the offloading of
+		      classification rules by configuring the FMAN hardware.
+		    * DPA IPsec component makes possible the offloading of
+		      security operations (ESP) by configuring the onboard
+		      SEC 4.x.
+
+		To compile this driver as a module, choose M here. The module
+		will be called dpa_offload.

@@ -1,0 +1,63 @@
+=====================================================================
+FSL PQ_MDS_T1 Device Tree Binding
+Copyright (C) 2012 Freescale Semiconductor Inc.
+
+=====================================================================
+Introduction
+
+The PQ-MDS-T1 -	A board card with the T1/E1/DS3/T3/SLIC-SLAC module
+		which serves as a platform for S/W and H/W development
+		around the host device, it is connected by PMC sockets.
+
+1.TDM PHY
+	Function : DS26528 T1/E1/J1 transceiver
+
+Properties
+  - compatible
+	Usage: required
+	Value type: <string>
+	Definition: Should be "fsl,pq-mds-t1".
+  - reg
+	Usage: required
+	Value type: <prop-encoded-array>
+	Definition: The first reg specifier describes the the address,
+		and the second describes the length.
+  - line-rate
+	Usage: required
+	Value type: <string>
+	Definition: It descrbets the line rate "e1" or "t1". "e1" is 2.048MHz
+		"t1" is 1.544MHz.
+  - fsl,trans-mode
+	Usage: required
+	Value type: <string>
+	Definition: TDM controller transfer mode setting
+		Normal operation: set fsl,trans-mode = "normal". In this mode,
+			controller sends and receives data normally.
+		Loopback operation: set fsl,trans-mode = "internal-loopback".
+			In this mode, the data is sent via tsa tx pin and
+			received from tsa rx pin.
+Example
+
+	ds26528: tdm-phy@0 {
+		compatible = "dallas,ds26528";
+		reg = <0 0x2000>;
+		line-rate = "e1";
+		fsl,trans-mode = "normal";
+	};
+
+2.PQ-MDS-T1 PLD
+	Function: Board identification, control and clock/signal routing
+
+Properties
+  - fsl,card-support
+	Usage: required
+	Value type: <u32>
+	Definition: This property use phandle to describe which it serves as,
+		ds26528 or zarlink.
+
+Example
+	pld-reg@2000 {
+		compatible = "fsl,pq-mds-t1-pld";
+		reg = <0x2000 0x1000>;
+		fsl,card-support = <&ds26528>;
+	}

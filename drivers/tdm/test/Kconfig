@@ -1,0 +1,22 @@
+#
+# TDM TEST MODULE
+#
+
+menu "TDM test"
+
+config TDM_TEST
+        tristate "TDM test Module"
+	depends on FSL_SOC
+	---help---
+	  This TDM test module is a small test module which
+	  registers with the TDM core(framework) and sets up
+	  a TDM Voice path between diff channels of a slic.
+
+config UCC_TDM_TEST
+	tristate "UCC TDM test Module"
+	depends on FSL_SOC || CONFIG_QE
+	---help---
+	  This UCC TDM test module is a small test module to test
+	  ucc tdm transfer and receive data via ucc1.
+
+endmenu

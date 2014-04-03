@@ -1,0 +1,179 @@
+=================================================================================
+Chosen Node - DPAA extended arguments Bindings
+
+Copyright 2013 Freescale Semiconductor Inc.
+
+CONTENTS
+  - FMan Extended Args Node
+  - FMan-Port Extended Args Node
+  - Example
+
+NOTE: The bindings described in this document are preliminary and subject to change.
+
+=================================================================================
+FMan Extended Args Node
+
+DESCRIPTION
+
+The purpose of this node it to provide means to implicitly initialize some of the
+FMan advanced arguments as described below. This node is entirely optional; i.e.
+the FMan Linux driver already sets the appropriate default values that should
+fit most of the standard applications.
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: Must include "fsl,fman-extended-args"
+
+  - cell-index
+      Usage: required
+      Value type: <u32>
+      Definition: Specifies the index of the FMan unit. The index should match
+        exactly the numbering of the cell-index of the FMan device-tree node.
+        It is recommended to use the "reference-to-node" method to assure matching.
+
+  - dma-aid-mode
+      Usage: optional
+      Value type: <string>
+      Definition: Sets the AID mode.
+        The optional values are "port" and "tnum".
+
+Example
+
+fman1-extd-args {
+    cell-index = <1>;
+    compatible = "fsl,fman-extended-args";
+    dma-aid-mode = "port";
+};
+
+=================================================================================
+FMan-Port Extended Args Node
+
+DESCRIPTION
+
+The purpose of this node it to provide means to implicitly initialize some of the
+FMan-port advanced arguments as described below. This node supports all FMan-Port
+types: OP, RX, 10G-RX, TX and 10G-TX ports. This node is entirely optional; i.e.
+the FMan Linux driver already sets the appropriate default values that should
+fit most of the standard applications.
+
+PROPERTIES
+
+  - compatible
+      Usage: required
+      Value type: <string>
+      Definition: A standard property.
+          An Offline-Parsing port must include "fsl,fman-port-op-extended-args".
+          The Rx port must include "fsl,fman-port-1g-rx-extended-args" or
+          "fsl,fman-port-10g-rx-extended-args" for 10G Rx ports.
+          The Tx port must include "fsl,fman-port-1g-tx-extended-args" or
+          "fsl,fman-port-10g-tx-extended-args" for 10G Tx ports.
+
+  - cell-index
+      Usage: required
+      Value type: <u32>
+      Definition: Specifies the index of the FMan Port unit.
+          The types of ports: offline-parsing, 1G Rx, 10G Rx, 1G Tx and 10G Tx
+          ports. The index should match exactly the numbering of the cell-index of the
+          FMan-Port device-tree node. It is recommended to use the "reference-to-node"
+          method to assure matching.
+
+  - num-tnums
+      Usage: optional
+      Value type: <prop-encoded-array>
+      Definition: Specifies the number of tnums required (first value)
+        as well as the extra required tnums (second value).
+        In the fman-port case "tnums" represent the number of tasks that the
+        Fman controller allocates to handle the appropriate port RX or TX activities.
+        For more details please refer to the Fman RM.
+
+  - num-dmas
+      Usage: optional
+      Value type: <prop-encoded-array>
+      Definition: Specifies the number of dmas required (first value)
+        as well as the extra required dmas (second value).
+        In the fman-port case "num-dmas" represent the number of dma channels
+        that the Fman controller allocates to handle the appropriate port
+        RX or TX activities.
+        For more details please refer to the Fman RM.
+
+  - fifo-size
+      Usage: optional
+      Value type: <prop-encoded-array>
+      Definition: Specifies the fifo size required (first value)
+        as well as the extra size required (second value).
+        In the fman-port case "fifo-size" represent the size of memory (in bytes)
+        that the Fman controller allocates to handle the appropriate port
+        RX or TX activities.
+        For more details please refer to the Fman RM.
+
+  - buffer-layout
+      Usage: optional
+      Value type: <prop-encoded-array>
+      Definition: Specifies the manipulation extra space needed (first value)
+        and the data alignment (second value).
+        For more information please refer to the FMan User's guide
+
+  - vsp-window
+      Usage: optional
+      Value type: <prop-encoded-array>
+      Definition: Specifies the number of profiles for this port (first value)
+        and the dfault virtual port eelative id (second value).
+        For more information please refer to the FMan User's guide
+
+  - errors-to-discard
+      Usage: optional
+      Value type: <u32>
+      Definition: Specifies which errors should be discarded.
+        Errors that are not in the mask, will not be discarded;
+        I.e. those errors will be enqueued and sent to the default error queue.        
+
+Example
+
+fman1_rx4-extd-args {
+    cell-index = <4>;
+    compatible = "fsl,fman-port-1g-rx-extended-args";
+    num-tnums = <16 0>;
+    num-dmas = <8 0>;
+    fifo-size = <0x3000 0>;
+    buffer-layout = <64 128>;
+    vsp-window = <8 0>;
+    errors-to-discard = <0x00020000>;
+};
+
+=================================================================================
+Example
+
+chosen {
+    name = "chosen";
+
+    dpaa-extended-args {
+        fman1-extd-args {
+            cell-index = <1>;
+            compatible = "fsl,fman-extended-args";
+            dma-aid-mode = "port";
+
+            fman1_rx4-extd-args {
+                cell-index = <4>;
+                compatible = "fsl,fman-port-1g-rx-extended-args";
+                policer-profile-window = <8>;
+                num-tnums = <16 0>;
+                num-dmas = <8 0>;
+                fifo-size = <0x3000 0>;
+                buffer-layout = <64 128>;
+                vsp-window = <8 0>;
+                errors-to-discard = <0x00020000>;                
+            };
+
+            fman1_tx4-extd-args {
+                cell-index = <4>;
+                compatible = "fsl,fman-port-1g-tx-extended-args";
+                num-tnums = <16 0>;
+                num-dmas = <8 0>;
+                fifo-size = <0x3000 0>;
+            };
+        };
+    };
+};

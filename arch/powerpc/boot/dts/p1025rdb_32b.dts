@@ -1,0 +1,333 @@
+/*
+ * P1025 RDB Device Tree Source (32-bit address map)
+ *
+ * Copyright 2012 Freescale Semiconductor Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *       notice, this list of conditions and the following disclaimer in the
+ *       documentation and/or other materials provided with the distribution.
+ *     * Neither the name of Freescale Semiconductor nor the
+ *       names of its contributors may be used to endorse or promote products
+ *       derived from this software without specific prior written permission.
+ *
+ *
+ * ALTERNATIVELY, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL") as published by the Free Software
+ * Foundation, either version 2 of that License or (at your option) any
+ * later version.
+ *
+ * THIS SOFTWARE IS PROVIDED BY Freescale Semiconductor ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL Freescale Semiconductor BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/include/ "fsl/p1021si-pre.dtsi"
+/ {
+	model = "fsl,P1025RDB";
+	compatible = "fsl,P1025RDB";
+
+	memory {
+		device_type = "memory";
+	};
+
+	lbc: localbus@ffe05000 {
+		reg = <0 0xffe05000 0 0x1000>;
+
+		/* NOR, NAND Flashes */
+		ranges = <0x0 0x0 0x0 0xef000000 0x01000000
+			  0x1 0x0 0x0 0xff800000 0x00040000
+			  0x2 0x0 0x0 0xff980000 0x00010000>;
+
+		pq_mds_t1: tdmphy@2,0 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <2 0 0x10000>;
+			ranges = <0 2 0 0x10000>;
+			compatible = "fsl,pq-mds-t1";
+
+			dallas: ds26528@0 {
+				compatible = "dallas,ds26528";
+				reg = <0 0x2000>;
+				line-rate = "e1";
+				trans-mode = "normal";
+			};
+
+			pld-reg@2000 {
+				compatible = "fsl,pq-mds-t1-pld";
+				reg = <0x2000 0x1000>;
+				fsl,card-support = <&dallas>;
+			};
+		};
+	};
+
+	soc: soc@ffe00000 {
+		ranges = <0x0 0x0 0xffe00000 0x100000>;
+
+		par_io@e0100 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			reg = <0xe0100 0x60>;
+			ranges = <0x0 0xe0100 0x60>;
+			device_type = "par_io";
+			num-ports = <3>;
+
+			qe_pio_b: gpio-controller@20 {
+				#gpio-cells = <2>;
+				compatible = "fsl,mpc8569-qe-pario-bank",
+					     "fsl,mpc8323-qe-pario-bank";
+				reg = <0x20 0x18>;
+				gpio-controller;
+			};
+
+			pio_qe_spi: qe_spi_pin@01 {
+				pio-map = <
+					0x1  0x13 0x1  0x0  0x3  0x0    /* QE_MUX_SPIMOSI */
+					0x1  0x15 0x1  0x0  0x3  0x0    /* QE_MUX_CLK*/
+					0x1  0x16 0x2  0x0  0x3  0x0    /* QE_MUX_SPIMISO*/
+					0x1  0x1d 0x1  0x0  0x0  0x0>;  /* QE_SPISEL_MASTER*/
+			};
+
+			pio_tdma: tdm_pin@02{
+				pio-map = <
+					0x1  0xc  0x2  0x0  0x1  0x0    /* CLK3 */
+					0x1  0xd  0x2  0x0  0x1  0x0    /* CLK4 */
+					0x1  0x18 0x3  0x0  0x1  0x0    /* TDMA_RXD0_OPT2*/
+					0x1  0x17 0x3  0x0  0x1  0x0    /* TDMA_TXD0_OPT2*/
+					0x1  0x1a 0x2  0x0  0x1  0x0    /* TDMA_RSYNC_OPT2*/
+					0x1  0x19 0x2  0x0  0x1  0x0>;  /* TDMA_TSYNC_OPT2*/
+			};
+
+			pio_tdmb: tdm_pin@03 {
+				pio-map = <
+					0x1  0x1  0x2  0x0  0x1  0x0    /* CLK5 */
+					0x0  0x1b 0x2  0x0  0x1  0x0    /* CLK6 */
+					0x0  0x1d 0x3  0x0  0x1  0x0    /* TDMB_RXD0*/
+					0x1  0x0  0x3  0x0  0x1  0x0    /* TDMB_TXD0*/
+					0x0  0x1f 0x2  0x0  0x1  0x0    /* TDMB_RSYNC */
+					0x0  0x1e 0x2  0x0  0x1  0x0>;  /* TDMB_TSYNC */
+			};
+
+			pio_tdmc: tdm_pin@04 {
+				pio-map = <
+					0x1  0xa  0x2  0x0  0x1  0x0    /* CLK7 */
+					0x1  0xb  0x2  0x0  0x1  0x0    /* CLK13 */
+					0x1  0x5  0x3  0x0  0x1  0x0    /* TDMC_RXD0*/
+					0x1  0x4  0x3  0x0  0x1  0x0    /* TDMC_TXD0*/
+					0x1  0x7  0x2  0x0  0x1  0x0    /* TDMC_RSYNC */
+					0x1  0x6  0x2  0x0  0x1  0x0>;  /* TDMC_TSYNC */
+			};
+
+			pio_tdmd: tdm_pin@05 {
+				pio-map = <
+					0x2  0x0  0x2  0x0  0x1  0x0    /* CLK14 */
+					0x1  0x1f 0x2  0x0  0x1  0x0    /* CLK15 */
+					0x0  0x13 0x3  0x0  0x1  0x0    /* TDMD_RXD0_OPT2*/
+					0x0  0x12 0x3  0x0  0x1  0x0    /* TDMD_TXD0_OPT2*/
+					0x0  0x15 0x2  0x0  0x1  0x0    /* TDMD_RSYNC_OPT2*/
+					0x0  0x14 0x2  0x0  0x1  0x0>;  /* TDMD_TSYNC_OPT2*/
+			};
+		};
+	};
+
+	pci0: pcie@ffe09000 {
+		ranges = <0x2000000 0x0 0xe0000000 0 0xa0000000 0x0 0x20000000
+			  0x1000000 0x0 0x00000000 0 0xffc10000 0x0 0x10000>;
+		reg = <0 0xffe09000 0 0x1000>;
+		pcie@0 {
+			ranges = <0x2000000 0x0 0xe0000000
+				  0x2000000 0x0 0xe0000000
+				  0x0 0x20000000
+
+				  0x1000000 0x0 0x0
+				  0x1000000 0x0 0x0
+				  0x0 0x100000>;
+		};
+	};
+
+	pci1: pcie@ffe0a000 {
+		reg = <0 0xffe0a000 0 0x1000>;
+		ranges = <0x2000000 0x0 0xe0000000 0 0x80000000 0x0 0x20000000
+			  0x1000000 0x0 0x00000000 0 0xffc00000 0x0 0x10000>;
+		pcie@0 {
+			ranges = <0x2000000 0x0 0xe0000000
+				  0x2000000 0x0 0xe0000000
+				  0x0 0x20000000
+
+				  0x1000000 0x0 0x0
+				  0x1000000 0x0 0x0
+				  0x0 0x100000>;
+		};
+	};
+
+	qe: qe@ffe80000 {
+		ranges = <0x0 0x0 0xffe80000 0x40000>;
+		reg = <0 0xffe80000 0 0x480>;
+		brg-frequency = <0>;
+		bus-frequency = <0>;
+
+		spi@4c0 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "fsl,mpc8569-qe-spi", "fsl,spi";
+			reg = <0x4c0 0x40>;
+			cell-index = <0>;
+			interrupts = <2>;
+			interrupt-parent = <&qeic>;
+			pio-handle = <&pio_qe_spi>;
+			gpios = <&qe_pio_b 29 0>;
+			mode = "cpu-qe";
+
+			legerity@0 {
+				compatible = "zarlink,le88266";
+				reg = <0>;
+				spi-max-frequency = <8000000>;
+			};
+		};
+
+		si1: si@700 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "fsl,qe-si";
+			reg = <0x700 0x80>;
+		};
+
+		siram1: siram@1000 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "fsl,qe-siram";
+			reg = <0x1000 0x800>;
+		};
+		enet3: ucc@2000 {
+			device_type = "network";
+			compatible = "ucc_geth";
+			rx-clock-name = "clk12";
+			tx-clock-name = "clk9";
+			pio-handle = <&pio1>;
+			phy-handle = <&qe_phy0>;
+			phy-connection-type = "mii";
+		};
+
+		tdm@2000 {
+			cell-index = <1>;
+			reg = <0x2000 0x200>;
+			interrupts = <32>;
+			interrupt-parent = <&qeic>;
+			compatible = "fsl,ucc-tdm";
+			rx-clock-name = "clk3";
+			tx-clock-name = "clk4";
+			fsl,rx-sync-clock = "rsync_pin";
+			fsl,tx-sync-clock = "tsync_pin";
+			fsl,tx-timeslot = <0xfffffffe>;
+			fsl,rx-timeslot = <0xfffffffe>;
+			pio-handle = <&pio_tdma>;
+			fsl,tdm-framer-type = "e1";
+			fsl,tdm-mode = "normal";
+			fsl,tdm-id = <0>;
+			fsl,siram-entry-id = <0>;
+			phy-handle = <&pq_mds_t1>;
+		};
+
+		tdm@2200 {
+			cell-index = <3>;
+			reg = <0x2200 0x200>;
+			interrupts = <34>;
+			interrupt-parent = <&qeic>;
+			compatible = "fsl,ucc-tdm";
+			rx-clock-name = "clk5";
+			tx-clock-name = "clk6";
+			fsl,rx-sync-clock = "rsync_pin";
+			fsl,tx-sync-clock = "tsync_pin";
+			fsl,tx-timeslot = <0xfffffffe>;
+			fsl,rx-timeslot = <0xfffffffe>;
+			pio-handle = <&pio_tdmb>;
+			fsl,tdm-framer-type = "e1";
+			fsl,tdm-mode = "normal";
+			fsl,tdm-id = <1>;
+			fsl,siram-entry-id = <2>;
+			phy-handle = <&pq_mds_t1>;
+		};
+
+		tdm@2400 {
+			cell-index = <5>;
+			reg = <0x2400 0x200>;
+			interrupts = <40>;
+			interrupt-parent = <&qeic>;
+			compatible = "fsl,ucc-tdm";
+			rx-clock-name = "clk7";
+			tx-clock-name = "clk13";
+			fsl,rx-sync-clock = "rsync_pin";
+			fsl,tx-sync-clock = "tsync_pin";
+			fsl,tx-timeslot = <0xfffffffe>;
+			fsl,rx-timeslot = <0xfffffffe>;
+			pio-handle = <&pio_tdmc>;
+			fsl,tdm-framer-type = "e1";
+			fsl,tdm-mode = "normal";
+			fsl,tdm-id = <2>;
+			fsl,siram-entry-id = <4>;
+			phy-handle = <&pq_mds_t1>;
+		};
+
+		tdm@2600 {
+			cell-index = <7>;
+			reg = <0x2600 0x200>;
+			interrupts = <42>;
+			interrupt-parent = <&qeic>;
+			compatible = "fsl,ucc-tdm";
+			rx-clock-name = "clk14";
+			tx-clock-name = "clk15";
+			fsl,rx-sync-clock = "rsync_pin";
+			fsl,tx-sync-clock = "tsync_pin";
+			pio-handle = <&pio_tdmd>;
+			fsl,tx-timeslot = <0xfffffffe>;
+			fsl,rx-timeslot = <0xfffffffe>;
+			fsl,tdm-framer-type = "e1";
+			fsl,tdm-mode = "normal";
+			fsl,tdm-id = <3>;
+			fsl,siram-entry-id = <6>;
+			phy-handle = <&pq_mds_t1>;
+		};
+
+		mdio@2120 {
+			qe_phy0: ethernet-phy@0 {
+				interrupt-parent = <&mpic>;
+				interrupts = <4 1 0 0>;
+				reg = <0x6>;
+				device_type = "ethernet-phy";
+			};
+			qe_phy1: ethernet-phy@03 {
+				interrupt-parent = <&mpic>;
+				interrupts = <5 1 0 0>;
+				reg = <0x3>;
+				device_type = "ethernet-phy";
+			};
+			tbi-phy@11 {
+				reg = <0x11>;
+				device_type = "tbi-phy";
+			};
+		};
+
+		enet4: ucc@2400 {
+			device_type = "network";
+			compatible = "ucc_geth";
+			rx-clock-name = "none";
+			tx-clock-name = "clk13";
+			pio-handle = <&pio2>;
+			phy-handle = <&qe_phy1>;
+			phy-connection-type = "rmii";
+		};
+	};
+};
+
+/include/ "p1025rdb.dtsi"
+/include/ "fsl/p1021si-post.dtsi"

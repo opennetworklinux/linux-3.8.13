@@ -1,0 +1,18 @@
+#
+# TDM line control driver config file
+#
+
+menu "Line Control Devices"
+
+config SLIC_ZARLINK
+	tristate "Zarlink Slic intialization Module"
+		default n
+		---help---
+		  This module initialize and configure the zarlink slic
+config FSL_PQ_MDS_T1
+	tristate "FSL PQ MDS T1 CARD SUPPORT"
+		default n
+		---help---
+		  This module initializes and configures the pq-mds-t1 card
+		  in T1 or E1 mode.
+endmenu
