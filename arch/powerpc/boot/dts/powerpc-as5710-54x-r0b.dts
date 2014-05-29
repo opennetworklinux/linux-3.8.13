@@ -83,44 +83,104 @@
 				compatible = "ds1672";
 				reg = <0x68>;
 			};
-/* orig
-			lm75b@48 {
-				compatible = "nxp,lm75a";
-				reg = <0x48>;
-			};
-			rtc@68 {
-				compatible = "pericom,pt7c4338";
-				reg = <0x68>;
-			};
-			adt7461@4c {
-				compatible = "adi,adt7461";
-				reg = <0x4c>;
-			};
-*/
 		};
 
 		i2c@118100 {
 			pca9548@70 {
-				compatible = "pca9548";
+				compatible = "nxp,pca9548";
 				reg = <0x70>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+				
+				i2c@1 {
+					#address-cells = <0x1>;
+					#size-cells = <0x0>;
+					reg = <0x1>;
+					
+					as5710_54x_ac_psu1@38 {
+						compatible = "acc_as5710_54x_psu";
+						reg = <0x38>;
+					};
+					as5710_54x_dc_psu1@50 {
+						compatible = "acc_as5710_54x_psu";
+						reg = <0x50>;
+					};
+					cpr_4011_4mxx@3c {
+						compatible = "cpr_4011_4mxx";
+						reg = <0x3c>;
+					};					
+				};
+				i2c@2 {
+					#address-cells = <0x1>;
+					#size-cells = <0x0>;
+					reg = <0x2>;
+					
+					as5710_54x_ac_psu2@3b {
+						compatible = "acc_as5710_54x_psu";
+						reg = <0x3b>;
+					};
+					as5710_54x_dc_psu2@53 {
+						compatible = "acc_as5710_54x_psu";
+						reg = <0x53>;
+					};
+					cpr_4011_4mxx@3f {
+						compatible = "cpr_4011_4mxx";
+						reg = <0x3f>;
+					};
+				};
+				i2c@5 {
+					#address-cells = <0x1>;
+					#size-cells = <0x0>;
+					reg = <0x5>;
+
+					lm75@48 {
+						compatible = "lm75";
+						reg = <0x48>;
+					};    
+				};
+				i2c@6 {
+					#address-cells = <0x1>;
+					#size-cells = <0x0>;
+					reg = <0x6>;
+
+					lm75@49 {
+						compatible = "lm75";
+						reg = <0x49>;
+					};    
+				};
+				i2c@7 {
+					#address-cells = <0x1>;
+					#size-cells = <0x0>;
+					reg = <0x7>;
+
+					lm75@4a{
+						compatible = "lm75";
+						reg = <0x4a>;
+					};    
+				};
 			};
-/*
-			eeprom@50 {
-				compatible = "at24,24c256";
-				reg = <0x50>;
-			};
-*/
 		};
 		i2c@119000 {
-		};
+		};		
 
 		i2c@119100 {
-                        accton_as5710_48x_cpld@60 {
-                                compatible = "acc_as5710_48x_cpld";
-                                reg = <0x60>;
+			accton_i2c_cpld@60 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x60>;
+			};
+			accton_i2c_cpld@61 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x61>;
+			};
+			accton_i2c_cpld@62 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x62>;
+			};
+			acc_as5710_54x_sfp@50 {
+				compatible = "acc_as5710_54x_sfp";
+				reg = <0x50>;
 			};
 		};
-
 
 		usb1: usb@211000 {
 			dr_mode = "host";

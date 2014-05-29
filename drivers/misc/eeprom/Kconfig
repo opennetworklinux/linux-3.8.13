@@ -61,6 +61,14 @@ config EEPROM_MAX6875
 	  This driver can also be built as a module.  If so, the module
 	  will be called max6875.
 
+config EEPROM_ACCTON_AS5710_54x_SFP
+	tristate "Accton as5710 54x sfp"
+	depends on I2C && SENSORS_ACCTON_I2C_CPLD
+	help
+	  If you say yes here you get support for Accton as5710 54x sfp.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_as5710_54x_sfp.
 
 config EEPROM_93CX6
 	tristate "EEPROM 93CX6 support"
