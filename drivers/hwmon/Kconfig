@@ -1459,6 +1459,82 @@ config SENSORS_ACCTON_AS5710_48x_FANCTL
 	  This driver can also be built as a module. If so, the module will
 	  be called accton_as5710_48x_fanctl.
 
+
+config SENSORS_G657_S40
+	tristate "Etasis G657_S40 Redundant Power Module"
+	depends on I2C
+	help
+	  If you say yes here you get support for Etasis EFRP-G657-S40
+	  Redundant Power Module.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called g657_s40.
+	  
+config SENSORS_CPR_4011_4MXX
+	tristate "Compuware CPR_4011_4MXX Redundant Power Module"
+	depends on I2C
+	help
+	  If you say yes here you get support for Compuware CPR_4011_4MXX
+	  Redundant Power Module.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called cpr_4011_4mxx.
+
+config SENSORS_ACCTON_AS5700_96x_CPLD
+	tristate "Accton as5700 96x cpld"
+	depends on I2C && AS5700_96X
+	help
+	  If you say yes here you get support for Accton as5700 96x cpld.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_as5700_96x_cpld.
+
+config SENSORS_ACCTON_AS5700_96x_FANCTL
+	tristate "Accton as5700 96x fan control"
+	depends on SENSORS_ACCTON_AS5700_96x_CPLD
+	help
+	  If you say yes here, support for automatic fan speed control
+	  will be included in the driver.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_as5700_96x_fanctl.
+
+config SENSORS_ACCTON_I2C_CPLD
+	tristate "Accton i2c cpld"
+	depends on I2C
+	help
+	  If you say yes here you get support for Accton i2c cpld.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_i2c_cpld.
+      
+config SENSORS_ACCTON_AS5710_54x_PSU
+	tristate "Accton as5710 54x psu"
+	depends on I2C && SENSORS_ACCTON_I2C_CPLD
+	help
+	  If you say yes here you get support for Accton as5710 54x psu.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_as5710_54x_psu.
+	  
+config SENSORS_ACCTON_AS6700_32x_PSU
+	tristate "Accton as6700 32x psu"
+	depends on I2C && SENSORS_ACCTON_I2C_CPLD
+	help
+	  If you say yes here you get support for Accton as6710 32x psu.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_as6700_32x_psu.
+
+config SENSORS_ACCTON_AS5710_54x_FAN
+	tristate "Accton as5710 54x fan"
+	depends on I2C && SENSORS_ACCTON_I2C_CPLD
+	help
+	  If you say yes here you get support for Accton as5710 54x fan.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_as5710_54x_fan.
+      
 if ACPI
 
 comment "ACPI drivers"
