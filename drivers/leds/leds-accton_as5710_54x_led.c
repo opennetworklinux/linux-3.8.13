@@ -132,7 +132,7 @@ struct led_type_mode {
     int  mode_mask;
 };
 
-struct led_type_mode led_type_mode_data[] = {
+static struct led_type_mode led_type_mode_data[] = {
 {LED_TYPE_PSU1, LED_TYPE_PSU1_REG_MASK, LED_MODE_GREEN, LED_MODE_PSU1_GREEN_MASK},
 {LED_TYPE_PSU1, LED_TYPE_PSU1_REG_MASK, LED_MODE_AMBER, LED_MODE_PSU1_AMBER_MASK},
 {LED_TYPE_PSU1, LED_TYPE_PSU1_REG_MASK, LED_MODE_AUTO,  LED_MODE_PSU1_AUTO_MASK},

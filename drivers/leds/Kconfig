@@ -458,6 +458,13 @@ config LEDS_ACCTON_AS5710_54x_LED
 	  This option enables support for the LEDs on the Accton as5710 54x.
 	  Say Y to enable LEDs on the Accton as5710 54x.
 
+config LEDS_ACCTON_AS6700_32x_LED
+	tristate "LED support for the Accton as6700 32x"
+	depends on LEDS_CLASS && SENSORS_ACCTON_I2C_CPLD
+	help
+	  This option enables support for the LEDs on the Accton as6700 32x.
+	  Say Y to enable LEDs on the Accton as6700 32x.
+
 config LEDS_ACCTON_AS5700_96x_LED
 	tristate "LED support for the Accton as5700 96x"
 	depends on LEDS_CLASS && SENSORS_ACCTON_AS5700_96x_CPLD

@@ -244,6 +244,8 @@ static ssize_t fan_set_duty_cycle(struct device *dev, struct device_attribute *d
 
     accton_as5710_54x_fan_write_value(CPLD_REG_FAN_PWM_CYCLE_OFFSET, value/FAN_SPEED_PRECENT_TO_CPLD_STEP);
     
+    fan_data->valid = 0;
+
     return count;
 }
 
@@ -275,6 +277,8 @@ static void accton_as5710_54x_fan_update_device(struct device *dev)
         /* do nothing */
         goto _exit; 
     }
+
+    fan_data->valid = 0;
         
     if (LOCAL_DEBUG)        
         printk ("Starting accton_as5710_54x_fan update 2 \n");    

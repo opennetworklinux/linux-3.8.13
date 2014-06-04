@@ -120,6 +120,70 @@
 				compatible = "at24,24c256";
 				reg = <0x50>;
 			};
+			accton_i2c_cpld@31 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x31>;
+			};
+			accton_i2c_cpld@35 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x35>;
+			};
+		};
+		
+		i2c@119000 {
+
+		};
+		
+		i2c@119100 {
+			pca9546@70 {
+				compatible = "nxp,pca9546";
+				reg = <0x70>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				i2c@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+
+					max6581@4d {
+						compatible = "max6581";
+						reg = <0x4d>;
+					};
+                };
+        
+				i2c@2 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <2>;
+
+					as6700_32x_ac_psu1@39 {
+						compatible = "acc_as6700_32x_psu";
+						reg = <0x39>;
+					};
+					cpr_4011_4mxx_psu1@3d {
+						compatible = "cpr_4011_4mxx";
+						reg = <0x3d>;
+					};
+					as6700_32x_dc_psu1@51 {
+						compatible = "acc_as6700_32x_psu";
+						reg = <0x51>;
+					};
+
+					as6700_32x_ac_psu2@3a {
+						compatible = "acc_as6700_32x_psu";
+						reg = <0x3a>;
+					};
+					cpr_4011_4mxx_psu2@3e {
+						compatible = "cpr_4011_4mxx";
+						reg = <0x3e>;
+					};
+					as6700_32x_dc_psu2@52 {
+						compatible = "acc_as6700_32x_psu";
+						reg = <0x52>;
+					};
+				};
+			};
 		};
 
 		usb1: usb@211000 {
