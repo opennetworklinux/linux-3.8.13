@@ -854,6 +854,17 @@ config SENSORS_MAX6650
 	  This driver can also be built as a module.  If so, the module
 	  will be called max6650.
 
+config SENSORS_MAX6697
+        tristate "Maxim MAX6697 and compatibles"
+        depends on I2C
+        help
+          If you say yes here you get support for MAX6581, MAX6602, MAX6622,
+          MAX6636, MAX6689, MAX6693, MAX6694, MAX6697, MAX6698, and MAX6699
+          temperature sensor chips.
+
+          This driver can also be built as a module.  If so, the module
+          will be called max6697.
+      
 config SENSORS_MCP3021
 	tristate "Microchip MCP3021 and compatibles"
 	depends on I2C
@@ -1534,6 +1545,15 @@ config SENSORS_ACCTON_AS5710_54x_FAN
 
 	  This driver can also be built as a module. If so, the module will
 	  be called accton_as5710_54x_fan.
+      
+config SENSORS_ACCTON_AS6700_32x_FAN
+	tristate "Accton as6700 32x fan"
+	depends on I2C && SENSORS_ACCTON_I2C_CPLD
+	help
+	  If you say yes here you get support for Accton as6700 32x fan.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called accton_as6700_32x_fan.
       
 if ACPI
 

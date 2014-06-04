@@ -140,6 +140,8 @@ obj-$(CONFIG_SENSORS_ACCTON_I2C_CPLD)          += accton_i2c_cpld.o
 obj-$(CONFIG_SENSORS_ACCTON_AS5710_54x_PSU)    += accton_as5710_54x_psu.o
 obj-$(CONFIG_SENSORS_ACCTON_AS6700_32x_PSU)    += accton_as6700_32x_psu.o
 obj-$(CONFIG_SENSORS_ACCTON_AS5710_54x_FAN)    += accton_as5710_54x_fan.o
+obj-$(CONFIG_SENSORS_ACCTON_AS6700_32x_FAN)    += accton_as6700_32x_fan.o
+obj-$(CONFIG_SENSORS_MAX6697) += max6697.o
 
 obj-$(CONFIG_PMBUS)		+= pmbus/
 

@@ -30,6 +30,7 @@
 #include <linux/mutex.h>
 #include <linux/sysfs.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
 
 static ssize_t show_index(struct device *dev, struct device_attribute *da, char *buf);
 static ssize_t show_status(struct device *dev, struct device_attribute *da, char *buf);
@@ -94,7 +95,7 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
     u8 status = 0;
 
     if (attr->index == PSU_PRESENT) {
-        status = !(data->status >> (3 + 2*(2 - data->index)) & 0x1);
+        status = !(data->status >> (2 + 3*(2 - data->index)) & 0x1);
     }
     else { /* PSU_POWER_GOOD */
         status = data->status >> (4 + 3*(2 - data->index)) & 0x1;
@@ -203,18 +204,30 @@ static struct i2c_driver as6700_32x_psu_driver = {
 static int as6700_32x_psu_read_block(struct i2c_client *client, u8 command, u8 *data,
               int data_len)
 {
-    int result = i2c_smbus_read_i2c_block_data(client, command, data_len, data);
+    int result = 0;
+    int retry_count = 5;
+	
+	while (retry_count) {
+	
+	    retry_count--;
+	
+	    result = i2c_smbus_read_i2c_block_data(client, command, data_len, data);
+		
+		if (unlikely(result < 0)) {
+		    msleep(10);
+	        continue;
+		}
     
-    if (unlikely(result < 0))
-        goto abort;
     if (unlikely(result != data_len)) {
         result = -EIO;
-        goto abort;
+			msleep(10);
+            continue;
     }
     
     result = 0;
+		break;
+	}
     
-abort:
     return result;
 }
 
