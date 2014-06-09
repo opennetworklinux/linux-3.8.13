@@ -116,8 +116,28 @@
 		};
 
 		i2c@118100 {
-			eeprom@50 {
-				compatible = "at24,24c256";
+			accton_i2c_cpld@18 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x18>;
+			};
+			accton_i2c_cpld@19 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x19>;
+			};
+			accton_i2c_cpld@1a {
+				compatible = "accton_i2c_cpld";
+				reg = <0x1a>;
+			};
+			accton_i2c_cpld@20 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x20>;
+			};
+			accton_i2c_cpld@70 {
+				compatible = "accton_i2c_cpld";
+				reg = <0x70>;
+			};
+			accton_as6700_32x_sfp@50 {
+				compatible = "acc_as6700_32x_sfp";
 				reg = <0x50>;
 			};
 			accton_i2c_cpld@31 {

@@ -6,3 +6,4 @@ obj-$(CONFIG_EEPROM_93CX6)	+= eeprom_93cx6.o
 obj-$(CONFIG_EEPROM_93XX46)	+= eeprom_93xx46.o
 obj-$(CONFIG_EEPROM_DIGSY_MTC_CFG) += digsy_mtc_eeprom.o
 obj-$(CONFIG_EEPROM_ACCTON_AS5710_54x_SFP) += accton_as5710_54x_sfp.o
+obj-$(CONFIG_EEPROM_ACCTON_AS6700_32x_SFP) += accton_as6700_32x_sfp.o
