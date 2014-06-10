@@ -112,7 +112,7 @@
 */
 		};
 		i2c@119000 {
-		};		
+		};
 
 		i2c@119100 {
                         accton_as5710_48x_cpld@60 {
@@ -234,7 +234,6 @@
                         reg = <0x07f60000 0x00020000>;
                         label = "uboot-env";
                         env_size = <0x2000>;
-                        read-only;
                 };
                 partition@7 {
                         /*uboot*/

@@ -91,12 +91,12 @@
 				reg = <0x70>;
 				#address-cells = <1>;
 				#size-cells = <0>;
-				
+
 				i2c@1 {
 					#address-cells = <0x1>;
 					#size-cells = <0x0>;
 					reg = <0x1>;
-					
+
 					as5710_54x_ac_psu1@38 {
 						compatible = "acc_as5710_54x_psu";
 						reg = <0x38>;
@@ -108,13 +108,13 @@
 					cpr_4011_4mxx@3c {
 						compatible = "cpr_4011_4mxx";
 						reg = <0x3c>;
-					};					
+					};
 				};
 				i2c@2 {
 					#address-cells = <0x1>;
 					#size-cells = <0x0>;
 					reg = <0x2>;
-					
+
 					as5710_54x_ac_psu2@3b {
 						compatible = "acc_as5710_54x_psu";
 						reg = <0x3b>;
@@ -136,7 +136,7 @@
 					lm75@48 {
 						compatible = "lm75";
 						reg = <0x48>;
-					};    
+					};
 				};
 				i2c@6 {
 					#address-cells = <0x1>;
@@ -146,7 +146,7 @@
 					lm75@49 {
 						compatible = "lm75";
 						reg = <0x49>;
-					};    
+					};
 				};
 				i2c@7 {
 					#address-cells = <0x1>;
@@ -156,12 +156,12 @@
 					lm75@4a{
 						compatible = "lm75";
 						reg = <0x4a>;
-					};    
+					};
 				};
 			};
 		};
 		i2c@119000 {
-		};		
+		};
 
 		i2c@119100 {
 			accton_i2c_cpld@60 {
@@ -294,7 +294,6 @@
                         reg = <0x07f60000 0x00020000>;
                         label = "uboot-env";
                         env_size = <0x2000>;
-                        read-only;
                 };
                 partition@7 {
                         /*uboot*/
