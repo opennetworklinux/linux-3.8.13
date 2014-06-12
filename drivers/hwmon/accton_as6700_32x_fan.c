@@ -54,11 +54,6 @@
 #define CPLD_FAN_4_INFO_BIT_MASK       0x8
 #define CPLD_FAN_5_INFO_BIT_MASK       0x10
 
-enum as6700_sysfs_fan_attributes {
-    FAN_FAULT = 0,
-    FAN_DUTY_CYCLE
-};
-    
 struct as6700_fan_pwm_duty_cycle_data {
     u8 reg_val;    /* Register Value of CPLD */
     float duty_cycle; /* 0-100 */
@@ -106,17 +101,17 @@ static const u8 fana_speed_reg[] = {
 };
 
 enum sysfs_fan_attributes {
-    FAN_PWM,
-    FAN_1_DUTY_CYCLE,
-    FAN_1A_DUTY_CYCLE,
-    FAN_2_DUTY_CYCLE,
-    FAN_2A_DUTY_CYCLE,
-    FAN_3_DUTY_CYCLE,
-    FAN_3A_DUTY_CYCLE,
-    FAN_4_DUTY_CYCLE,
-    FAN_4A_DUTY_CYCLE,
-    FAN_5_DUTY_CYCLE,    
-    FAN_5A_DUTY_CYCLE,    
+    FAN_DUTY_CYCLE,
+    FAN_1_SPEED,
+    FAN_1A_SPEED,
+    FAN_2_SPEED,
+    FAN_2A_SPEED,
+    FAN_3_SPEED,
+    FAN_3A_SPEED,
+    FAN_4_SPEED,
+    FAN_4A_SPEED,
+    FAN_5_SPEED,    
+    FAN_5A_SPEED,    
     FAN_1_DIRECTION,
     FAN_2_DIRECTION,
     FAN_3_DIRECTION,
@@ -136,27 +131,27 @@ static ssize_t fan_show_value(struct device *dev,
 extern int accton_i2c_cpld_read(unsigned short cpld_addr, u8 reg);
 extern int accton_i2c_cpld_write(unsigned short cpld_addr, u8 reg, u8 value);
                     
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan_pwm, S_IWUSR | S_IRUGO, fan_show_value, fan_set_duty_cycle, FAN_PWM);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan1_duty_cycle, S_IRUGO, fan_show_value, 
-                                           NULL, FAN_1_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan2_duty_cycle, S_IRUGO, fan_show_value, 
-                                           NULL, FAN_2_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan3_duty_cycle,  S_IRUGO, fan_show_value, 
-                                           NULL, FAN_3_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan4_duty_cycle,  S_IRUGO, fan_show_value, 
-                                           NULL, FAN_4_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan5_duty_cycle, S_IRUGO, fan_show_value, 
-                                           NULL, FAN_5_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan1a_duty_cycle, S_IRUGO, fan_show_value, 
-                                           NULL, FAN_1A_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan2a_duty_cycle, S_IRUGO, fan_show_value, 
-                                           NULL, FAN_2A_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan3a_duty_cycle,  S_IRUGO, fan_show_value, 
-                                           NULL, FAN_3A_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan4a_duty_cycle,  S_IRUGO, fan_show_value, 
-                                           NULL, FAN_4A_DUTY_CYCLE);
-static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan5a_duty_cycle, S_IRUGO, fan_show_value, 
-                                           NULL, FAN_5A_DUTY_CYCLE);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan_duty_cycle_level, S_IWUSR | S_IRUGO, fan_show_value, fan_set_duty_cycle, FAN_DUTY_CYCLE);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan1_speed_rpm, S_IRUGO, fan_show_value, 
+                                           NULL, FAN_1_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan2_speed_rpm, S_IRUGO, fan_show_value, 
+                                           NULL, FAN_2_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan3_speed_rpm,  S_IRUGO, fan_show_value, 
+                                           NULL, FAN_3_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan4_speed_rpm,  S_IRUGO, fan_show_value, 
+                                           NULL, FAN_4_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan5_speed_rpm, S_IRUGO, fan_show_value, 
+                                           NULL, FAN_5_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan1a_speed_rpm, S_IRUGO, fan_show_value, 
+                                           NULL, FAN_1A_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan2a_speed_rpm, S_IRUGO, fan_show_value, 
+                                           NULL, FAN_2A_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan3a_speed_rpm,  S_IRUGO, fan_show_value, 
+                                           NULL, FAN_3A_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan4a_speed_rpm,  S_IRUGO, fan_show_value, 
+                                           NULL, FAN_4A_SPEED);
+static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan5a_speed_rpm, S_IRUGO, fan_show_value, 
+                                           NULL, FAN_5A_SPEED);
 static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan1_direction, S_IRUGO, fan_show_value, NULL, FAN_1_DIRECTION);
 static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan2_direction, S_IRUGO, fan_show_value, NULL, FAN_2_DIRECTION);
 static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan3_direction, S_IRUGO, fan_show_value, NULL, FAN_3_DIRECTION);
@@ -165,17 +160,17 @@ static SENSOR_DEVICE_ATTR(accton_as6700_32x_fan5_direction, S_IRUGO, fan_show_va
 
 static struct attribute *accton_as6700_32x_fan_attributes[] = {
     /* fan related attributes */
-    &sensor_dev_attr_accton_as6700_32x_fan_pwm.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan1_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan2_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan3_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan4_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan5_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan1a_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan2a_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan3a_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan4a_duty_cycle.dev_attr.attr,
-    &sensor_dev_attr_accton_as6700_32x_fan5a_duty_cycle.dev_attr.attr,    
+    &sensor_dev_attr_accton_as6700_32x_fan_duty_cycle_level.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan1_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan2_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan3_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan4_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan5_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan1a_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan2a_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan3a_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan4a_speed_rpm.dev_attr.attr,
+    &sensor_dev_attr_accton_as6700_32x_fan5a_speed_rpm.dev_attr.attr,    
     &sensor_dev_attr_accton_as6700_32x_fan1_direction.dev_attr.attr,
     &sensor_dev_attr_accton_as6700_32x_fan2_direction.dev_attr.attr,
     &sensor_dev_attr_accton_as6700_32x_fan3_direction.dev_attr.attr,
@@ -196,20 +191,20 @@ static ssize_t fan_show_value(struct device *dev, struct device_attribute *da,
     
     if (fan_data->valid) {
         switch (attr->index) {
-        case FAN_PWM:
+        case FAN_DUTY_CYCLE:
             ret = sprintf(buf, "%d\n", fan_data->pwm);
             break;
-        case FAN_1_DUTY_CYCLE:
-        case FAN_2_DUTY_CYCLE:
-        case FAN_3_DUTY_CYCLE:
-        case FAN_4_DUTY_CYCLE:
-        case FAN_5_DUTY_CYCLE:
-        case FAN_1A_DUTY_CYCLE:
-        case FAN_2A_DUTY_CYCLE:
-        case FAN_3A_DUTY_CYCLE:
-        case FAN_4A_DUTY_CYCLE:
-        case FAN_5A_DUTY_CYCLE:            
-            ret = sprintf(buf, "%d\n", fan_data->duty_cycle[attr->index - FAN_1_DUTY_CYCLE]);
+        case FAN_1_SPEED:
+        case FAN_2_SPEED:
+        case FAN_3_SPEED:
+        case FAN_4_SPEED:
+        case FAN_5_SPEED:
+        case FAN_1A_SPEED:
+        case FAN_2A_SPEED:
+        case FAN_3A_SPEED:
+        case FAN_4A_SPEED:
+        case FAN_5A_SPEED:            
+            ret = sprintf(buf, "%d\n", fan_data->duty_cycle[attr->index - FAN_1_SPEED]);
             break;
         case FAN_1_DIRECTION:
         case FAN_2_DIRECTION:
@@ -238,6 +233,8 @@ static ssize_t fan_set_duty_cycle(struct device *dev, struct device_attribute *d
         return -EINVAL;
 
     accton_as6700_32x_fan_write_value(CPLD_REG_FAN_PWM_CYCLE_OFFSET, value);
+
+    fan_data->valid = 0;
     
     return count;
 }

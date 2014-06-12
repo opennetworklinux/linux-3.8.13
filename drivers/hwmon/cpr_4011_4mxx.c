@@ -31,6 +31,8 @@
 #include <linux/sysfs.h>
 #include <linux/slab.h>
 
+#define MAX_FAN_DUTY_CYCLE 100
+
 /* Addresses scanned 
  */
 static const unsigned short normal_i2c[] = { 0x3c, 0x3d, 0x3e, 0x3f, I2C_CLIENT_END };
@@ -51,13 +53,14 @@ struct cpr_4011_4mxx_data {
     u16  p_out;         /* Register value */
     u16  temp_input[2]; /* Register value */
     u8   fan_fault;     /* Register value */
+    u16  fan_duty_cycle[2];  /* Register value */
     u16  fan_speed[2];  /* Register value */
 };
 
 static ssize_t show_linear(struct device *dev, struct device_attribute *da, char *buf);
 static ssize_t show_fan_fault(struct device *dev, struct device_attribute *da, char *buf);
 static ssize_t show_vout(struct device *dev, struct device_attribute *da, char *buf);
-static ssize_t set_fan_speed(struct device *dev, struct device_attribute *da, const char *buf, size_t count);
+static ssize_t set_fan_duty_cycle(struct device *dev, struct device_attribute *da, const char *buf, size_t count);
 static int cpr_4011_4mxx_write_word(struct i2c_client *client, u8 reg, u16 value);
 static struct cpr_4011_4mxx_data *cpr_4011_4mxx_update_device(struct device *dev);
 
@@ -70,6 +73,7 @@ enum cpr_4011_4mxx_sysfs_attributes {
     PSU_P_OUT,
     PSU_TEMP1_INPUT,
     PSU_FAN1_FAULT,
+    PSU_FAN1_DUTY_CYCLE,
     PSU_FAN1_SPEED,
 };
 
@@ -83,7 +87,8 @@ static SENSOR_DEVICE_ATTR(psu_p_in,        S_IRUGO, show_linear,      NULL, PSU_
 static SENSOR_DEVICE_ATTR(psu_p_out,       S_IRUGO, show_linear,      NULL, PSU_P_OUT);
 static SENSOR_DEVICE_ATTR(psu_temp1_input, S_IRUGO, show_linear,      NULL, PSU_TEMP1_INPUT);
 static SENSOR_DEVICE_ATTR(psu_fan1_fault,  S_IRUGO, show_fan_fault,   NULL, PSU_FAN1_FAULT);
-static SENSOR_DEVICE_ATTR(psu_fan1_speed,  S_IWUSR | S_IRUGO, show_linear, set_fan_speed, PSU_FAN1_SPEED);
+static SENSOR_DEVICE_ATTR(psu_fan1_duty_cycle_percentage, S_IWUSR | S_IRUGO, show_linear, set_fan_duty_cycle, PSU_FAN1_DUTY_CYCLE);
+static SENSOR_DEVICE_ATTR(psu_fan1_speed_rpm, S_IRUGO, show_linear,   NULL, PSU_FAN1_SPEED);
 
 static struct attribute *cpr_4011_4mxx_attributes[] = {
     &sensor_dev_attr_psu_v_in.dev_attr.attr,
@@ -93,8 +98,9 @@ static struct attribute *cpr_4011_4mxx_attributes[] = {
     &sensor_dev_attr_psu_p_in.dev_attr.attr,
     &sensor_dev_attr_psu_p_out.dev_attr.attr,
     &sensor_dev_attr_psu_temp1_input.dev_attr.attr,
-    &sensor_dev_attr_psu_fan1_speed.dev_attr.attr,
     &sensor_dev_attr_psu_fan1_fault.dev_attr.attr,
+    &sensor_dev_attr_psu_fan1_duty_cycle_percentage.dev_attr.attr,
+    &sensor_dev_attr_psu_fan1_speed_rpm.dev_attr.attr,
     NULL
 };
 
@@ -106,13 +112,13 @@ static int two_complement_to_int(u16 data, u8 valid_bit, int mask)
     return is_negative ? (-(((~valid_data) & mask) + 1)) : valid_data;
 }
 
-static ssize_t set_fan_speed(struct device *dev, struct device_attribute *da,
+static ssize_t set_fan_duty_cycle(struct device *dev, struct device_attribute *da,
 			const char *buf, size_t count)
 {
     struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
     struct i2c_client *client = to_i2c_client(dev);
     struct cpr_4011_4mxx_data *data = i2c_get_clientdata(client);
-    int nr = attr->index - PSU_FAN1_SPEED;
+    int nr = (attr->index == PSU_FAN1_DUTY_CYCLE) ? 0 : 1;
 	long speed;
 	int error;
 
@@ -120,9 +126,12 @@ static ssize_t set_fan_speed(struct device *dev, struct device_attribute *da,
 	if (error)
 		return error;
 
+    if (speed < 0 || speed > MAX_FAN_DUTY_CYCLE)
+        return -EINVAL;
+
     mutex_lock(&data->update_lock);
-    data->fan_speed[nr] = speed;
-    cpr_4011_4mxx_write_word(client, 0x3B + nr, data->fan_speed[nr]);
+    data->fan_duty_cycle[nr] = speed;
+    cpr_4011_4mxx_write_word(client, 0x3B + nr, data->fan_duty_cycle[nr]);
     mutex_unlock(&data->update_lock);
 
     return count;
@@ -156,6 +165,10 @@ static ssize_t show_linear(struct device *dev, struct device_attribute *da,
         break;
     case PSU_TEMP1_INPUT:
         value = data->temp_input[0];
+        break;
+    case PSU_FAN1_DUTY_CYCLE:
+        multiplier = 1;
+        value = data->fan_duty_cycle[0];
         break;
     case PSU_FAN1_SPEED:
         multiplier = 1;
@@ -324,8 +337,10 @@ static struct cpr_4011_4mxx_data *cpr_4011_4mxx_update_device(struct device *dev
                                              {0x97, &data->p_in},
                                              {0x8d, &(data->temp_input[0])},
                                              {0x8e, &(data->temp_input[1])},
-                                             {0x3b, &(data->fan_speed[0])},
-                                             {0x3c, &(data->fan_speed[1])}};
+                                             {0x3b, &(data->fan_duty_cycle[0])},
+                                             {0x3c, &(data->fan_duty_cycle[1])},
+                                             {0x90, &(data->fan_speed[0])},
+                                             {0x91, &(data->fan_speed[1])}};
 
         dev_dbg(&client->dev, "Starting cpr_4011_4mxx update\n");
 

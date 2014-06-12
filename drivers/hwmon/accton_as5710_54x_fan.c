@@ -135,12 +135,12 @@ extern int accton_i2c_cpld_write(unsigned short cpld_addr, u8 reg, u8 value);
 /*******************/
 #define _MAKE_SENSOR_DEVICE_ATTR(prj, id) \
     static SENSOR_DEVICE_ATTR(prj##fan##id##_fault, S_IRUGO, fan_show_value, NULL, FAN##id##_FAULT); \
-    static SENSOR_DEVICE_ATTR(prj##fan##id##_speed, S_IRUGO, fan_show_value, NULL, FAN##id##_SPEED); \
-    static SENSOR_DEVICE_ATTR(prj##fan##id##_duty_cycle, S_IWUSR | S_IRUGO, fan_show_value,          \
+    static SENSOR_DEVICE_ATTR(prj##fan##id##_speed_rpm, S_IRUGO, fan_show_value, NULL, FAN##id##_SPEED); \
+    static SENSOR_DEVICE_ATTR(prj##fan##id##_duty_cycle_percentage, S_IWUSR | S_IRUGO, fan_show_value,          \
                                             fan_set_duty_cycle, FAN##id##_DUTY_CYCLE);          \
     static SENSOR_DEVICE_ATTR(prj##fan##id##_direction, S_IRUGO, fan_show_value, NULL, FAN##id##_DIRECTION); \
     static SENSOR_DEVICE_ATTR(prj##fanr##id##_fault, S_IRUGO, fan_show_value, NULL, FANR##id##_FAULT); \
-    static SENSOR_DEVICE_ATTR(prj##fanr##id##_speed, S_IRUGO, fan_show_value, NULL, FANR##id##_SPEED); 
+    static SENSOR_DEVICE_ATTR(prj##fanr##id##_speed_rpm, S_IRUGO, fan_show_value, NULL, FANR##id##_SPEED); 
 
 #define MAKE_SENSOR_DEVICE_ATTR(prj,id) _MAKE_SENSOR_DEVICE_ATTR(prj,id) 
 
@@ -153,11 +153,11 @@ MAKE_SENSOR_DEVICE_ATTR(PROJECT_NAME, 5)
 
 #define _MAKE_FAN_ATTR(prj, id) \
     &sensor_dev_attr_##prj##fan##id##_fault.dev_attr.attr,     \
-    &sensor_dev_attr_##prj##fan##id##_speed.dev_attr.attr,     \
-    &sensor_dev_attr_##prj##fan##id##_duty_cycle.dev_attr.attr,\
+    &sensor_dev_attr_##prj##fan##id##_speed_rpm.dev_attr.attr,     \
+    &sensor_dev_attr_##prj##fan##id##_duty_cycle_percentage.dev_attr.attr,\
     &sensor_dev_attr_##prj##fan##id##_direction.dev_attr.attr, \
     &sensor_dev_attr_##prj##fanr##id##_fault.dev_attr.attr,   \
-    &sensor_dev_attr_##prj##fanr##id##_speed.dev_attr.attr,  
+    &sensor_dev_attr_##prj##fanr##id##_speed_rpm.dev_attr.attr,  
 
 #define MAKE_FAN_ATTR(prj, id) _MAKE_FAN_ATTR(prj, id) 
 
