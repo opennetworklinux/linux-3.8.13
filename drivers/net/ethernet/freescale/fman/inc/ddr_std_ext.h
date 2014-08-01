@@ -56,7 +56,8 @@ typedef enum e_DdrType
     e_DDR_DDR1,
     e_DDR_DDR2,
     e_DDR_DDR3,
-    e_DDR_DDR3L
+    e_DDR_DDR3L,
+    e_DDR_DDR4
 } e_DdrType;
 
 /**************************************************************************//**

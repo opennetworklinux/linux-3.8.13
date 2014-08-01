@@ -165,9 +165,17 @@ enum usdpaa_portal_type {
 	 usdpaa_portal_bman,
 };
 
+#define QBMAN_ANY_PORTAL_IDX 0xffffffff
+
 struct usdpaa_ioctl_portal_map {
 	/* Input parameter, is a qman or bman portal required. */
+
 	enum usdpaa_portal_type type;
+	/* Specifes a specific portal index to map or QBMAN_ANY_PORTAL_IDX
+	   for don't care.  The portal index will be populated by the
+	   driver when the ioctl() successfully completes */
+	uint32_t index;
+
 	/* Return value if the map succeeds, this gives the mapped
 	 * cache-inhibited (cinh) and cache-enabled (cena) addresses. */
 	struct usdpaa_portal_map {
@@ -183,6 +191,10 @@ struct usdpaa_ioctl_portal_map {
 struct compat_usdpaa_ioctl_portal_map {
 	/* Input parameter, is a qman or bman portal required. */
 	enum usdpaa_portal_type type;
+	/* Specifes a specific portal index to map or QBMAN_ANY_PORTAL_IDX
+	   for don't care.  The portal index will be populated by the
+	   driver when the ioctl() successfully completes */
+	uint32_t index;
 	/* Return value if the map succeeds, this gives the mapped
 	 * cache-inhibited (cinh) and cache-enabled (cena) addresses. */
 	struct usdpaa_portal_map_compat {

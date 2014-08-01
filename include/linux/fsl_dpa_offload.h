@@ -162,7 +162,7 @@ struct ipv4_header {
 	uint8_t				*options;
 
 	/* Size of IPv4 options buffer. Zero for no options. */
-	unsigned int			options_size;
+	uint8_t				options_size;
 };
 
 /* Description of the VLAN header */

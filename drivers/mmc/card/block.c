@@ -1475,10 +1475,24 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	int ret;
 	struct mmc_blk_data *md = mq->data;
 	struct mmc_card *card = md->queue.card;
+	struct mmc_host *host = card->host;
 
-	if (req && !mq->mqrq_prev->req)
+	unsigned long flags;
+
+	if (req && !mq->mqrq_prev->req) {
+		/*
+		 * When we are here, card polling task will be blocked.
+		 * So disable it to avoid this useless schedule.
+		 */
+		if (host->caps & MMC_CAP_NEEDS_POLL) {
+			spin_lock_irqsave(&host->lock, flags);
+			host->rescan_disable = 1;
+			spin_unlock_irqrestore(&host->lock, flags);
+		}
+
 		/* claim host only for the first request */
 		mmc_claim_host(card->host);
+	}
 
 	ret = mmc_blk_part_switch(card, md);
 	if (ret) {
@@ -1508,9 +1522,21 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 	}
 
 out:
-	if (!req)
+	if (!req) {
 		/* release host only when there are no more requests */
 		mmc_release_host(card->host);
+		/*
+		 * Detecting card status immediately in case card being
+		 * removed just after the request is complete.
+		 */
+		if (host->caps & MMC_CAP_NEEDS_POLL) {
+			spin_lock_irqsave(&host->lock, flags);
+			host->rescan_disable = 0;
+			spin_unlock_irqrestore(&host->lock, flags);
+			mmc_detect_change(host, 0);
+		}
+	}
+
 	return ret;
 }
 

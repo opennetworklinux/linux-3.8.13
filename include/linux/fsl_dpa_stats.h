@@ -46,7 +46,7 @@
 #define DPA_STATS_MAX_NUM_OF_REQUESTS      256
 
 /* Maximum number of single and class counters */
-#define DPA_STATS_MAX_NUM_OF_COUNTERS      128
+#define DPA_STATS_MAX_NUM_OF_COUNTERS      512
 
 /* Maximum number of class counter members */
 #define DPA_STATS_MAX_NUM_OF_CLASS_MEMBERS 256
@@ -396,8 +396,11 @@ struct dpa_stats_cnt_classif_tbl {
 	/* Table descriptor */
 	int td;
 
-	/* Key to identify a specific entry */
-	struct dpa_offload_lookup_key key;
+	/*
+	 * Pointer to a key that identifies a specific entry or NULL in order
+	 * to obtain statistics for miss entry
+	 */
+	struct dpa_offload_lookup_key *key;
 
 	/*
 	 * Single or multiple selection of Classifier Table counters
@@ -429,8 +432,11 @@ struct dpa_stats_cnt_classif_node {
 	/* The type of FMAN Classification Node */
 	enum dpa_stats_classif_node_type ccnode_type;
 
-	/* Key to identify a specific entry */
-	struct dpa_offload_lookup_key key;
+	/*
+	 * Pointer to a key that identifies a specific entry or NULL in order
+	 * to obtain statistics for miss entry
+	 */
+	struct dpa_offload_lookup_key *key;
 
 	/*
 	 * Single or multiple selection of Classifier
@@ -463,7 +469,7 @@ struct dpa_stats_cnt_traffic_mng {
 	enum dpa_stats_cnt_traffic_mng_src src;
 
 	/*
-	 * Depending on the Traffic Manager source, the 'traffic_obj' has a
+	 * Depending on the Traffic Manager source, the 'traffic_mng' has a
 	 * different meaning: it represents a pointer to a structure of type
 	 * 'qm_ceetm_cq' in case the traffic source is a "Class Queue" or a
 	 * pointer to a structure of type 'qm_ceetm_ccg' in case the traffic
@@ -576,11 +582,17 @@ enum dpa_stats_classif_key_type {
 /* DPA Stats Classification counter - pair of keys */
 struct dpa_offload_lookup_key_pair {
 
-	/* Key to identify the first entry */
-	struct dpa_offload_lookup_key first_key;
+	/*
+	 * Pointer to a key that identifies the first entry or NULL in order
+	 * to identify the miss entry of the first table
+	 */
+	struct dpa_offload_lookup_key *first_key;
 
-	/* Key to identify the entry connected to the first entry */
-	struct dpa_offload_lookup_key second_key;
+	/*
+	 * Pointer to a key that identifies the entry connected to the first
+	 * entry first entry or NULL in order to identify the miss entry
+	 */
+	struct dpa_offload_lookup_key *second_key;
 };
 
 /* DPA Stats Classifier Table class counter parameters */
@@ -601,18 +613,28 @@ struct dpa_stats_cls_cnt_classif_tbl {
 		 */
 
 		/*
-		 * Array of keys to identify specific entries. A key can be
-		 * 'invalidated' by providing the 'byte' and 'mask' pointers
-		 * set to NULL.
+		 * Pointer to an array of keys, where each element of the array
+		 * can either be a key that identifies a specific entry or NULL
+		 * in order to obtain the statistics for the miss entry. A key
+		 * can be'invalidated' by providing the 'byte' pointer set
+		 * to NULL.
 		 */
-		struct dpa_offload_lookup_key *keys;
+		struct dpa_offload_lookup_key **keys;
 
 		/*
 		 * Array of 'pair-keys' to identify specific entries. A key pair
 		 * can be 'invalidated' by providing the 'byte' and 'mask'
 		 * pointers of the first key set to NULL
 		 */
-		struct dpa_offload_lookup_key_pair *pairs;
+
+		/*
+		 * Pointer to an array of ‘pair-keys’, where each element of the
+		 * array can either be a ‘pair-key’ that identifies a specific
+		 * entry or NULL in in order to obtain the statistics for the
+		 * miss entry. A key pair can be 'invalidated' by providing the
+		 * 'byte' pointer of the first key set to NULL.
+		 */
+		struct dpa_offload_lookup_key_pair **pairs;
 	};
 
 	/*
@@ -636,7 +658,7 @@ struct dpa_stats_cls_cnt_classif_node {
 	enum dpa_stats_classif_node_type ccnode_type;
 
 	/* Array of keys to identify specific entries */
-	struct dpa_offload_lookup_key *keys;
+	struct dpa_offload_lookup_key **keys;
 
 	/*
 	 * Single or multiple selection of Classifier counters
@@ -668,7 +690,7 @@ struct dpa_stats_cls_cnt_traffic_mng {
 	enum dpa_stats_cnt_traffic_mng_src src;
 
 	/*
-	 * Depending on the Traffic Manager source, the 'traffic_obj' has a
+	 * Depending on the Traffic Manager source, the 'traffic_mng' has a
 	 * different meaning: it represents an array of pointers to structures
 	 * of type 'qm_ceetm_cq' in case the traffic source is a "Class Queue"
 	 * or an array of pointers to structures of type 'qm_ceetm_ccg' in case
@@ -739,17 +761,20 @@ struct dpa_stats_cls_member_params {
 
 	union {
 		/*
-		 * Key to set or update in case the byte and mask pointers are
-		 * not NULL, or class member to invalidate otherwise
+		 * Pointer to a key to set or update in case the byte pointer is
+		 * not NULL, or class member to invalidate otherwise. The
+		 * pointer can be NULL, in which case it represents the miss
+		 * entry.
 		 */
-		struct dpa_offload_lookup_key key;
+		struct dpa_offload_lookup_key *key;
 
 		/*
-		 * Key to set or update in case the byte and mask pointers of
-		 * the first key are not NULL, or class member to invalidate
-		 * otherwise
+		 * Pointer to a 'pair-key' to set or update in case the byte
+		 * pointer of the first key is not NULL, or class member to
+		 * invalidate otherwise. The pointer can be NULL, in which case
+		 * it represents the miss entry.
 		 */
-		struct dpa_offload_lookup_key_pair pair;
+		struct dpa_offload_lookup_key_pair *pair;
 
 		/*
 		 * Security association identifier to set or update or class

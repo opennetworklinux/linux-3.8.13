@@ -37,6 +37,7 @@
 #include <linux/of_platform.h>
 #include "lnxwrp_fm.h"
 #include "dpaa_eth.h"
+#include <linux/fsl_qman.h>
 
 /* DPA offloading layer includes */
 #include "dpa_stats.h"
@@ -50,8 +51,20 @@
 #define CLASSIF_STATS_SHIFT 4
 #define WORKQUEUE_MAX_ACTIVE 3
 
+#define DPA_STATS_US_CNT 0x80000000
+
+
 /* Global dpa_stats component */
 struct dpa_stats *gbl_dpa_stats;
+
+static int alloc_cnt_stats(struct stats_info *stats_info,
+				unsigned int num_members);
+
+static void init_cnt_32bit_stats(struct stats_info *stats_info,
+				 void *stats, uint32_t idx);
+
+static void init_cnt_64bit_stats(struct stats_info *stats_info,
+				 void *stats, uint32_t idx);
 
 static int get_cnt_cls_tbl_frag_stats(struct dpa_stats_req_cb *req_cb,
 				      struct dpa_stats_cnt_cb *cnt_cb);
@@ -74,6 +87,15 @@ static int get_cnt_ccnode_hash_stats(struct dpa_stats_req_cb *req_cb,
 static int get_cnt_ccnode_index_stats(struct dpa_stats_req_cb *req_cb,
 				      struct dpa_stats_cnt_cb *cnt_cb);
 
+static int get_cnt_traffic_mng_cq_stats(struct dpa_stats_req_cb *req_cb,
+					struct dpa_stats_cnt_cb *cnt_cb);
+
+static int get_cnt_traffic_mng_ccg_stats(struct dpa_stats_req_cb *req_cb,
+					 struct dpa_stats_cnt_cb *cnt_cb);
+
+static int get_cnt_us_stats(struct dpa_stats_req_cb *req_cb,
+			    struct dpa_stats_cnt_cb *cnt_cb);
+
 static void async_req_work_func(struct work_struct *work);
 
 /* check that the provided params are valid */
@@ -81,114 +103,280 @@ static int check_dpa_stats_params(const struct dpa_stats_params *params)
 {
 	/* Check init parameters */
 	if (!params) {
-		pr_err("Invalid DPA Stats parameters handle\n");
+		log_err("DPA Stats instance parameters cannot be NULL\n");
 		return -EINVAL;
 	}
 
 	/* There must be at least one counter */
 	if (params->max_counters == 0 ||
 	    params->max_counters > DPA_STATS_MAX_NUM_OF_COUNTERS) {
-		pr_err("Invalid DPA Stats number of counters\n");
+		log_err("Parameter max_counters %d must be in range (1 - %d)\n",
+			params->max_counters, DPA_STATS_MAX_NUM_OF_COUNTERS);
 		return -EDOM;
 	}
 
 	if (!params->storage_area) {
-		pr_err("Invalid DPA Stats storage area\n");
+		log_err("Parameter storage_area cannot be NULL\n");
 		return -EINVAL;
 	}
 
 	if (params->storage_area_len < STATS_VAL_SIZE) {
-		pr_err("Invalid DPA Stats storage area length\n");
+		log_err("Parameter storage_area_len %d cannot be bellow %d\n",
+			params->storage_area_len, STATS_VAL_SIZE);
 		return -EINVAL;
 	}
 
 	return 0;
 }
 
-static int check_tbl_cls_counter(struct dpa_stats_cnt_cb *cnt_cb,
-				 struct dpa_stats_lookup_key *entry)
+static int set_cnt_classif_tbl_retrieve_func(struct dpa_stats_cnt_cb *cnt_cb)
 {
+	switch (cnt_cb->tbl_cb.type) {
+	case DPA_CLS_TBL_HASH:
+		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_hash_stats;
+		break;
+	case DPA_CLS_TBL_INDEXED:
+		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_index_stats;
+		break;
+	case DPA_CLS_TBL_EXACT_MATCH:
+		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_match_stats;
+		break;
+	default:
+		log_err("Unsupported DPA Classifier table type %d\n",
+			cnt_cb->tbl_cb.type);
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int set_cnt_classif_node_retrieve_func(struct dpa_stats_cnt_cb *cnt_cb,
+				enum dpa_stats_classif_node_type ccnode_type)
+{
+	switch (ccnode_type) {
+	case DPA_CLS_TBL_HASH:
+		cnt_cb->f_get_cnt_stats = get_cnt_ccnode_hash_stats;
+		break;
+	case DPA_CLS_TBL_INDEXED:
+		cnt_cb->f_get_cnt_stats = get_cnt_ccnode_index_stats;
+		break;
+	case DPA_CLS_TBL_EXACT_MATCH:
+		cnt_cb->f_get_cnt_stats = get_cnt_ccnode_match_stats;
+		break;
+	default:
+		log_err("Unsupported Classification Node type %d", ccnode_type);
+		return -EINVAL;
+	}
+	return 0;
+}
+
+
+static int get_classif_tbl_key_stats(struct dpa_stats_cnt_cb *cnt_cb,
+				     uint32_t idx)
+{
+	struct dpa_stats_lookup_key *entry = &cnt_cb->tbl_cb.keys[idx];
 	t_FmPcdCcKeyStatistics stats;
+	uint8_t *mask_data;
 	int err;
 
 	switch (cnt_cb->tbl_cb.type) {
 	case DPA_CLS_TBL_HASH:
 		err = FM_PCD_HashTableFindNGetKeyStatistics(entry->cc_node,
-				entry->key.size, entry->key.byte, &stats);
+				entry->key.data.size, entry->key.data.byte,
+				&stats);
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Table statistics\n");
+			log_err("Check failed for Classifier Hash Table counter id %d due to incorrect parameters: handle=0x%p, keysize=%d, keybyte=\n",
+				cnt_cb->id, entry->cc_node,
+				entry->key.data.size);
+			dump_lookup_key(&entry->key.data);
 			return -EIO;
 		}
-		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_hash_stats;
 		break;
 	case DPA_CLS_TBL_INDEXED:
 		err = FM_PCD_MatchTableGetKeyStatistics(
-				entry->cc_node, entry->key.byte[0], &stats);
+				entry->cc_node, entry->key.data.byte[0],
+				&stats);
 		if (err != 0) {
-			pr_err("Invalid Classifier Table counter parameters\n");
+			log_err("Check failed for Classifier Indexed Table counter id %d due to incorrect parameters: handle=0x%p, keysize=%d keybyte=\n",
+				cnt_cb->id, entry->cc_node,
+				entry->key.data.size);
+			dump_lookup_key(&entry->key.data);
 			return -EIO;
 		}
-		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_index_stats;
 		break;
 	case DPA_CLS_TBL_EXACT_MATCH:
+		if (entry->key.valid_mask)
+			mask_data = entry->key.data.mask;
+		else
+			mask_data = NULL;
 		err = FM_PCD_MatchTableFindNGetKeyStatistics(entry->cc_node,
-				entry->key.size, entry->key.byte,
-				entry->key.mask, &stats);
+				entry->key.data.size, entry->key.data.byte,
+				mask_data, &stats);
 		if (err != 0) {
-			pr_err("Invalid Classifier Table counter parameters\n");
+			log_err("Check failed for Classifier Exact Match Table counter id %d due to incorrect parameters: handle=0x%p, keysize=%d, keybyte=\n",
+				cnt_cb->id, entry->cc_node,
+				entry->key.data.size);
+			dump_lookup_key(&entry->key.data);
 			return -EINVAL;
 		}
-		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_match_stats;
 		break;
 	default:
-		pr_err("Invalid table type\n");
+		log_err("Unsupported DPA Classifier table type %d\n",
+			cnt_cb->tbl_cb.type);
 		return -EINVAL;
 	}
+
+	init_cnt_32bit_stats(&cnt_cb->info, &stats, idx);
+
 	return 0;
 }
 
-static int check_ccnode_counter(struct dpa_stats_cnt_cb *cnt_cb,
+static int get_ccnode_key_stats(struct dpa_stats_cnt_cb *cnt_cb,
 				enum dpa_stats_classif_node_type ccnode_type,
-				struct dpa_offload_lookup_key *key)
+				uint32_t idx)
 {
+	struct dpa_stats_allocated_lookup_key *key = &cnt_cb->ccnode_cb.keys[idx];
 	t_FmPcdCcKeyStatistics stats;
 	int err;
+	uint8_t *mask_data;
 
 	switch (ccnode_type) {
 	case DPA_STATS_CLASSIF_NODE_HASH:
 		err = FM_PCD_HashTableFindNGetKeyStatistics(
 				cnt_cb->ccnode_cb.cc_node,
-				key->size, key->byte, &stats);
+				key->data.size, key->data.byte, &stats);
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Table statistics\n");
-			return -EIO;
+			log_err("Check failed for Classification Node counter id %d due to incorrect parameters: handle=0x%p, keysize=%d, keybyte=\n",
+				cnt_cb->id, cnt_cb->ccnode_cb.cc_node,
+				key->data.size);
+			dump_lookup_key(&key->data);
+			return -EINVAL;
 		}
-		cnt_cb->f_get_cnt_stats = get_cnt_ccnode_hash_stats;
 		break;
 	case DPA_STATS_CLASSIF_NODE_INDEXED:
 		err = FM_PCD_MatchTableGetKeyStatistics(
 				cnt_cb->ccnode_cb.cc_node,
-				key->byte[0], &stats);
+				key->data.byte[0], &stats);
 		if (err != 0) {
-			pr_err("Invalid Classifier Table counter parameters\n");
-			return -EIO;
-		}
-		cnt_cb->f_get_cnt_stats = get_cnt_ccnode_index_stats;
-		break;
-	case DPA_STATS_CLASSIF_NODE_EXACT_MATCH:
-		err = FM_PCD_MatchTableFindNGetKeyStatistics(
-				cnt_cb->ccnode_cb.cc_node, key->size, key->byte,
-				key->mask, &stats);
-		if (err != 0) {
-			pr_err("Invalid Classifier Table counter parameters\n");
+			log_err("Check failed for Classification Node counter id %d due to incorrect parameters: handle=0x%p, keysize=%d, keybyte=\n",
+				cnt_cb->id, cnt_cb->ccnode_cb.cc_node,
+				key->data.size);
+			dump_lookup_key(&key->data);
 			return -EINVAL;
 		}
-		cnt_cb->f_get_cnt_stats = get_cnt_ccnode_match_stats;
+		break;
+	case DPA_STATS_CLASSIF_NODE_EXACT_MATCH:
+		if (key->valid_mask)
+			mask_data = key->data.mask;
+		else
+			mask_data = NULL;
+		err = FM_PCD_MatchTableFindNGetKeyStatistics(
+				cnt_cb->ccnode_cb.cc_node, key->data.size,
+				key->data.byte, mask_data, &stats);
+		if (err != 0) {
+			log_err("Check failed for Classification Node counter id %d due to incorrect parameters: handle=0x%p, keysize=%d, keybyte=\n",
+				cnt_cb->id, cnt_cb->ccnode_cb.cc_node,
+				key->data.size);
+			dump_lookup_key(&key->data);
+			return -EINVAL;
+		}
 		break;
 	default:
-		pr_err("Invalid table type\n");
+		log_err("Unsupported Classification Node type %d",
+			cnt_cb->tbl_cb.type);
 		return -EINVAL;
 	}
+
+	init_cnt_32bit_stats(&cnt_cb->info, &stats, idx);
+
+	return 0;
+}
+
+static int get_classif_tbl_miss_stats(struct dpa_stats_cnt_cb *cnt_cb,
+				      uint32_t idx)
+{
+	struct dpa_stats_lookup_key *key = &cnt_cb->tbl_cb.keys[idx];
+	t_FmPcdCcKeyStatistics stats;
+	int err;
+
+	switch (cnt_cb->tbl_cb.type) {
+	case DPA_CLS_TBL_HASH:
+		err = FM_PCD_HashTableGetMissStatistics(key->cc_node, &stats);
+		if (err != 0) {
+			log_err("Check failed for Classifier Table counter id %d due to incorrect parameters: handle=0x%p\n",
+				cnt_cb->id, key->cc_node);
+			return -EINVAL;
+		}
+		break;
+	case DPA_CLS_TBL_INDEXED:
+		err = FM_PCD_MatchTableGetMissStatistics(key->cc_node, &stats);
+		if (err != 0) {
+			log_err("Check failed for Classifier Table counter id %d due to incorrect parameters: handle=0x%p\n",
+				cnt_cb->id, key->cc_node);
+			return -EINVAL;
+		}
+		break;
+	case DPA_CLS_TBL_EXACT_MATCH:
+		err = FM_PCD_MatchTableGetMissStatistics(key->cc_node, &stats);
+		if (err != 0) {
+			log_err("Check failed for Classifier Table counter id %d due to incorrect parameters: handle=0x%p\n",
+				cnt_cb->id, key->cc_node);
+			return -EINVAL;
+		}
+		break;
+	default:
+		log_err("Unsupported Classifier Table type %d",
+				cnt_cb->tbl_cb.type);
+		return -EINVAL;
+	}
+
+	init_cnt_32bit_stats(&cnt_cb->info, &stats, idx);
+
+	return 0;
+}
+
+
+static int get_ccnode_miss_stats(struct dpa_stats_cnt_cb *cnt_cb,
+				 enum dpa_stats_classif_node_type type,
+				 uint32_t idx)
+{
+	t_FmPcdCcKeyStatistics stats;
+	int err;
+
+	switch (type) {
+	case DPA_STATS_CLASSIF_NODE_HASH:
+		err = FM_PCD_HashTableGetMissStatistics(
+					cnt_cb->ccnode_cb.cc_node, &stats);
+		if (err != 0) {
+			log_err("Check failed for Classification Node counter id %d due to incorrect parameters: handle=0x%p\n",
+				cnt_cb->id, cnt_cb->ccnode_cb.cc_node);
+			return -EINVAL;
+		}
+		break;
+	case DPA_STATS_CLASSIF_NODE_INDEXED:
+		err = FM_PCD_MatchTableGetMissStatistics(
+					cnt_cb->ccnode_cb.cc_node, &stats);
+		if (err != 0) {
+			log_err("Check failed for Classification Node counter id %d due to incorrect parameters: handle=0x%p\n",
+				cnt_cb->id, cnt_cb->ccnode_cb.cc_node);
+			return -EINVAL;
+		}
+		break;
+	case DPA_STATS_CLASSIF_NODE_EXACT_MATCH:
+		err = FM_PCD_MatchTableGetMissStatistics(
+					cnt_cb->ccnode_cb.cc_node, &stats);
+		if (err != 0) {
+			log_err("Check failed for Classification Node counter id %d due to incorrect parameters: handle=0x%p\n",
+				cnt_cb->id, cnt_cb->ccnode_cb.cc_node);
+			return -EINVAL;
+		}
+		break;
+	default:
+		log_err("Unsupported Classification Node type %d", type);
+		return -EINVAL;
+	}
+
+	init_cnt_32bit_stats(&cnt_cb->info, &stats, idx);
+
 	return 0;
 }
 
@@ -204,7 +392,7 @@ static int get_new_cnt(struct dpa_stats *dpa_stats,
 
 	/* Get an id for new Counter */
 	if (cq_get_4bytes(dpa_stats->cnt_id_cq, &id) < 0) {
-		pr_err("No more unused counter ids\n");
+		log_err("Cannot create new counter, no more free counter ids available\n");
 		mutex_unlock(&dpa_stats->lock);
 		return -EDOM;
 	}
@@ -218,7 +406,8 @@ static int get_new_cnt(struct dpa_stats *dpa_stats,
 			break;
 
 	if (i == dpa_stats->config.max_counters) {
-		pr_err("All counters have been used\n");
+		log_err("Maximum number of available counters %d was reached\n",
+			dpa_stats->config.max_counters);
 		cq_put_4bytes(dpa_stats->cnt_id_cq, id);
 		mutex_unlock(&dpa_stats->lock);
 		return -EDOM;
@@ -253,7 +442,7 @@ static int get_new_req(struct dpa_stats *dpa_stats,
 
 	/* Get an id for a new request */
 	if (cq_get_4bytes(dpa_stats->req_id_cq, &id) < 0) {
-		pr_err("No more unused request ids\n");
+		log_err("Cannot create new request, no more free request ids available\n");
 		mutex_unlock(&dpa_stats->lock);
 		return -EDOM;
 	}
@@ -267,7 +456,8 @@ static int get_new_req(struct dpa_stats *dpa_stats,
 			break;
 
 	if (i == DPA_STATS_MAX_NUM_OF_REQUESTS) {
-		pr_err("All requests have been used\n");
+		log_err("Maximum number of available requests %d was reached\n",
+			DPA_STATS_MAX_NUM_OF_REQUESTS);
 		cq_put_4bytes(dpa_stats->req_id_cq, id);
 		mutex_unlock(&dpa_stats->lock);
 		return -EDOM;
@@ -300,13 +490,12 @@ static int put_cnt(struct dpa_stats *dpa_stats, struct dpa_stats_cnt_cb *cnt_cb)
 	/* Release the Counter id in the Counter IDs circular queue */
 	err = cq_put_4bytes(dpa_stats->cnt_id_cq, cnt_cb->id);
 	if (err < 0) {
-		pr_err("Could not release the counter id %d\n", cnt_cb->id);
+		log_err("Cannot release the counter id %d\n", cnt_cb->id);
 		return -EDOM;
 	}
 
 	/* Mark the Counter id as 'not used' */
-	dpa_stats->used_cnt_ids[cnt_cb->index] =
-						DPA_OFFLD_INVALID_OBJECT_ID;
+	dpa_stats->used_cnt_ids[cnt_cb->index] = DPA_OFFLD_INVALID_OBJECT_ID;
 
 	/* Clear all 'cnt_cb' information  */
 	cnt_cb->index = DPA_OFFLD_INVALID_OBJECT_ID;
@@ -350,14 +539,13 @@ static int put_req(struct dpa_stats *dpa_stats, struct dpa_stats_req_cb *req_cb)
 	/* Release the Counter id in the Counter IDs circular queue */
 	err = cq_put_4bytes(dpa_stats->req_id_cq, req_cb->id);
 	if (err < 0) {
-		pr_err("Could not release the counter id %d\n", req_cb->id);
+		log_err("Cannot release the request id %d\n", req_cb->id);
 		mutex_unlock(&dpa_stats->lock);
 		return -EDOM;
 	}
 
 	/* Mark the Counter id as 'not used' */
-	dpa_stats->used_req_ids[req_cb->index] =
-						DPA_OFFLD_INVALID_OBJECT_ID;
+	dpa_stats->used_req_ids[req_cb->index] = DPA_OFFLD_INVALID_OBJECT_ID;
 
 	/* Clear all 'req_cb' information by setting them to a maximum value */
 	req_cb->index = DPA_OFFLD_INVALID_OBJECT_ID;
@@ -381,41 +569,55 @@ static int init_cnts_resources(struct dpa_stats *dpa_stats)
 	/* Create circular queue that holds free counter IDs */
 	dpa_stats->cnt_id_cq = cq_new(config.max_counters, sizeof(int));
 	if (!dpa_stats->cnt_id_cq) {
-		pr_err("Could not create Counter IDs circular queue\n");
+		log_err("Cannot create circular queue to store counter ids\n");
 		return -ENOMEM;
 	}
 
 	/* Fill the circular queue with ids */
 	for (i = 0; i < config.max_counters; i++)
 		if (cq_put_4bytes(dpa_stats->cnt_id_cq, i) < 0) {
-			pr_err("Could not fill Counter IDs circular queue\n");
+			log_err("Cannot fill circular queue with counter ids\n");
 			return -EDOM;
 		}
 
 	/* Allocate array to store counter ids that are 'in use' */
-	dpa_stats->used_cnt_ids = kmalloc(
-			config.max_counters * sizeof(uint32_t), GFP_KERNEL);
+	dpa_stats->used_cnt_ids = kcalloc(
+			config.max_counters, sizeof(uint32_t), GFP_KERNEL);
 	if (!dpa_stats->used_cnt_ids) {
-		pr_err("No more memory for used counter ids array\n");
+		log_err("Cannot allocate memory to store %d \'in use\' counter ids\n",
+			config.max_counters);
 		return -ENOMEM;
 	}
 	memset(dpa_stats->used_cnt_ids, DPA_OFFLD_INVALID_OBJECT_ID,
 			config.max_counters * sizeof(uint32_t));
 
-	/* Allocate array to store counters control blocks */
-	dpa_stats->cnts_cb = kzalloc(config.max_counters *
-			sizeof(struct dpa_stats_cnt_cb), GFP_KERNEL);
-	if (!dpa_stats->cnts_cb) {
-		pr_err("No more memory for used counters control blocks\n");
+	/* Allocate array to store counter ids scheduled for retrieve */
+	dpa_stats->sched_cnt_ids = kcalloc(
+			config.max_counters, sizeof(bool), GFP_KERNEL);
+	if (!dpa_stats->sched_cnt_ids) {
+		log_err("Cannot allocate memory to store %d scheduled counter ids\n",
+			config.max_counters);
 		return -ENOMEM;
 	}
 
-	for (i = 0; i < config.max_counters; i++) {
-		mutex_init(&dpa_stats->cnts_cb[i].lock);
-		dpa_stats->cnts_cb[i].dpa_stats = dpa_stats;
-		dpa_stats->cnts_cb[i].index = DPA_OFFLD_INVALID_OBJECT_ID;
+	/* Allocate array of counters control blocks */
+	dpa_stats->cnts_cb = kzalloc(config.max_counters *
+			sizeof(struct dpa_stats_cnt_cb), GFP_KERNEL);
+	if (!dpa_stats->cnts_cb) {
+		log_err("Cannot allocate memory to store %d internal counter structures\n",
+			config.max_counters);
+		return -ENOMEM;
 	}
 
+	/* Initialize every counter control block */
+	for (i = 0; i < config.max_counters; i++) {
+		/* Initialize counter lock */
+		mutex_init(&dpa_stats->cnts_cb[i].lock);
+		/* Store dpa_stats instance */
+		dpa_stats->cnts_cb[i].dpa_stats = dpa_stats;
+		/* Counter is not initialized, set the index to invalid value */
+		dpa_stats->cnts_cb[i].index = DPA_OFFLD_INVALID_OBJECT_ID;
+	}
 	return 0;
 }
 
@@ -429,13 +631,11 @@ static int free_cnts_resources(struct dpa_stats *dpa_stats)
 		id = dpa_stats->used_cnt_ids[i];
 		mutex_unlock(&dpa_stats->lock);
 
-		if (id != DPA_OFFLD_INVALID_OBJECT_ID)
+		if (id != DPA_OFFLD_INVALID_OBJECT_ID) {
 			/* Release the counter id in the Counter IDs cq */
-			err = put_cnt(dpa_stats, &dpa_stats->cnts_cb[id]);
-			if (err < 0) {
-				pr_err("Failed to release a counter id\n");
-				return err;
-			}
+			err = dpa_stats_remove_counter(id);
+			BUG_ON(err < 0);
+		}
 	}
 
 	/* Release counters IDs circular queue */
@@ -452,6 +652,10 @@ static int free_cnts_resources(struct dpa_stats *dpa_stats)
 	kfree(dpa_stats->used_cnt_ids);
 	dpa_stats->used_cnt_ids = NULL;
 
+	/* Release scheduled counters ids array */
+	kfree(dpa_stats->sched_cnt_ids);
+	dpa_stats->sched_cnt_ids = NULL;
+
 	return 0;
 }
 
@@ -466,7 +670,7 @@ static int init_reqs_resources(struct dpa_stats *dpa_stats)
 	dpa_stats->async_req_workqueue = alloc_workqueue("async_req_workqueue",
 			WQ_UNBOUND | WQ_MEM_RECLAIM, WORKQUEUE_MAX_ACTIVE);
 	if (!dpa_stats->async_req_workqueue) {
-		pr_err("Creating async request work queue failed\n");
+		log_err("Cannot allocate asynchronous requests work queue\n");
 		return -ENOSPC;
 	}
 
@@ -474,14 +678,14 @@ static int init_reqs_resources(struct dpa_stats *dpa_stats)
 	dpa_stats->req_id_cq = cq_new(
 			DPA_STATS_MAX_NUM_OF_REQUESTS, sizeof(int));
 	if (!dpa_stats->req_id_cq) {
-		pr_err("Could not create Request IDs circular queue\n");
+		log_err("Cannot create circular queue to store request ids\n");
 		return -ENOMEM;
 	}
 
 	/* Fill the circular queue with ids */
 	for (i = 0; i < DPA_STATS_MAX_NUM_OF_REQUESTS; i++)
 		if (cq_put_4bytes(dpa_stats->req_id_cq, i) < 0) {
-			pr_err("Could not fill Request IDs circular queue\n");
+			log_err("Cannot fill circular queue with request ids\n");
 			return -EDOM;
 		}
 
@@ -489,7 +693,7 @@ static int init_reqs_resources(struct dpa_stats *dpa_stats)
 	dpa_stats->used_req_ids = kmalloc(DPA_STATS_MAX_NUM_OF_REQUESTS *
 			sizeof(uint32_t), GFP_KERNEL);
 	if (!dpa_stats->used_req_ids) {
-		pr_err("No more memory for used req ids array\n");
+		log_err("Cannot allocate memory to store \'in use\' request ids\n");
 		return -ENOMEM;
 	}
 	memset(dpa_stats->used_req_ids, DPA_OFFLD_INVALID_OBJECT_ID,
@@ -499,17 +703,17 @@ static int init_reqs_resources(struct dpa_stats *dpa_stats)
 	dpa_stats->reqs_cb = kzalloc(DPA_STATS_MAX_NUM_OF_REQUESTS *
 				sizeof(struct dpa_stats_req_cb), GFP_KERNEL);
 	if (!dpa_stats->reqs_cb) {
-		pr_err("No more memory for requests control blocks\n");
+		log_err("Cannot allocate memory to store internal requests structure\n");
 		return -ENOMEM;
 	}
 
 	/* Allocate array to store the counter ids */
 	for (i = 0; i < DPA_STATS_MAX_NUM_OF_REQUESTS; i++) {
-		dpa_stats->reqs_cb[i].config.cnts_ids =
-				kzalloc(DPA_STATS_MAX_NUM_OF_COUNTERS *
+		dpa_stats->reqs_cb[i].cnts_ids =
+				kzalloc(dpa_stats->config.max_counters *
 						sizeof(int), GFP_KERNEL);
-		if (!dpa_stats->reqs_cb[i].config.cnts_ids) {
-			pr_err("No more memory for array of counter ids\n");
+		if (!dpa_stats->reqs_cb[i].cnts_ids) {
+			log_err("Cannot allocate memory for array of counter ids\n");
 			return -ENOMEM;
 		}
 
@@ -539,14 +743,11 @@ static int free_reqs_resources(struct dpa_stats *dpa_stats)
 
 			/* Release the request id in the Requests IDs cq */
 			err = put_req(dpa_stats, req_cb);
-			if (err < 0) {
-				pr_err("Failed to release a request id\n");
-				return err;
-			}
+			BUG_ON(err < 0);
 
 			/* Release the array of counter ids */
-			kfree(req_cb->config.cnts_ids);
-			req_cb->config.cnts_ids = NULL;
+			kfree(req_cb->cnts_ids);
+			req_cb->cnts_ids = NULL;
 		}
 	}
 
@@ -574,25 +775,31 @@ static int free_reqs_resources(struct dpa_stats *dpa_stats)
 }
 
 /* cleanup DPA Stats */
-static void free_resources(void)
+static int free_resources(void)
 {
 	struct dpa_stats *dpa_stats;
+	int err = 0;
 
 	/* Sanity check */
 	if (!gbl_dpa_stats) {
-		pr_err("DPA stats instance is not initialized\n");
-		return;
+		log_err("DPA Stats component is not initialized\n");
+		return 0;
 	}
 	dpa_stats = gbl_dpa_stats;
 
 	/* free resources occupied by counters control blocks */
-	free_cnts_resources(dpa_stats);
+	err = free_cnts_resources(dpa_stats);
+	if (err < 0)
+		return err;
 
 	/* free resources occupied by requests control blocks */
-	free_reqs_resources(dpa_stats);
+	err = free_reqs_resources(dpa_stats);
+	if (err < 0)
+		return err;
 
 	kfree(dpa_stats);
 	gbl_dpa_stats = NULL;
+	return 0;
 }
 
 static int treat_cnts_request(struct dpa_stats *dpa_stats,
@@ -600,14 +807,13 @@ static int treat_cnts_request(struct dpa_stats *dpa_stats,
 {
 	struct dpa_stats_cnt_request_params params = req_cb->config;
 	struct dpa_stats_cnt_cb *cnt_cb = NULL;
-	int id = 0, err = 0;
+	int err = 0;
 	uint32_t i = 0;
 
 	for (i = 0; i < params.cnts_ids_len; i++) {
-		id = params.cnts_ids[i];
 
 		/* Get counter's control block */
-		cnt_cb = &dpa_stats->cnts_cb[id];
+		cnt_cb = &dpa_stats->cnts_cb[req_cb->cnts_ids[i]];
 
 		/* Acquire counter lock */
 		mutex_lock(&cnt_cb->lock);
@@ -617,9 +823,10 @@ static int treat_cnts_request(struct dpa_stats *dpa_stats,
 		/* Call counter's retrieve function */
 		err = cnt_cb->f_get_cnt_stats(req_cb, cnt_cb);
 		if (err < 0) {
-			pr_err("Failed to retrieve counter values\n");
+			log_err("Cannot retrieve the value for counter id %d\n",
+				req_cb->cnts_ids[i]);
 			mutex_unlock(&cnt_cb->lock);
-			unblock_sched_cnts(dpa_stats, params.cnts_ids,
+			unblock_sched_cnts(dpa_stats, req_cb->cnts_ids,
 					   params.cnts_ids_len);
 			return err;
 		}
@@ -634,7 +841,7 @@ static int treat_cnts_request(struct dpa_stats *dpa_stats,
 		mutex_unlock(&cnt_cb->lock);
 	}
 
-	unblock_sched_cnts(dpa_stats, params.cnts_ids, params.cnts_ids_len);
+	unblock_sched_cnts(dpa_stats, req_cb->cnts_ids, params.cnts_ids_len);
 
 	return 0;
 }
@@ -924,67 +1131,90 @@ static void create_cnt_ipsec_stats(struct dpa_stats *dpa_stats)
 			struct dpa_ipsec_sa_stats, packets_count);
 }
 
+static void create_cnt_traffic_mng_stats(struct dpa_stats *dpa_stats)
+{
+	/* DPA_STATS_CNT_NUM_OF_BYTES */
+	dpa_stats->stats_sel[DPA_STATS_CNT_TRAFFIC_MNG][0] =
+				DPA_STATS_CNT_NUM_OF_BYTES * sizeof(uint64_t);
+	/* DPA_STATS_CNT_NUM_OF_PACKETS */
+	dpa_stats->stats_sel[DPA_STATS_CNT_TRAFFIC_MNG][1] =
+				DPA_STATS_CNT_NUM_OF_PACKETS * sizeof(uint64_t);
+}
+
 static int copy_key_descriptor(const struct dpa_offload_lookup_key *src,
-			       struct dpa_offload_lookup_key *dst)
+			       struct dpa_stats_allocated_lookup_key *dst)
 {
 	/* Check that key byte pointer is valid */
 	if (!src->byte) {
-		pr_err("Key byte pointer can't be NULL\n");
+		log_err("Lookup key descriptor byte cannot be NULL\n");
 		return -EINVAL;
 	}
 
 	/* Check that key size is not zero */
 	if (src->size == 0) {
-		pr_err("Key size can't be zero\n");
+		log_err("Lookup key descriptor size (%d) must be in range (1 - %d) bytes\n",
+			src->size, DPA_OFFLD_MAXENTRYKEYSIZE);
 		return -EINVAL;
 	}
 
-	/* Allocate memory to store the key byte array */
-	dst->byte = kmalloc(src->size, GFP_KERNEL);
-	if (!dst->byte) {
-		pr_err("No more memory for key byte\n");
-		return -ENOMEM;
-	}
-	memcpy(dst->byte, src->byte, src->size);
+	BUG_ON(dst->data.byte == NULL);
+	memcpy(dst->data.byte, src->byte, src->size);
+	dst->valid_key = true;
 
 	/* If there is a valid key mask pointer */
 	if (src->mask) {
-		/* Allocate memory to store the key mask array */
-		dst->mask = kmalloc(src->size, GFP_KERNEL);
-		if (!dst->mask) {
-			pr_err("No more memory for key mask\n");
-			kfree(dst->byte);
-			return -ENOMEM;
-		}
-		memcpy(dst->mask, src->mask, src->size);
+		BUG_ON(dst->data.mask == NULL);
+		memcpy(dst->data.mask, src->mask, src->size);
+		dst->valid_mask = true;
 	} else
-		dst->mask = NULL;
+		dst->valid_mask = false;
 
 	/* Store the key size */
-	dst->size = src->size;
+	dst->data.size = src->size;
 
 	return 0;
 }
 
 static t_Handle get_fman_mac_handle(struct device_node *parent_dev_node,
 				    int port_id,
-				    char *mac_name)
+				    char *mac_name,
+				    bool xg_port)
 {
 	struct device_node *dev_node, *tmp_node = NULL;
-	struct mac_device  *mac_dev = NULL;
-	const uint32_t	*cell_index;
+	struct mac_device *mac_dev = NULL;
+	const uint32_t *cell_index;
+	const char *phy_connection;
+	struct platform_device *device;
 	int lenp;
 
 	while ((dev_node = of_find_compatible_node(tmp_node, NULL,
 			mac_name)) != NULL) {
-		if (parent_dev_node == of_get_parent(dev_node)) {
-			cell_index = of_get_property(
-					dev_node, "cell-index", &lenp);
-			if (*cell_index == port_id) {
-				mac_dev = dev_get_drvdata(&
-					of_find_device_by_node(dev_node)->dev);
-				return mac_dev->get_mac_handle(mac_dev);
-			}
+
+		if (parent_dev_node != of_get_parent(dev_node)) {
+			tmp_node = dev_node;
+			continue;
+		}
+
+		cell_index = of_get_property(dev_node, "cell-index", &lenp);
+		if (*cell_index != port_id) {
+			tmp_node = dev_node;
+			continue;
+		}
+
+		phy_connection = of_get_property(dev_node,
+						"phy-connection-type",
+						&lenp);
+		if (((xg_port) && (strcmp(phy_connection, "xgmii") == 0)) ||
+			((!xg_port) && (strcmp(phy_connection, "xgmii") != 0))) {
+
+			device = of_find_device_by_node(dev_node);
+			if (!device)
+				return NULL;
+			mac_dev = dev_get_drvdata(&device->dev);
+			if (!mac_dev)
+				return NULL;
+
+			return mac_dev->get_mac_handle(mac_dev);
 		}
 
 		tmp_node = dev_node;
@@ -1020,7 +1250,7 @@ static int get_fm_mac(struct dpa_stats_cnt_eth_src src, void **mac)
 	/* Get FMAN device node */
 	dev_node = get_fman_dev_node(src.engine_id);
 	if (!dev_node) {
-		pr_err("FMan device node couldn't be found\n");
+		log_err("Cannot find FMan device node\n");
 		return -EINVAL;
 	}
 
@@ -1029,14 +1259,17 @@ static int get_fm_mac(struct dpa_stats_cnt_eth_src src, void **mac)
 		mac_name = "fsl,fman-10g-mac";
 		src.eth_id -= DPA_STATS_ETH_10G_PORT0;
 
-		fm_mac = get_fman_mac_handle(dev_node, src.eth_id, mac_name);
+		fm_mac = get_fman_mac_handle(dev_node,
+					src.eth_id,
+					mac_name,
+					true);
 		if (!fm_mac) {
 			/* Get Ethernet device node for MEMAC case 10G port */
 			mac_name = "fsl,fman-memac";
 			fm_mac = get_fman_mac_handle(
-					dev_node, src.eth_id, mac_name);
+					dev_node, src.eth_id, mac_name, true);
 			if (!fm_mac) {
-				pr_err("Ethernet device node couldn't be found\n");
+				log_err("Cannot find Ethernet device node\n");
 				return -EINVAL;
 			}
 		}
@@ -1044,14 +1277,17 @@ static int get_fm_mac(struct dpa_stats_cnt_eth_src src, void **mac)
 		/* Get Ethernet device node first for DTSEC case 1G port*/
 		mac_name = "fsl,fman-1g-mac";
 
-		fm_mac = get_fman_mac_handle(dev_node, src.eth_id, mac_name);
+		fm_mac = get_fman_mac_handle(dev_node,
+					src.eth_id,
+					mac_name,
+					false);
 		if (!fm_mac) {
 			/* Get Ethernet device node for MEMAC case 1G port*/
 			mac_name = "fsl,fman-memac";
 			fm_mac = get_fman_mac_handle(
-					dev_node, src.eth_id, mac_name);
+					dev_node, src.eth_id, mac_name, false);
 			if (!fm_mac) {
-				pr_err("Ethernet device node couldn't be found\n");
+				log_err("Cannot find Ethernet device node\n");
 				return -EINVAL;
 			}
 		}
@@ -1063,51 +1299,156 @@ static int get_fm_mac(struct dpa_stats_cnt_eth_src src, void **mac)
 	return 0;
 }
 
-static void cnt_sel_to_stats(struct stats_info *stats_info,
+static int cnt_sel_to_stats(struct stats_info *stats_info,
 			     int *stats_sel,
 			     uint32_t cnt_sel)
 {
-	uint32_t bitVal = 0, bitPos = 0, cntPos = 1;
+	uint32_t bit_val = 0, bit_pos = 0, cnt_pos = 1;
+	int stats_off[MAX_NUM_OF_STATS];
+
+	memset(stats_off, 0, sizeof(int) * MAX_NUM_OF_STATS);
 
 	while (cnt_sel > 0) {
-		bitVal = cnt_sel & 0x00000001;
-		stats_info->stats_off[cntPos - bitVal] = stats_sel[bitPos++];
-		cntPos += bitVal;
+		bit_val = cnt_sel & 0x00000001;
+		stats_off[cnt_pos - bit_val] = stats_sel[bit_pos++];
+		cnt_pos += bit_val;
 		cnt_sel >>= 1;
 	}
 
-	stats_info->stats_num = cntPos - 1;
+	stats_info->stats_num = cnt_pos - 1;
+
+	/*
+	 * Allocate the stats offsets array and copy the calculated offsets
+	 * into it
+	 */
+	stats_info->stats_off = kcalloc(stats_info->stats_num, sizeof(int),
+					GFP_KERNEL);
+	if (!stats_info->stats_off) {
+		log_err("Failed to allocate stats offsets for new counter\n");
+		return -ENOMEM;
+	}
+
+	memcpy(stats_info->stats_off, stats_off,
+				stats_info->stats_num * sizeof(int));
+	return 0;
+}
+
+static int cnt_gen_sel_to_stats(struct dpa_stats_cnt_cb *cnt_cb,
+				enum dpa_stats_cnt_sel cnt_sel)
+{
+	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
+	int stats_off[MAX_NUM_OF_STATS];
+
+	if (cnt_sel == DPA_STATS_CNT_NUM_OF_BYTES) {
+		stats_off[0] =
+		dpa_stats->stats_sel[cnt_cb->type][DPA_STATS_CNT_NUM_OF_BYTES];
+		cnt_cb->info.stats_num = 1;
+	} else if (cnt_sel == DPA_STATS_CNT_NUM_OF_PACKETS) {
+		stats_off[0] =
+	dpa_stats->stats_sel[cnt_cb->type][DPA_STATS_CNT_NUM_OF_PACKETS];
+		cnt_cb->info.stats_num = 1;
+	} else if (cnt_sel == DPA_STATS_CNT_NUM_ALL) {
+		stats_off[0] =
+		dpa_stats->stats_sel[cnt_cb->type][DPA_STATS_CNT_NUM_OF_BYTES];
+		stats_off[1] =
+	dpa_stats->stats_sel[cnt_cb->type][DPA_STATS_CNT_NUM_OF_PACKETS];
+		cnt_cb->info.stats_num = 2;
+	} else {
+		log_err("Parameter cnt_sel %d must be in range (%d - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_NUM_OF_BYTES,
+			DPA_STATS_CNT_NUM_ALL, cnt_cb->id);
+		return -EINVAL;
+	}
+
+	/*
+	 * Allocate the stats offsets array and copy the calculated offsets
+	 * into it
+	 */
+	cnt_cb->info.stats_off = kcalloc(cnt_cb->info.stats_num,
+						sizeof(int), GFP_KERNEL);
+	if (!cnt_cb->info.stats_off) {
+		log_err("Failed to allocate stats offsets for new counter\n");
+		return -ENOMEM;
+	}
+
+	memcpy(cnt_cb->info.stats_off, stats_off,
+				cnt_cb->info.stats_num * sizeof(int));
+
+	/* Set number of bytes that will be written by this counter */
+	cnt_cb->bytes_num = cnt_cb->members_num *
+				STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	return 0;
 }
 
 static int set_frag_manip(int td, struct dpa_stats_lookup_key *entry)
 {
 	struct dpa_cls_tbl_action action;
 	struct t_FmPcdManipStats stats;
+	struct dpa_offload_lookup_key local_key;
 	int err = 0;
 
-	err = dpa_classif_table_lookup_by_key(td, &entry->key, &action);
-	if (err != 0) {
-		pr_err("Unable to retrieve next action parameters\n");
-		return -EINVAL;
+	if (entry->miss_key) {
+		err = dpa_classif_get_miss_action(td, &action);
+		if (err != 0) {
+			log_err("Cannot retrieve miss action parameters from table %d\n",
+				td);
+			return -EINVAL;
+		}
+	} else {
+		local_key.byte = entry->key.data.byte;
+		local_key.size = entry->key.data.size;
+		if (entry->key.valid_mask)
+			local_key.mask = entry->key.data.mask;
+		else
+			local_key.mask = NULL;
+
+		err = dpa_classif_table_lookup_by_key(td, &local_key, &action);
+		if (err != 0) {
+			log_err("Cannot retrieve next action parameters from table %d\n",
+				td);
+			return -EINVAL;
+		}
 	}
 
 	if (action.type != DPA_CLS_TBL_ACTION_ENQ) {
-		pr_err("Fragmentation statistics per flow are "
-			"supported only for action enqueue\n");
+		log_err("Fragmentation statistics per flow are supported only for action enqueue\n");
 		return -EINVAL;
 	}
 
 	entry->frag = dpa_classif_get_frag_hm_handle(action.enq_params.hmd);
 	if (!entry->frag) {
-		pr_err("Unable to retrieve fragmentation handle\n");
+		log_err("Cannot retrieve Fragmentation handle from hmd %d\n",
+			action.enq_params.hmd);
 		return -EINVAL;
 	}
 
 	/* Check the user-provided fragmentation handle */
 	err = FM_PCD_ManipGetStatistics(entry->frag, &stats);
 	if (err < 0) {
-		pr_err("Invalid Fragmentation manip handle\n");
+		log_err("Invalid Fragmentation manip handle\n");
 		return -EINVAL;
+	}
+	return 0;
+}
+
+static int alloc_cnt_stats(struct stats_info *stats_info,
+						unsigned int num_members)
+{
+	/* Allocate array of currently read statistics */
+	stats_info->stats = kcalloc(num_members * stats_info->stats_num,
+						sizeof(uint64_t), GFP_KERNEL);
+	if (!stats_info->stats) {
+		log_err("Cannot allocate memory to store array of statistics\n");
+		return -ENOMEM;
+	}
+
+	/* Allocate array of previously read statistics */
+	stats_info->last_stats = kcalloc(num_members * stats_info->stats_num,
+						sizeof(uint64_t), GFP_KERNEL);
+	if (!stats_info->last_stats) {
+		log_err("Cannot allocate memory to store array of previous read statistics for all members\n");
+		return -ENOMEM;
 	}
 
 	return 0;
@@ -1118,17 +1459,19 @@ static int set_cnt_eth_cb(struct dpa_stats_cnt_cb *cnt_cb,
 {
 	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
 	uint32_t cnt_sel = params->eth_params.cnt_sel;
+	t_FmMacStatistics stats;
 	t_Handle fm_mac = NULL;
 	int	 err = 0;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Ethernet counter selection */
 	if (cnt_sel == 0 || cnt_sel > DPA_STATS_CNT_ETH_ALL) {
-		pr_err("Invalid Ethernet counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_ETH_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
@@ -1136,22 +1479,51 @@ static int set_cnt_eth_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	if (cnt_sel == DPA_STATS_CNT_ETH_ALL)
 		cnt_sel -= 1;
 
-	/* Get FM MAC handle */
-	err = get_fm_mac(params->eth_params.src, &fm_mac);
-	if (err != 0) {
-		pr_err("Could not obtain FM MAC handle!\n");
+	if (params->eth_params.src.eth_id < DPA_STATS_ETH_1G_PORT0 ||
+	    params->eth_params.src.eth_id > DPA_STATS_ETH_10G_PORT1) {
+		log_err("Parameter src.eth_id %d must be in range (%d - %d) for counter id %d\n",
+			params->eth_params.src.eth_id, DPA_STATS_ETH_1G_PORT0,
+			DPA_STATS_ETH_10G_PORT1, cnt_cb->id);
 		return -EINVAL;
 	}
 
-	cnt_cb->gen_cb.objs[0] = fm_mac;
 	cnt_cb->members_num = 1;
 
 	/* Map Ethernet counter selection to FM MAC statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_ETH], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	/* Get FM MAC handle */
+	err = get_fm_mac(params->eth_params.src, &fm_mac);
+	if (err != 0) {
+		log_err("Cannot retrieve Ethernet MAC handle for counter id %d\n",
+			cnt_cb->id);
+		return -EINVAL;
+	}
+	cnt_cb->gen_cb.objs = kzalloc(sizeof(t_Handle), GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new Ethernet counter\n");
+		return -ENOMEM;
+	}
+	cnt_cb->gen_cb.objs[0] = fm_mac;
+
+	err = FM_MAC_GetStatistics(cnt_cb->gen_cb.objs[0], &stats);
+	if (err != 0) {
+		log_err("Invalid Ethernet counter source for counter id %d\n",
+			cnt_cb->id);
+		return -ENOENT;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	init_cnt_64bit_stats(&cnt_cb->info, &stats, 0);
 
 	return 0;
 }
@@ -1165,7 +1537,7 @@ static int set_cnt_reass_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	int err;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
@@ -1175,19 +1547,28 @@ static int set_cnt_reass_cb(struct dpa_stats_cnt_cb *cnt_cb,
 		cnt_sel <= DPA_STATS_CNT_REASS_IPv4_ALL) ||
 		(cnt_sel >= DPA_STATS_CNT_REASS_IPv6_FRAMES &&
 		cnt_sel <= DPA_STATS_CNT_REASS_IPv6_ALL))) {
-		pr_err("Invalid Reassembly counter selection\n");
+		log_err("Parameter cnt_sel %d must be in one of the ranges (1 -%d), (%d - %d), (%d - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_REASS_GEN_ALL,
+			DPA_STATS_CNT_REASS_IPv4_FRAMES,
+			DPA_STATS_CNT_REASS_IPv4_ALL,
+			DPA_STATS_CNT_REASS_IPv6_FRAMES,
+			DPA_STATS_CNT_REASS_IPv6_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
+	if (!params->reass_params.reass) {
+		log_err("Parameter Reassembly handle cannot be NULL for counter id %d\n",
+			cnt_cb->id);
+		return -EFAULT;
+	}
+
+	cnt_cb->gen_cb.objs = kzalloc(sizeof(t_Handle), GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new IP reass counter\n");
+		return -ENOMEM;
+	}
 	cnt_cb->gen_cb.objs[0] = params->reass_params.reass;
 	cnt_cb->members_num = 1;
-
-	/* Check the user-provided reassembly manip */
-	err = FM_PCD_ManipGetStatistics(params->reass_params.reass, &stats);
-	if (err < 0) {
-		pr_err("Invalid Reassembly manip handle\n");
-		return -EINVAL;
-	}
 
 	/* Based on user option, change mask to all statistics in one group */
 	if (cnt_sel == DPA_STATS_CNT_REASS_GEN_ALL)
@@ -1200,11 +1581,27 @@ static int set_cnt_reass_cb(struct dpa_stats_cnt_cb *cnt_cb,
 			~(DPA_STATS_CNT_REASS_IPv6_FRAMES - 1);
 
 	/* Map Reassembly counter selection to Manip statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_REASS], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	/* Check the user-provided reassembly manip */
+	err = FM_PCD_ManipGetStatistics(params->reass_params.reass, &stats);
+	if (err < 0) {
+		log_err("Invalid Reassembly manip handle for counter id %d\n",
+			cnt_cb->id);
+		return -EINVAL;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	init_cnt_32bit_stats(&cnt_cb->info, &stats, 0);
 
 	return 0;
 }
@@ -1218,36 +1615,57 @@ static int set_cnt_frag_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	int err;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Fragmentation counter selection */
 	if (cnt_sel == 0 || cnt_sel > DPA_STATS_CNT_FRAG_ALL) {
-		pr_err("Invalid Fragmentation counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_FRAG_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
+	if (!params->frag_params.frag) {
+		log_err("Parameter Fragmentation handle cannot be NULL for counter id %d\n",
+			cnt_cb->id);
+		return -EFAULT;
+	}
+
+	cnt_cb->gen_cb.objs = kzalloc(sizeof(t_Handle), GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new IP frag counter\n");
+		return -ENOMEM;
+	}
 	cnt_cb->gen_cb.objs[0] = params->frag_params.frag;
 	cnt_cb->members_num = 1;
-
-	/* Check the user-provided fragmentation handle */
-	err = FM_PCD_ManipGetStatistics(params->frag_params.frag, &stats);
-	if (err < 0) {
-		pr_err("Invalid Fragmentation manip handle\n");
-		return -EINVAL;
-	}
 
 	/* Decrease one to obtain the mask for all statistics */
 	if (cnt_sel == DPA_STATS_CNT_FRAG_ALL)
 		cnt_sel -= 1;
 
 	/* Map Fragmentation counter selection to Manip statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_FRAG], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	/* Check the user-provided fragmentation handle */
+	err = FM_PCD_ManipGetStatistics(params->frag_params.frag, &stats);
+	if (err < 0) {
+		log_err("Invalid Fragmentation manip handle for counter id %d\n",
+			cnt_cb->id);
+		return -EINVAL;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	init_cnt_32bit_stats(&cnt_cb->info, &stats, 0);
 
 	return 0;
 }
@@ -1256,19 +1674,34 @@ static int set_cnt_plcr_cb(struct dpa_stats_cnt_cb *cnt_cb,
 			   const struct dpa_stats_cnt_params *params)
 {
 	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
-	uint32_t cnt_sel = params->reass_params.cnt_sel;
+	uint32_t cnt_sel = params->plcr_params.cnt_sel;
+	uint64_t stats_val;
+	uint32_t i;
+	int err;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Policer counter selection */
 	if (cnt_sel == 0 || cnt_sel > DPA_STATS_CNT_PLCR_ALL) {
-		pr_err("Invalid Policer counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_PLCR_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
+	if (!params->plcr_params.plcr) {
+		log_err("Parameter Policer handle cannot be NULL for counter id %d\n",
+			cnt_cb->id);
+		return -EFAULT;
+	}
+
+	cnt_cb->gen_cb.objs = kzalloc(sizeof(t_Handle), GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new policer counter\n");
+		return -ENOMEM;
+	}
 	cnt_cb->gen_cb.objs[0] = params->plcr_params.plcr;
 	cnt_cb->members_num = 1;
 
@@ -1277,12 +1710,26 @@ static int set_cnt_plcr_cb(struct dpa_stats_cnt_cb *cnt_cb,
 		cnt_sel -= 1;
 
 	/* Map Policer counter selection to policer statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_POLICER], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = STATS_VAL_SIZE * cnt_cb->info.stats_num;
 
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	for (i = 0; i < cnt_cb->info.stats_num; i++) {
+		stats_val = (uint64_t)FM_PCD_PlcrProfileGetCounter(
+			cnt_cb->gen_cb.objs[0], cnt_cb->info.stats_off[i]);
+
+		/* Store the current value as the last read value */
+		cnt_cb->info.stats[i] = 0;
+		cnt_cb->info.last_stats[i] = stats_val;
+	}
 	return 0;
 }
 
@@ -1297,7 +1744,7 @@ static int set_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	int err = 0, frag_stats = -1;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
@@ -1308,6 +1755,14 @@ static int set_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 		/* Entire group of counters was selected */
 		if (cnt_sel == DPA_STATS_CNT_CLASSIF_ALL)
 			cnt_sel -= 1;
+
+		/* Map Classifier Table counter selection to CcNode stats */
+		err = cnt_sel_to_stats(&cnt_cb->info,
+			dpa_stats->stats_sel[DPA_STATS_CNT_CLASSIF_NODE],
+			cnt_sel >> CLASSIF_STATS_SHIFT);
+		if (err)
+			return err;
+
 		frag_stats = 0;
 
 	} else if (cnt_sel >= DPA_STATS_CNT_FRAG_TOTAL_FRAMES &&
@@ -1316,24 +1771,41 @@ static int set_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 		/* Entire group of counters was selected */
 		if (cnt_sel == DPA_STATS_CNT_FRAG_ALL)
 			cnt_sel -= 1;
+
+		/* Map Classifier Table counter selection to Frag stats */
+		err = cnt_sel_to_stats(&cnt_cb->info,
+			dpa_stats->stats_sel[DPA_STATS_CNT_FRAG], cnt_sel);
+		if (err)
+			return err;
+
 		frag_stats = 1;
 
 	} else {
-		pr_err("Invalid Classifier Table counter selection\n");
+		log_err("Parameter cnt_sel %d must be in one of the ranges (%d - %d), (%d - %d), for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_CLASSIF_BYTES,
+			DPA_STATS_CNT_CLASSIF_ALL,
+			DPA_STATS_CNT_FRAG_TOTAL_FRAMES, DPA_STATS_CNT_FRAG_ALL,
+			cnt_cb->id);
 		return -EINVAL;
 	}
 
+	if (prm.td == DPA_OFFLD_DESC_NONE) {
+		log_err("Invalid table descriptor %d for counter id %d\n",
+			prm.td, cnt_cb->id);
+		return -EINVAL;
+	}
 	err = dpa_classif_table_get_params(prm.td, &cls_tbl);
 	if (err != 0) {
-		pr_err("Invalid Classifier Table descriptor\n");
+		log_err("Invalid table descriptor %d for counter id %d\n",
+			prm.td, cnt_cb->id);
 		return -EINVAL;
 	}
-
-	/* Copy the key descriptor */
-	err = copy_key_descriptor(&prm.key, &cnt_tbl_cb->keys[0].key);
-	if (err != 0) {
-		pr_err("Unable to copy key descriptor\n");
-		return -EINVAL;
+	/* Allocate memory for one key descriptor */
+	cnt_tbl_cb->keys = kzalloc(sizeof(*cnt_tbl_cb->keys), GFP_KERNEL);
+	if (!cnt_tbl_cb->keys) {
+		log_err("Cannot allocate memory for key descriptor for counter id %d\n",
+			cnt_cb->id);
+		return -ENOMEM;
 	}
 
 	/* Store CcNode handle and set number of keys to one */
@@ -1341,35 +1813,72 @@ static int set_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	cnt_tbl_cb->keys[0].valid = TRUE;
 	cnt_cb->members_num = 1;
 
-	/* Store DPA Classifier Table type */
-	cnt_tbl_cb->type = cls_tbl.type;
-
-	/* Check the Classifier Table counter */
-	err = check_tbl_cls_counter(cnt_cb, &cnt_tbl_cb->keys[0]);
-	if (err != 0)
-		return -EINVAL;
-
-	if (frag_stats) {
-		err = set_frag_manip(prm.td, &cnt_tbl_cb->keys[0]);
-		if (err < 0) {
-			pr_err("Invalid Fragmentation manip handle\n");
-			return -EINVAL;
-		}
-		/* Map Classifier Table counter selection to Frag stats */
-		cnt_sel_to_stats(&cnt_cb->info,
-			dpa_stats->stats_sel[DPA_STATS_CNT_FRAG], cnt_sel);
-
-		/* Change the retrieve routine */
-		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_frag_stats;
-	} else
-		/* Map Classifier Table counter selection to CcNode stats */
-		cnt_sel_to_stats(&cnt_cb->info,
-			dpa_stats->stats_sel[DPA_STATS_CNT_CLASSIF_NODE],
-			cnt_sel >> CLASSIF_STATS_SHIFT);
-
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = STATS_VAL_SIZE * cnt_cb->info.stats_num;
 
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	/* Store DPA Classifier Table type */
+	cnt_tbl_cb->type = cls_tbl.type;
+
+	/* Set retrieve function depending on table type */
+	err = set_cnt_classif_tbl_retrieve_func(cnt_cb);
+	if (err != 0)
+		return -EINVAL;
+
+	/* Allocate the single key: */
+	cnt_tbl_cb->keys[0].key.data.byte = kzalloc(
+			DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+	if (!cnt_tbl_cb->keys[0].key.data.byte)
+		log_err("Cannot allocate memory for the key of for counter id %d\n",
+				cnt_cb->id);
+	cnt_tbl_cb->keys[0].key.data.mask = kzalloc(
+			DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+	if (!cnt_tbl_cb->keys[0].key.data.mask)
+		log_err("Cannot allocate memory for the mask of counter id %d\n",
+				cnt_cb->id);
+
+	if (!prm.key) {
+		cnt_tbl_cb->keys[0].miss_key = TRUE;
+	} else {
+		/* Copy the key descriptor */
+		err = copy_key_descriptor(prm.key, &cnt_tbl_cb->keys[0].key);
+		if (err != 0) {
+			log_err("Cannot copy key descriptor from user parameters\n");
+			return -EINVAL;
+		}
+	}
+
+	if (!frag_stats) {
+		if (cnt_tbl_cb->keys[0].miss_key) {
+			/*
+			 * Retrieve Classifier Table counter statistics for
+			 * 'miss'
+			 */
+			err = get_classif_tbl_miss_stats(cnt_cb, 0);
+			if (err != 0)
+				return -EINVAL;
+		} else {
+			/*
+			 * Retrieve Classifier Table counter statistics for a
+			 * key
+			 */
+			err = get_classif_tbl_key_stats(cnt_cb, 0);
+			if (err != 0)
+				return err;
+		}
+	} else {
+		err = set_frag_manip(prm.td, &cnt_tbl_cb->keys[0]);
+		if (err < 0) {
+			log_err("Invalid Fragmentation manip handle for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+		/* Change the retrieve routine */
+		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_frag_stats;
+	}
 	return 0;
 }
 
@@ -1381,91 +1890,223 @@ static int set_cnt_ccnode_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	int err = 0;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Classification Node counter selection */
 	if (prm.cnt_sel == 0 ||  prm.cnt_sel > DPA_STATS_CNT_CLASSIF_ALL) {
-		pr_err("Invalid Classif_Node counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			prm.cnt_sel, DPA_STATS_CNT_CLASSIF_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
-	/* Copy the key descriptor */
-	err = copy_key_descriptor(&prm.key, &cnt_cb->ccnode_cb.keys[0]);
-	if (err != 0) {
-		pr_err("Unable to copy key descriptor\n");
-		return -EINVAL;
+	if (!params->classif_node_params.cc_node) {
+		log_err("Parameter classification CC Node handle cannot be NULL for counter id %d\n",
+			cnt_cb->id);
+		return -EFAULT;
 	}
 
 	/* Store CcNode handle and set number of keys to one */
 	cnt_cb->ccnode_cb.cc_node = prm.cc_node;
 	cnt_cb->members_num = 1;
 
-	/* Check the Classifier Node counter parameters */
-	err = check_ccnode_counter(cnt_cb,
-				   prm.ccnode_type, &cnt_cb->ccnode_cb.keys[0]);
-	if (err != 0) {
-		pr_err("Invalid Classif Node counter parameters\n");
-		return -EINVAL;
-	}
-
 	/* Map Classif Node counter selection to CcNode statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 		dpa_stats->stats_sel[DPA_STATS_CNT_CLASSIF_NODE],
 		prm.cnt_sel >> CLASSIF_STATS_SHIFT);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = STATS_VAL_SIZE * cnt_cb->info.stats_num;
 
-	return 0;
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	/* Allocate memory for one key descriptor */
+	cnt_cb->ccnode_cb.keys = kzalloc(sizeof(*cnt_cb->ccnode_cb.keys),
+								GFP_KERNEL);
+	if (!cnt_cb->ccnode_cb.keys) {
+		log_err("Cannot allocate memory for key descriptor for counter id %d\n", cnt_cb->id);
+		return -ENOMEM;
+	}
+
+	/* Set retrieve function depending on counter type */
+	err = set_cnt_classif_node_retrieve_func(cnt_cb, prm.ccnode_type);
+	if (err != 0)
+		return -EINVAL;
+
+	/* Allocate memory for every key */
+	cnt_cb->ccnode_cb.keys[0].data.byte = kzalloc(
+			DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+	if (!cnt_cb->ccnode_cb.keys[0].data.byte)
+		log_err("Cannot allocate memory for the key of the counter id %d\n",
+				cnt_cb->id);
+	cnt_cb->ccnode_cb.keys[0].data.mask = kzalloc(
+			DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+	if (!cnt_cb->ccnode_cb.keys[0].data.mask)
+		log_err("Cannot allocate memory for the mask of the counter id %d\n",
+				cnt_cb->id);
+
+	if (!params->classif_node_params.key) {
+		/* Set the key byte to NULL, to mark it for 'miss' entry */
+		cnt_cb->ccnode_cb.keys[0].valid_key = false;
+
+		/* Retrieve Classifier Node counter statistics for 'miss' */
+		err = get_ccnode_miss_stats(cnt_cb, prm.ccnode_type, 0);
+	} else {
+		/* Copy the key descriptor */
+		err = copy_key_descriptor(prm.key, &cnt_cb->ccnode_cb.keys[0]);
+		if (err != 0) {
+			log_err("Cannot copy key descriptor from user parameters\n");
+			return -EINVAL;
+		}
+		/* Retrieve Classifier Node counter statistics for key */
+		err = get_ccnode_key_stats(cnt_cb, prm.ccnode_type, 0);
+	}
+	return err;
 }
 
 static int set_cnt_ipsec_cb(struct dpa_stats_cnt_cb *cnt_cb,
 			    const struct dpa_stats_cnt_params *params)
 {
-	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
 	struct dpa_ipsec_sa_stats stats;
-	uint32_t cnt_sel = params->ipsec_params.cnt_sel;
 	int err = 0;
 
-	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+	if (!cnt_cb->dpa_stats) {
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
-	/* Map IPSec counter selection to statistics */
-	if (cnt_sel == DPA_STATS_CNT_NUM_OF_BYTES) {
-		cnt_cb->info.stats_off[0] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_BYTES];
-		cnt_cb->info.stats_num = 1;
-	} else if (cnt_sel == DPA_STATS_CNT_NUM_OF_PACKETS) {
-		cnt_cb->info.stats_off[0] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_PACKETS];
-		cnt_cb->info.stats_num = 1;
-	} else if (cnt_sel == DPA_STATS_CNT_NUM_ALL) {
-		cnt_cb->info.stats_off[0] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_BYTES];
-		cnt_cb->info.stats_off[1] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_PACKETS];
-		cnt_cb->info.stats_num = 2;
-	} else {
-		pr_err("Invalid IPSec counter selection\n");
-		return -EINVAL;
+	/* Allocate memory for one security association id */
+	cnt_cb->ipsec_cb.sa_id = kzalloc(sizeof(*cnt_cb->ipsec_cb.sa_id),
+					GFP_KERNEL);
+	if (!cnt_cb->ipsec_cb.sa_id) {
+		log_err("Cannot allocate memory for security association id for counter id %d\n",
+			cnt_cb->id);
+		return -ENOMEM;
+	}
+
+	/* Allocate memory to store if security association is valid */
+	cnt_cb->ipsec_cb.valid = kzalloc(sizeof(*cnt_cb->ipsec_cb.valid),
+					 GFP_KERNEL);
+	if (!cnt_cb->ipsec_cb.valid) {
+		log_err("Cannot allocate memory to store if security association is valid for counter id %d\n",
+			cnt_cb->id);
+		return -ENOMEM;
 	}
 
 	cnt_cb->ipsec_cb.sa_id[0] = params->ipsec_params.sa_id;
 	cnt_cb->ipsec_cb.valid[0] = TRUE;
 	cnt_cb->members_num = 1;
 
+	/* Map IPSec counter selection to statistics */
+	err = cnt_gen_sel_to_stats(cnt_cb, params->ipsec_params.cnt_sel);
+	if (err < 0)
+		return err;
+
 	err = dpa_ipsec_sa_get_stats(cnt_cb->ipsec_cb.sa_id[0], &stats);
 	if (err < 0) {
-		pr_err("Invalid IPSec counter parameters\n");
+		log_err("Check failed for IPSec counter id %d due to incorrect parameters: sa_id=%d\n",
+			cnt_cb->id, cnt_cb->ipsec_cb.sa_id[0]);
 		return -EINVAL;
 	}
 
-	/* Set number of bytes that will be written by this counter */
-	cnt_cb->bytes_num = STATS_VAL_SIZE * cnt_cb->info.stats_num;
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	init_cnt_32bit_stats(&cnt_cb->info, &stats, 0);
+
+	return 0;
+}
+
+static int set_cnt_traffic_mng_cb(struct dpa_stats_cnt_cb *cnt_cb,
+			    const struct dpa_stats_cnt_params *params)
+{
+	uint32_t cnt_sel = params->traffic_mng_params.cnt_sel;
+	uint32_t cnt_src = params->traffic_mng_params.src;
+	uint64_t stats[2];
+	int err = 0;
+	bool us_cnt = FALSE;
+
+	if (!cnt_cb->dpa_stats) {
+		log_err("DPA Stats component is not initialized\n");
+		return -EFAULT;
+	}
+
+	/* Check if this is an users-space counter and if so, reset the flag */
+	if (cnt_sel & DPA_STATS_US_CNT) {
+		us_cnt = TRUE;
+		cnt_sel &= ~DPA_STATS_US_CNT;
+	}
+
+	if (!params->traffic_mng_params.traffic_mng && !us_cnt) {
+		log_err("Parameter traffic_mng handle cannot be NULL for counter id %d\n",
+			cnt_cb->id);
+		return -EINVAL;
+	}
+
+	/* Check and store the counter source */
+	if (cnt_src > DPA_STATS_CNT_TRAFFIC_CG) {
+		log_err("Parameter src %d must be in range (%d - %d) for counter id %d\n",
+			cnt_src, DPA_STATS_CNT_TRAFFIC_CLASS,
+			DPA_STATS_CNT_TRAFFIC_CG, cnt_cb->id);
+		return -EINVAL;
+	}
+
+	cnt_cb->gen_cb.objs = kzalloc(sizeof(t_Handle), GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new policer counter\n");
+		return -ENOMEM;
+	}
+	cnt_cb->gen_cb.objs[0] = params->traffic_mng_params.traffic_mng;
+	cnt_cb->members_num = 1;
+
+	/* Map Traffic Manager counter selection to statistics */
+	err = cnt_gen_sel_to_stats(cnt_cb, cnt_sel);
+	if (err < 0)
+		return err;
+
+	/* For user-space counters there is a different retrieve function */
+	if (us_cnt) {
+		cnt_cb->f_get_cnt_stats = get_cnt_us_stats;
+		return 0;
+	}
+
+	/* Check the counter source and the Traffic Manager object */
+	switch (cnt_src) {
+	case DPA_STATS_CNT_TRAFFIC_CLASS:
+		cnt_cb->f_get_cnt_stats = get_cnt_traffic_mng_cq_stats;
+		err = qman_ceetm_cq_get_dequeue_statistics(
+				params->traffic_mng_params.traffic_mng,
+				0, &stats[0], &stats[1]);
+		if (err < 0) {
+			log_err("Invalid Traffic Manager qm_ceetm_cq object for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+		break;
+	case DPA_STATS_CNT_TRAFFIC_CG:
+		cnt_cb->f_get_cnt_stats = get_cnt_traffic_mng_ccg_stats;
+		err = qman_ceetm_ccg_get_reject_statistics(
+				params->traffic_mng_params.traffic_mng,
+				0, &stats[0], &stats[1]);
+		if (err < 0) {
+			log_err("Invalid Traffic Manager qm_ceetm_ccg object for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+		break;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	init_cnt_64bit_stats(&cnt_cb->info, &stats, 0);
 
 	return 0;
 }
@@ -1475,19 +2116,21 @@ static int set_cls_cnt_eth_cb(struct dpa_stats_cnt_cb *cnt_cb,
 {
 	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
 	uint32_t cnt_sel = params->eth_params.cnt_sel;
+	t_FmMacStatistics stats;
 	t_Handle fm_mac = NULL;
 	uint32_t i = 0;
 	int err = 0;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Ethernet counter selection */
 	if (params->eth_params.cnt_sel == 0 ||
 	    params->eth_params.cnt_sel > DPA_STATS_CNT_ETH_ALL) {
-		pr_err("Invalid Ethernet counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_ETH_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
@@ -1495,26 +2138,48 @@ static int set_cls_cnt_eth_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	if (cnt_sel == DPA_STATS_CNT_ETH_ALL)
 		cnt_sel -= 1;
 
-	for (i = 0; i < params->class_members; i++) {
-		/* Get FM MAC handle */
-		err = get_fm_mac(params->eth_params.src[i], &fm_mac);
-		if (err != 0) {
-			pr_err("Could not obtain FM MAC handle!\n");
-			return -EINVAL;
-		}
-
-		cnt_cb->gen_cb.objs[i] = fm_mac;
-	}
-
 	cnt_cb->members_num = params->class_members;
 
 	/* Map Ethernet counter selection to FM MAC statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_ETH], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = cnt_cb->members_num *
 				STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	cnt_cb->gen_cb.objs = kcalloc(cnt_cb->members_num, sizeof(t_Handle),
+								GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new Ethernet class counter\n");
+		return -ENOMEM;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	for (i = 0; i < params->class_members; i++) {
+		/* Get FM MAC handle */
+		err = get_fm_mac(params->eth_params.src[i], &fm_mac);
+		if (err != 0) {
+			log_err("Cannot obtain Ethernet MAC handle for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+
+		cnt_cb->gen_cb.objs[i] = fm_mac;
+
+		err = FM_MAC_GetStatistics(cnt_cb->gen_cb.objs[i], &stats);
+		if (err != 0) {
+			log_err("Invalid Ethernet counter source for counter id %d\n",
+				cnt_cb->id);
+			return -ENOENT;
+		}
+		init_cnt_64bit_stats(&cnt_cb->info, &stats, i);
+	}
 	return 0;
 }
 
@@ -1528,7 +2193,7 @@ static int set_cls_cnt_reass_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	int err = 0;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
@@ -1538,22 +2203,16 @@ static int set_cls_cnt_reass_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	       cnt_sel <= DPA_STATS_CNT_REASS_IPv4_ALL) ||
 	      (cnt_sel >= DPA_STATS_CNT_REASS_IPv6_FRAMES &&
 	       cnt_sel <= DPA_STATS_CNT_REASS_IPv6_ALL))) {
-		pr_err("Invalid Reassembly counter selection\n");
+		log_err("Parameter cnt_sel %d must be in one of the ranges (1 - %d), (%d - %d), (%d - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_REASS_GEN_ALL,
+			DPA_STATS_CNT_REASS_IPv4_FRAMES,
+			DPA_STATS_CNT_REASS_IPv4_ALL,
+			DPA_STATS_CNT_REASS_IPv6_FRAMES,
+			DPA_STATS_CNT_REASS_IPv6_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
 	cnt_cb->members_num = params->class_members;
-
-	for (i = 0; i < params->class_members; i++) {
-		cnt_cb->gen_cb.objs[i] = params->reass_params.reass[i];
-
-		/* Check the user-provided reassembly manip */
-		err = FM_PCD_ManipGetStatistics(cnt_cb->gen_cb.objs[i], &stats);
-		if (err < 0) {
-			pr_err("Invalid Reassembly manip handle\n");
-			return -EINVAL;
-		}
-	}
 
 	/* Based on user option, change mask to all statistics in one group */
 	if (cnt_sel == DPA_STATS_CNT_REASS_GEN_ALL)
@@ -1566,12 +2225,44 @@ static int set_cls_cnt_reass_cb(struct dpa_stats_cnt_cb *cnt_cb,
 			~(DPA_STATS_CNT_REASS_IPv6_FRAMES - 1);
 
 	/* Map Reassembly counter selection to Manip statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_REASS], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = cnt_cb->members_num *
 				STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	cnt_cb->gen_cb.objs = kcalloc(cnt_cb->members_num, sizeof(t_Handle),
+								GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new IP reass class counter\n");
+		return -ENOMEM;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	for (i = 0; i < params->class_members; i++) {
+		if (!params->reass_params.reass[i]) {
+			log_err("Parameter Reassembly handle cannot be NULL for member %d, counter id %d\n",
+				i, cnt_cb->id);
+			return -EFAULT;
+		}
+		cnt_cb->gen_cb.objs[i] = params->reass_params.reass[i];
+
+		/* Check the user-provided reassembly manip */
+		err = FM_PCD_ManipGetStatistics(cnt_cb->gen_cb.objs[i], &stats);
+		if (err < 0) {
+			log_err("Invalid Reassembly manip handle for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+		init_cnt_32bit_stats(&cnt_cb->info, &stats, i);
+	}
+
 	return 0;
 }
 
@@ -1584,40 +2275,62 @@ static int set_cls_cnt_frag_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	int err;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Fragmentation counter selection */
 	if ((cnt_sel == 0) || (cnt_sel > DPA_STATS_CNT_FRAG_ALL)) {
-		pr_err("Invalid Fragmentation counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_FRAG_ALL, cnt_cb->id);
 		return -EINVAL;
 	}
 
 	cnt_cb->members_num = params->class_members;
-
-	for (i = 0; i < params->class_members; i++) {
-		cnt_cb->gen_cb.objs[i] = params->frag_params.frag[i];
-
-		/* Check the user-provided fragmentation handle */
-		err = FM_PCD_ManipGetStatistics(cnt_cb->gen_cb.objs[i], &stats);
-		if (err < 0) {
-			pr_err("Invalid Fragmentation manip handle\n");
-			return -EINVAL;
-		}
-	}
 
 	/* Decrease one to obtain the mask for all statistics */
 	if (cnt_sel == DPA_STATS_CNT_FRAG_ALL)
 		cnt_sel -= 1;
 
 	/* Map Fragmentation counter selection to Manip statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_FRAG], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = cnt_cb->members_num *
 				STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	cnt_cb->gen_cb.objs = kcalloc(cnt_cb->members_num, sizeof(t_Handle),
+								GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new IP frag class counter\n");
+		return -ENOMEM;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	for (i = 0; i < params->class_members; i++) {
+		if (!params->frag_params.frag[i]) {
+			log_err("Parameter Fragmentation handle cannot be NULL for member %d, counter id %d\n",
+				i, cnt_cb->id);
+			return -EFAULT;
+		}
+		cnt_cb->gen_cb.objs[i] = params->frag_params.frag[i];
+
+		/* Check the user-provided fragmentation handle */
+		err = FM_PCD_ManipGetStatistics(cnt_cb->gen_cb.objs[i], &stats);
+		if (err < 0) {
+			log_err("Invalid Fragmentation manip handle for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+		init_cnt_32bit_stats(&cnt_cb->info, &stats, i);
+	}
+
 	return 0;
 }
 
@@ -1625,81 +2338,113 @@ static int set_cls_cnt_plcr_cb(struct dpa_stats_cnt_cb *cnt_cb,
 			       const struct dpa_stats_cls_cnt_params *params)
 {
 	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
-	struct stats_info *info = &cnt_cb->info;
-	uint32_t cnt_sel = params->plcr_params.cnt_sel, i;
+	uint32_t cnt_sel = params->plcr_params.cnt_sel;
+	uint32_t i, j, stats, stats_idx, stats_base_idx;
+	int err;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Policer counter selection */
 	if (cnt_sel == 0 || cnt_sel > DPA_STATS_CNT_PLCR_ALL) {
-		pr_err("Invalid Policer counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_PLCR_ALL, cnt_cb->id);
 		return -EINVAL;
-	}
-
-	cnt_cb->members_num = params->class_members;
-
-	for (i = 0; i < params->class_members; i++) {
-		cnt_cb->gen_cb.objs[i] = params->plcr_params.plcr[i];
-		/* Check the user-provided policer handle */
-		FM_PCD_PlcrProfileGetCounter(cnt_cb->gen_cb.objs[i],
-				info->stats_off[0]);
-		/*
-		 * in case of bad counter the error will be displayed at
-		 * creation time
-		 */
 	}
 
 	/* Decrease one to obtain the mask for all statistics */
 	if (cnt_sel == DPA_STATS_CNT_PLCR_ALL)
 		cnt_sel -= 1;
 
+	cnt_cb->members_num = params->class_members;
+
 	/* Map Policer counter selection to policer statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_POLICER], cnt_sel);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = cnt_cb->members_num *
 				STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	cnt_cb->gen_cb.objs = kcalloc(cnt_cb->members_num, sizeof(t_Handle),
+								GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new policer class counter\n");
+		return -ENOMEM;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	for (i = 0; i < params->class_members; i++) {
+		if (!params->plcr_params.plcr[i]) {
+			log_err("Parameter Policer handle cannot be NULL for member %d, counter id %d\n",
+				i, cnt_cb->id);
+			return -EFAULT;
+		}
+		cnt_cb->gen_cb.objs[i] = params->plcr_params.plcr[i];
+
+		stats_base_idx = cnt_cb->info.stats_num * i;
+		for (j = 0; j < cnt_cb->info.stats_num; j++) {
+			stats = (uint64_t)FM_PCD_PlcrProfileGetCounter(
+				cnt_cb->gen_cb.objs[i],
+				cnt_cb->info.stats_off[j]);
+
+			/* Store the current value as the last read value */
+			stats_idx = stats_base_idx + j;
+			cnt_cb->info.stats[stats_idx] = 0;
+			cnt_cb->info.last_stats[stats_idx] = stats;
+		}
+	}
+
 	return 0;
 }
 
 static int set_cls_cnt_classif_tbl_pair(
-		struct dpa_stats_cnt_classif_tbl_cb *cnt_tbl_cb, int td,
+		struct dpa_stats_cnt_cb *cnt_cb, int td,
 		const struct dpa_offload_lookup_key_pair *pair,
-		struct dpa_stats_lookup_key *lookup_key)
+		uint32_t idx)
 {
+	struct dpa_stats_cnt_classif_tbl_cb *cnt_tbl_cb = &cnt_cb->tbl_cb;
+	struct dpa_stats_lookup_key *lookup_key = &cnt_tbl_cb->keys[idx];
 	struct dpa_cls_tbl_params cls_tbl;
-	struct dpa_offload_lookup_key tbl_key;
 	struct dpa_cls_tbl_action action;
 	int err = 0;
 
-	/* Check that key byte is not NULL */
-	if (!pair->first_key.byte) {
-		pr_err("Invalid argument: NULL key byte pointer\n");
-		return -EFAULT;
-	}
+	/* If either the entire 'pair' or the first key is NULL, then retrieve
+	 * the action associated with the 'miss action '*/
+	if ((!pair) || (pair && !pair->first_key)) {
+		err = dpa_classif_get_miss_action(td, &action);
+		if (err != 0) {
+			log_err("Cannot retrieve miss action parameters for table descriptor %d\n",
+				td);
+			return -EINVAL;
+		}
+	} else {
+		/* Check that key byte is not NULL */
+		if (!pair->first_key->byte) {
+			log_err("First key descriptor byte of the user pair cannot be NULL for table descriptor %d\n",
+				td);
+			return -EFAULT;
+		}
 
-	/* Copy first key descriptor parameters*/
-	err = copy_key_descriptor(&pair->first_key, &tbl_key);
-	if (err != 0) {
-		pr_err("Unable to copy key descriptor\n");
-		return -EINVAL;
-	}
-
-	/* Use the first key of the pair to lookup in the classifier
-	 * table the next table connected on a "next-action" */
-	err = dpa_classif_table_lookup_by_key(td, &tbl_key, &action);
-	if (err != 0) {
-		pr_err("Unable to retrieve next action parameters\n");
-		return -EINVAL;
+		/* Use the first key of the pair to lookup in the classifier
+		 * table the next table connected on a "next-action" */
+		err = dpa_classif_table_lookup_by_key(td, pair->first_key, &action);
+		if (err != 0) {
+			log_err("Cannot retrieve next action parameters for table descriptor %d\n",
+				td);
+			return -EINVAL;
+		}
 	}
 
 	if (action.type != DPA_CLS_TBL_ACTION_NEXT_TABLE) {
-		pr_err("Double key is supported only if "
-				"two tables are connected\n");
+		log_err("Pair key is supported only if two tables are connected");
 		return -EINVAL;
 	}
 
@@ -1707,30 +2452,41 @@ static int set_cls_cnt_classif_tbl_pair(
 	err = dpa_classif_table_get_params(
 			action.next_table_params.next_td, &cls_tbl);
 	if (err != 0) {
-		pr_err("Unable to retrieve next table parameters\n");
+		log_err("Cannot retrieve next table %d parameters\n", td);
 		return -EINVAL;
 	}
 
 	/* Store DPA Classifier Table type */
 	cnt_tbl_cb->type = cls_tbl.type;
 
+	/* Set retrieve function depending on table type */
+	set_cnt_classif_tbl_retrieve_func(cnt_cb);
+
 	/* Store CcNode handle */
 	lookup_key->cc_node = cls_tbl.cc_node;
 
-	/* Set as lookup key the second key descriptor from the pair */
-	err = copy_key_descriptor(&pair->second_key, &lookup_key->key);
-	if (err != 0) {
-		pr_err("Unable to copy key descriptor\n");
-		return -EINVAL;
+	if (!pair || (pair && !pair->second_key)) {
+		/* Set as the key as "for miss" */
+		lookup_key->miss_key = TRUE;
+	} else {
+		lookup_key->miss_key = FALSE;
+
+		/* Set as lookup key the second key descriptor from the pair */
+		err = copy_key_descriptor(pair->second_key,
+							&lookup_key->key);
+		if (err != 0) {
+			log_err("Cannot copy second key descriptor of the user pair\n");
+			return -EINVAL;
+		}
 	}
 
-	return 0;
+	return err;
 }
 
 static int set_cls_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 				 const struct dpa_stats_cls_cnt_params *params)
 {
-	struct dpa_stats_cnt_classif_tbl_cb *cnt_tbl_cb = &cnt_cb->tbl_cb;
+	struct dpa_stats_cnt_classif_tbl_cb *tbl_cb = &cnt_cb->tbl_cb;
 	struct dpa_stats_cls_cnt_classif_tbl prm = params->classif_tbl_params;
 	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
 	struct dpa_cls_tbl_params cls_tbl;
@@ -1739,7 +2495,8 @@ static int set_cls_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 
 	/* Check Classifier Table descriptor */
 	if (params->classif_tbl_params.td == DPA_OFFLD_INVALID_OBJECT_ID) {
-		pr_err("Invalid Classifier Table descriptor\n");
+		log_err("Invalid table descriptor %d for counter id %d\n",
+			params->classif_tbl_params.td, cnt_cb->id);
 		return -EINVAL;
 	}
 
@@ -1750,6 +2507,14 @@ static int set_cls_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 		/* Entire group of counters was selected */
 		if (cnt_sel == DPA_STATS_CNT_CLASSIF_ALL)
 			cnt_sel -= 1;
+
+		/* Map Classif Node counter selection to CcNode statistics */
+		err = cnt_sel_to_stats(&cnt_cb->info,
+			dpa_stats->stats_sel[DPA_STATS_CNT_CLASSIF_NODE],
+			cnt_sel >> CLASSIF_STATS_SHIFT);
+		if (err)
+			return err;
+
 		frag_stats = 0;
 
 	} else if (cnt_sel >= DPA_STATS_CNT_FRAG_TOTAL_FRAMES &&
@@ -1758,112 +2523,177 @@ static int set_cls_cnt_classif_tbl_cb(struct dpa_stats_cnt_cb *cnt_cb,
 		/* Entire group of counters was selected */
 		if (cnt_sel == DPA_STATS_CNT_FRAG_ALL)
 			cnt_sel -= 1;
+
+		/* Map Classif Node counter selection to fragmentation stats */
+		err = cnt_sel_to_stats(&cnt_cb->info,
+			dpa_stats->stats_sel[DPA_STATS_CNT_FRAG], cnt_sel);
+		if (err)
+			return err;
+
 		frag_stats = 1;
 
 	} else {
-		pr_err("Invalid Classifier Table counter selection\n");
+		log_err("Parameter cnt_sel %d must be in one of the ranges (%d - %d), (%d - %d), for counter id %d\n",
+			cnt_sel, DPA_STATS_CNT_CLASSIF_BYTES,
+			DPA_STATS_CNT_CLASSIF_ALL,
+			DPA_STATS_CNT_FRAG_TOTAL_FRAMES, DPA_STATS_CNT_FRAG_ALL,
+			cnt_cb->id);
 		return -EINVAL;
 	}
 
-	cnt_tbl_cb->td = params->classif_tbl_params.td;
+	tbl_cb->td = params->classif_tbl_params.td;
 	cnt_cb->members_num = params->class_members;
-
-	switch (prm.key_type) {
-	case DPA_STATS_CLASSIF_SINGLE_KEY:
-		/* Get CcNode from table descriptor */
-		err = dpa_classif_table_get_params(prm.td, &cls_tbl);
-		if (err != 0) {
-			pr_err("Invalid argument: Table descriptor\n");
-			return -EINVAL;
-		}
-
-		/* Store DPA Classifier Table type */
-		cnt_tbl_cb->type = cls_tbl.type;
-
-		for (i = 0; i < params->class_members; i++) {
-			/* Store CcNode handle */
-			cnt_tbl_cb->keys[i].cc_node = cls_tbl.cc_node;
-
-			if (!prm.keys[i].byte) {
-				/* Key is not valid for now */
-				cnt_tbl_cb->keys[i].valid = FALSE;
-				continue;
-			}
-
-			/* Copy the key descriptor */
-			err = copy_key_descriptor(&prm.keys[i],
-						  &cnt_tbl_cb->keys[i].key);
-			if (err != 0) {
-				pr_err("Unable to copy key descriptor\n");
-				return -EINVAL;
-			}
-
-			/* Check the Classifier Table counter */
-			err = check_tbl_cls_counter(cnt_cb,
-						    &cnt_tbl_cb->keys[i]);
-			if (err != 0)
-				return -EINVAL;
-
-			cnt_tbl_cb->keys[i].valid = TRUE;
-		}
-		break;
-	case DPA_STATS_CLASSIF_PAIR_KEY:
-		for (i = 0; i < params->class_members; i++) {
-			if (!prm.pairs[i].first_key.byte) {
-				/* Key is not valid for now */
-				cnt_tbl_cb->keys[i].valid = FALSE;
-				continue;
-			}
-
-			err = set_cls_cnt_classif_tbl_pair(cnt_tbl_cb, prm.td,
-					&prm.pairs[i], &cnt_tbl_cb->keys[i]);
-			if (err != 0) {
-				pr_err("Unable to set the key pair\n");
-				return -EINVAL;
-			}
-
-			/* Check the Classifier Table counter */
-			err = check_tbl_cls_counter(cnt_cb,
-						    &cnt_tbl_cb->keys[i]);
-			if (err != 0)
-				return -EINVAL;
-
-			cnt_tbl_cb->keys[i].valid = TRUE;
-		}
-		break;
-	default:
-		pr_err("Invalid argument: key type\n");
-		return -EINVAL;
-	}
-
-	if (frag_stats) {
-		/* For every valid key, retrieve the hmcd */
-		for (i = 0; i < params->class_members; i++) {
-			if (!cnt_tbl_cb->keys[i].valid)
-				continue;
-
-			err = set_frag_manip(prm.td, &cnt_cb->tbl_cb.keys[i]);
-			if (err < 0) {
-				pr_err("Invalid Fragmentation manip handle\n");
-				return -EINVAL;
-			}
-		}
-
-		/* Map Classif Node counter selection to fragmentation stats */
-		cnt_sel_to_stats(&cnt_cb->info,
-			dpa_stats->stats_sel[DPA_STATS_CNT_FRAG], cnt_sel);
-
-		/* Change the retrieve routine */
-		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_frag_stats;
-	} else
-		/* Map Classif Node counter selection to CcNode statistics */
-		cnt_sel_to_stats(&cnt_cb->info,
-			dpa_stats->stats_sel[DPA_STATS_CNT_CLASSIF_NODE],
-			cnt_sel >> CLASSIF_STATS_SHIFT);
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = cnt_cb->members_num *
 			STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	/* Allocate memory for key descriptors */
+	tbl_cb->keys = kcalloc(params->class_members, sizeof(*tbl_cb->keys),
+								GFP_KERNEL);
+	if (!tbl_cb->keys) {
+		log_err("Cannot allocate memory for array of key descriptors for counter id %d\n",
+			cnt_cb->id);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < cnt_cb->members_num; i++) {
+		/* Allocate memory for every key */
+		tbl_cb->keys[i].key.data.byte = kzalloc(
+				DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+		if (!tbl_cb->keys[i].key.data.byte)
+			log_err("Cannot allocate memory for key %d of counter id %d\n",
+					i, cnt_cb->id);
+		tbl_cb->keys[i].key.data.mask = kzalloc(
+				DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+		if (!tbl_cb->keys[i].key.data.mask)
+			log_err("Cannot allocate memory for mask %d of counter id %d\n",
+					i, cnt_cb->id);
+	}
+
+	switch (prm.key_type) {
+	case DPA_STATS_CLASSIF_SINGLE_KEY:
+		if (!prm.keys) {
+			log_err("Pointer to the array of keys cannot be NULL for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+
+		/* Get CcNode from table descriptor */
+		err = dpa_classif_table_get_params(prm.td, &cls_tbl);
+		if (err != 0) {
+			log_err("Invalid table descriptor %d for counter id %d\n",
+				prm.td, cnt_cb->id);
+			return -EINVAL;
+		}
+
+		/* Store DPA Classifier Table type */
+		tbl_cb->type = cls_tbl.type;
+
+		/* Set retrieve function depending on table type */
+		set_cnt_classif_tbl_retrieve_func(cnt_cb);
+
+		for (i = 0; i < params->class_members; i++) {
+			/* Store CcNode handle */
+			tbl_cb->keys[i].cc_node = cls_tbl.cc_node;
+
+			/* Determine if key represents a 'miss' entry */
+			if (!prm.keys[i]) {
+				tbl_cb->keys[i].miss_key = TRUE;
+				tbl_cb->keys[i].valid = TRUE;
+				continue;
+			}
+			/* Key is not valid for now */
+			if (!prm.keys[i]->byte) {
+				tbl_cb->keys[i].valid = FALSE;
+				continue;
+			}
+			/* Copy the key descriptor */
+			err = copy_key_descriptor(prm.keys[i],
+						  &tbl_cb->keys[i].key);
+			if (err != 0) {
+				log_err("Cannot copy key descriptor from user parameters\n");
+				return -EINVAL;
+			}
+			tbl_cb->keys[i].valid = TRUE;
+		}
+		break;
+	case DPA_STATS_CLASSIF_PAIR_KEY:
+		if (!prm.pairs) {
+			log_err("Pointer to the array of pairs cannot be NULL for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+
+		for (i = 0; i < params->class_members; i++) {
+			if (prm.pairs[i]) {
+				if (prm.pairs[i]->first_key) {
+					if (!prm.pairs[i]->first_key->byte) {
+						/* Key is not valid for now */
+						tbl_cb->keys[i].valid = FALSE;
+						continue;
+					}
+				}
+			}
+
+			err = set_cls_cnt_classif_tbl_pair(cnt_cb, prm.td,
+							prm.pairs[i], i);
+			if (err != 0) {
+				log_err("Cannot set classifier table pair key for counter id %d\n",
+					cnt_cb->id);
+				return -EINVAL;
+			}
+			tbl_cb->keys[i].valid = TRUE;
+		}
+		break;
+	default:
+		log_err("Parameter key_type %d must be in range (%d - %d) for counter id %d\n",
+			prm.key_type, DPA_STATS_CLASSIF_SINGLE_KEY,
+			DPA_STATS_CLASSIF_PAIR_KEY, cnt_cb->id);
+		return -EINVAL;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	if (!frag_stats) {
+		for (i = 0; i < params->class_members; i++) {
+			if (!tbl_cb->keys[i].valid)
+				continue;
+
+			/* Get Classif Table counter stats for 'miss' */
+			if (tbl_cb->keys[i].miss_key) {
+				err = get_classif_tbl_miss_stats(cnt_cb, i);
+				if (err != 0)
+					return -EINVAL;
+			} else {
+				/*
+				 * Get Classifier Table counter statistics for
+				 * a key
+				 */
+				err = get_classif_tbl_key_stats(cnt_cb, i);
+				if (err != 0)
+					return -EINVAL;
+			}
+		}
+	} else {
+		/* For every valid key, retrieve the hmcd */
+		for (i = 0; i < params->class_members; i++) {
+			if (!tbl_cb->keys[i].valid)
+				continue;
+
+			err = set_frag_manip(prm.td, &cnt_cb->tbl_cb.keys[i]);
+			if (err < 0) {
+				log_err("Invalid Fragmentation manip handle for counter id %d\n",
+					cnt_cb->id);
+				return -EINVAL;
+			}
+		}
+		/* Set the retrieve routine */
+		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_frag_stats;
+	}
+
 	return 0;
 }
 
@@ -1876,45 +2706,100 @@ static int set_cls_cnt_ccnode_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	int err = 0;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
 	/* Check Classification Cc Node counter selection */
 	if (prm.cnt_sel == 0 ||  prm.cnt_sel > DPA_STATS_CNT_CLASSIF_ALL) {
-		pr_err("Invalid Classif_Node counter selection\n");
+		log_err("Parameter cnt_sel %d must be in range (1 - %d) for counter id %d\n",
+			prm.cnt_sel, DPA_STATS_CNT_CLASSIF_ALL, cnt_cb->id);
+		return -EINVAL;
+	}
+
+	if (!params->classif_node_params.cc_node) {
+		log_err("Parameter classification CC Node handle cannot be NULL for counter id %d\n",
+			cnt_cb->id);
+		return -EFAULT;
+	}
+
+	if (!prm.keys) {
+		log_err("Pointer to the array of keys cannot be NULL for counter id %d\n",
+			cnt_cb->id);
 		return -EINVAL;
 	}
 
 	cnt_cb->ccnode_cb.cc_node = prm.cc_node;
 	cnt_cb->members_num = params->class_members;
 
-	for (i = 0; i < params->class_members; i++) {
-		/* Copy the key descriptor */
-		err = copy_key_descriptor(&prm.keys[i],
-				&cnt_cb->ccnode_cb.keys[i]);
-		if (err != 0) {
-			pr_err("Unable to copy key descriptor\n");
-			return -EINVAL;
-		}
-
-		/* Check the Classifier Node counter parameters */
-		err = check_ccnode_counter(cnt_cb,
-				prm.ccnode_type, &cnt_cb->ccnode_cb.keys[i]);
-		if (err != 0) {
-			pr_err("Invalid Classif Node counter parameters\n");
-			return -EINVAL;
-		}
-	}
-
 	/* Map Classif Node counter selection to CcNode statistics */
-	cnt_sel_to_stats(&cnt_cb->info,
+	err = cnt_sel_to_stats(&cnt_cb->info,
 			 dpa_stats->stats_sel[DPA_STATS_CNT_CLASSIF_NODE],
 			 prm.cnt_sel >> CLASSIF_STATS_SHIFT);
+	if (err)
+		return err;
 
 	/* Set number of bytes that will be written by this counter */
 	cnt_cb->bytes_num = cnt_cb->members_num *
 				STATS_VAL_SIZE * cnt_cb->info.stats_num;
+
+	/* Set retrieve function depending on counter type */
+	err = set_cnt_classif_node_retrieve_func(cnt_cb, prm.ccnode_type);
+	if (err != 0)
+		return -EINVAL;
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	/* Allocate memory for one key descriptor */
+	cnt_cb->ccnode_cb.keys = kcalloc(cnt_cb->members_num,
+					sizeof(*cnt_cb->ccnode_cb.keys),
+								GFP_KERNEL);
+	if (!cnt_cb->ccnode_cb.keys) {
+		log_err("Cannot allocate memory for key descriptors for class counter id %d\n", cnt_cb->id);
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < cnt_cb->members_num; i++) {
+		/* Allocate memory for every key */
+		cnt_cb->ccnode_cb.keys[i].data.byte = kzalloc(
+				DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+		if (!cnt_cb->ccnode_cb.keys[i].data.byte)
+			log_err("Cannot allocate memory for key %d of counter id %d\n",
+					i, cnt_cb->id);
+		cnt_cb->ccnode_cb.keys[i].data.mask = kzalloc(
+				DPA_OFFLD_MAXENTRYKEYSIZE, GFP_KERNEL);
+		if (!cnt_cb->ccnode_cb.keys[i].data.mask)
+			log_err("Cannot allocate memory for mask %d of counter id %d\n",
+					i, cnt_cb->id);
+	}
+
+	for (i = 0; i < params->class_members; i++) {
+		if (!prm.keys[i]) {
+			/* Invalidate key data, to mark it for 'miss' */
+			cnt_cb->ccnode_cb.keys[i].valid_key = false;
+
+			/* Retrieve Classif Node counter statistics for 'miss'*/
+			err = get_ccnode_miss_stats(cnt_cb, prm.ccnode_type, i);
+			if (err != 0)
+				return err;
+		} else {
+			/* Copy the key descriptor */
+			err = copy_key_descriptor(prm.keys[i],
+						  &cnt_cb->ccnode_cb.keys[i]);
+			if (err != 0) {
+				log_err("Cannot copy key descriptor from user parameters\n");
+				return -EINVAL;
+			}
+
+			/* Retrieve Classifier Node counter statistics for key*/
+			err = get_ccnode_key_stats(cnt_cb, prm.ccnode_type, i);
+			if (err != 0)
+				return err;
+		}
+	}
+
 	return 0;
 }
 
@@ -1924,35 +2809,42 @@ static int set_cls_cnt_ipsec_cb(struct dpa_stats_cnt_cb *cnt_cb,
 	struct dpa_stats_cnt_ipsec_cb *cnt_ipsec_cb = &cnt_cb->ipsec_cb;
 	struct dpa_stats *dpa_stats = cnt_cb->dpa_stats;
 	struct dpa_ipsec_sa_stats stats;
-	uint32_t cnt_sel = prm->ipsec_params.cnt_sel, i = 0;
+	uint32_t i = 0;
 	int err = 0;
 
 	if (!dpa_stats) {
-		pr_err("Invalid argument: NULL DPA Stats instance\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EFAULT;
 	}
 
-	/* Map IPSec counter selection to statistics */
-	if (cnt_sel == DPA_STATS_CNT_NUM_OF_BYTES) {
-		cnt_cb->info.stats_off[0] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_BYTES];
-		cnt_cb->info.stats_num = 1;
-	} else if (cnt_sel  == DPA_STATS_CNT_NUM_OF_PACKETS) {
-		cnt_cb->info.stats_off[0] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_PACKETS];
-		cnt_cb->info.stats_num = 1;
-	} else if (cnt_sel  == DPA_STATS_CNT_NUM_ALL) {
-		cnt_cb->info.stats_off[0] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_BYTES];
-		cnt_cb->info.stats_off[1] = dpa_stats->stats_sel[
-			DPA_STATS_CNT_IPSEC][DPA_STATS_CNT_NUM_OF_PACKETS];
-		cnt_cb->info.stats_num = 2;
-	} else {
-		pr_err("Invalid IPSec counter selection\n");
-		return -EINVAL;
+	/* Allocate memory for array of security association ids */
+	cnt_cb->ipsec_cb.sa_id = kcalloc(prm->class_members,
+				  sizeof(*cnt_cb->ipsec_cb.sa_id), GFP_KERNEL);
+	if (!cnt_cb->ipsec_cb.sa_id) {
+		log_err("Cannot allocate memory for array of security association ids, for counter id %d\n",
+			cnt_cb->id);
+		return -ENOMEM;
+	}
+
+	/* Allocate memory for array that stores if SA id is valid */
+	cnt_cb->ipsec_cb.valid = kcalloc(prm->class_members,
+				  sizeof(*cnt_cb->ipsec_cb.valid), GFP_KERNEL);
+	if (!cnt_cb->ipsec_cb.valid) {
+		log_err("Cannot allocate memory for array that stores if security association ids are valid for counter id %d\n",
+			cnt_cb->id);
+		return -ENOMEM;
 	}
 
 	cnt_cb->members_num = prm->class_members;
+
+	/* Map IPSec counter selection to statistics */
+	err = cnt_gen_sel_to_stats(cnt_cb, prm->ipsec_params.cnt_sel);
+	if (err < 0)
+		return err;
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
 
 	for (i = 0; i < prm->class_members; i++) {
 		if (prm->ipsec_params.sa_id[i] != DPA_OFFLD_INVALID_OBJECT_ID) {
@@ -1962,133 +2854,298 @@ static int set_cls_cnt_ipsec_cb(struct dpa_stats_cnt_cb *cnt_cb,
 			err = dpa_ipsec_sa_get_stats(cnt_cb->ipsec_cb.sa_id[i],
 					&stats);
 			if (err < 0) {
-				pr_err("Invalid IPSec counter parameters\n");
+				log_err("Check failed for IPSec counter id %d due to incorrect parameters: sa_id=%d\n",
+					cnt_cb->id, cnt_cb->ipsec_cb.sa_id[i]);
 				return -EINVAL;
 			}
-		} else {
+			init_cnt_32bit_stats(&cnt_cb->info, &stats, i);
+		} else
 			cnt_ipsec_cb->valid[i] = FALSE;
-		}
 	}
 
-	/* Set number of bytes that will be written by this counter */
-	cnt_cb->bytes_num = cnt_cb->members_num *
-			STATS_VAL_SIZE * cnt_cb->info.stats_num;
+	return 0;
+}
+
+static int set_cls_cnt_traffic_mng_cb(struct dpa_stats_cnt_cb *cnt_cb,
+		const struct dpa_stats_cls_cnt_params *params)
+{
+	struct dpa_stats_cls_cnt_traffic_mng prm = params->traffic_mng_params;
+	uint32_t cnt_sel = prm.cnt_sel, i;
+	uint64_t stats[2];
+	int err = 0;
+	bool us_cnt = FALSE;
+
+	if (!cnt_cb->dpa_stats) {
+		log_err("DPA Stats component is not initialized\n");
+		return -EFAULT;
+	}
+
+	/* Check if this is an users-space counter and if so, reset the flag */
+	if (cnt_sel & DPA_STATS_US_CNT) {
+		us_cnt = TRUE;
+		cnt_sel &= ~DPA_STATS_US_CNT;
+	}
+
+	cnt_cb->members_num = params->class_members;
+
+	/* Map Traffic Manager counter selection to statistics */
+	err = cnt_gen_sel_to_stats(cnt_cb, cnt_sel);
+	if (err < 0)
+		return err;
+
+	/* For user-space counters there is a different retrieve function */
+	if (us_cnt) {
+		cnt_cb->f_get_cnt_stats = get_cnt_us_stats;
+		return 0;
+	}
+
+	err = alloc_cnt_stats(&cnt_cb->info, cnt_cb->members_num);
+	if (err)
+		return err;
+
+	cnt_cb->gen_cb.objs = kcalloc(cnt_cb->members_num, sizeof(t_Handle),
+								GFP_KERNEL);
+	if (!cnt_cb->gen_cb.objs) {
+		log_err("No more memory for new traffic manager class counter\n");
+		return -ENOMEM;
+	}
+
+	/* Check the counter source and the Traffic Manager object */
+	switch (prm.src) {
+	case DPA_STATS_CNT_TRAFFIC_CLASS:
+		cnt_cb->f_get_cnt_stats = get_cnt_traffic_mng_cq_stats;
+		for (i = 0; i < params->class_members; i++) {
+			if (!prm.traffic_mng[i]) {
+				log_err("Parameter traffic_mng handle cannot be NULL for member %d\n",
+					i);
+				return -EFAULT;
+			}
+
+			/* Check the provided Traffic Manager object */
+			err = qman_ceetm_cq_get_dequeue_statistics(
+				prm.traffic_mng[i], 0, &stats[0], &stats[1]);
+			if (err < 0) {
+				log_err("Invalid traffic_mng handle for counter id %d\n",
+					cnt_cb->id);
+				return -EINVAL;
+			}
+			init_cnt_64bit_stats(&cnt_cb->info, &stats, i);
+			cnt_cb->gen_cb.objs[i] = prm.traffic_mng[i];
+		}
+		break;
+	case DPA_STATS_CNT_TRAFFIC_CG:
+		cnt_cb->f_get_cnt_stats = get_cnt_traffic_mng_ccg_stats;
+		for (i = 0; i < params->class_members; i++) {
+			if (!prm.traffic_mng[i])	{
+				log_err("Parameter traffic_mng handle cannot be NULL for member %d\n",
+					i);
+				return -EFAULT;
+			}
+
+			/* Check the provided Traffic Manager object */
+			err = qman_ceetm_ccg_get_reject_statistics(
+				prm.traffic_mng[i], 0, &stats[0], &stats[1]);
+			if (err < 0) {
+				log_err("Invalid traffic_mng handle for counter id %d\n",
+					cnt_cb->id);
+				return -EINVAL;
+			}
+			init_cnt_64bit_stats(&cnt_cb->info, &stats, i);
+			cnt_cb->gen_cb.objs[i] = prm.traffic_mng[i];
+		}
+		break;
+	default:
+		log_err("Parameter src %d must be in range (%d - %d) for counter id %d\n",
+			prm.src, DPA_STATS_CNT_TRAFFIC_CLASS,
+			DPA_STATS_CNT_TRAFFIC_CG, cnt_cb->id);
+		return -EINVAL;
+	}
+
 	return 0;
 }
 
 int set_classif_tbl_member(const struct dpa_stats_cls_member_params *prm,
-			   int member_index,
-			   struct dpa_stats_cnt_cb *cnt_cb)
+			   int mbr_idx, struct dpa_stats_cnt_cb *cnt_cb)
 {
 	struct dpa_stats_cnt_classif_tbl_cb *tbl_cb = &cnt_cb->tbl_cb;
+	struct dpa_stats_lookup_key *lookup_key = &tbl_cb->keys[mbr_idx];
+	struct dpa_stats_allocated_lookup_key *key = &lookup_key->key;
 	uint32_t i = 0;
+	uint32_t stats_base_idx;
 	int err = 0;
 
 	/* Check that counter is of type Classifier table */
 	if (cnt_cb->type != DPA_STATS_CNT_CLASSIF_TBL) {
-		pr_err("Operation permitted only on counter "
-				"type DPA_STATS_CNT_CLASSIF_TBL\n");
+		log_err("Operation permitted only on counter type DPA_STATS_CNT_CLASSIF_TBL %d for counter id %d\n",
+			DPA_STATS_CNT_CLASSIF_TBL, cnt_cb->id);
 		return -EINVAL;
 	}
 
 	/* Check that member index does not exceeds class size */
-	if (member_index < 0 || member_index >= cnt_cb->members_num) {
-		pr_err("Member index is out of class counter size\n");
+	if (mbr_idx < 0 || mbr_idx >= cnt_cb->members_num) {
+		log_err("Parameter member_index %d must be in range (0 - %d) for counter id %d\n",
+			mbr_idx, cnt_cb->members_num - 1, cnt_cb->id);
 		return -EINVAL;
 	}
 
-	/* Release the old key memory */
-	kfree(tbl_cb->keys[member_index].key.byte);
-	tbl_cb->keys[member_index].key.byte = NULL;
-
-	kfree(tbl_cb->keys[member_index].key.mask);
-	tbl_cb->keys[member_index].key.mask = NULL;
-
-	/* Reset the statistics */
-	for (i = 0; i < cnt_cb->info.stats_num; i++) {
-		cnt_cb->info.stats[member_index][i] = 0;
-		cnt_cb->info.last_stats[member_index][i] = 0;
-	}
-
-	if ((prm->type == DPA_STATS_CLS_MEMBER_SINGLE_KEY && !prm->key.byte) ||
-	    (prm->type == DPA_STATS_CLS_MEMBER_PAIR_KEY &&
-			    !prm->pair.first_key.byte)) {
-		/* Mark the key as invalid */
-		tbl_cb->keys[member_index].valid = FALSE;
-		return 0;
-	} else {
-		tbl_cb->keys[member_index].valid = TRUE;
-
-		if (prm->type == DPA_STATS_CLS_MEMBER_SINGLE_KEY) {
-			/* Copy the key descriptor */
-			err = copy_key_descriptor(&prm->key,
-					&tbl_cb->keys[member_index].key);
-			if (err != 0) {
-				pr_err("Unable to copy key descriptor\n");
-				return -EINVAL;
+	if (prm->type == DPA_STATS_CLS_MEMBER_SINGLE_KEY) {
+		if (!prm->key) {
+			/* Mark the key as 'miss' entry */
+			tbl_cb->keys[mbr_idx].miss_key = TRUE;
+			tbl_cb->keys[mbr_idx].valid = TRUE;
+		} else if (!prm->key->byte) {
+			/* Mark the key as invalid */
+			tbl_cb->keys[mbr_idx].valid = FALSE;
+			tbl_cb->keys[mbr_idx].miss_key = FALSE;
+			/* Reset the statistics */
+			stats_base_idx = cnt_cb->info.stats_num * mbr_idx;
+			for (i = 0; i < cnt_cb->info.stats_num; i++) {
+				cnt_cb->info.stats[stats_base_idx + i] = 0;
+				cnt_cb->info.last_stats[stats_base_idx + i] = 0;
 			}
+			return 0;
 		} else {
-			err = set_cls_cnt_classif_tbl_pair(tbl_cb, tbl_cb->td,
-				&prm->pair, &tbl_cb->keys[member_index]);
+			/* Copy the key descriptor */
+			err = copy_key_descriptor(prm->key, key);
 			if (err != 0) {
-				pr_err("Unable to configure the key pair\n");
+				log_err("Cannot copy key descriptor from user parameters\n");
 				return -EINVAL;
 			}
+			tbl_cb->keys[mbr_idx].miss_key = FALSE;
+			tbl_cb->keys[mbr_idx].valid = TRUE;
 		}
-		if (cnt_cb->f_get_cnt_stats != get_cnt_cls_tbl_frag_stats) {
-			err = check_tbl_cls_counter(cnt_cb,
-					&tbl_cb->keys[member_index]);
-			if (err != 0)
-				return -EINVAL;
-		} else{
-			err = set_frag_manip(tbl_cb->td,
-					&tbl_cb->keys[member_index]);
-			if (err < 0) {
-				pr_err("Invalid Fragmentation manip handle\n");
-				return -EINVAL;
-			}
+	} else {
+		if (prm->pair)
+			if (prm->pair->first_key)
+				if (!prm->pair->first_key->byte) {
+					/* Mark the key as invalid */
+					tbl_cb->keys[mbr_idx].valid = FALSE;
+					tbl_cb->keys[mbr_idx].miss_key = FALSE;
+
+					/* Reset the statistics */
+					stats_base_idx = cnt_cb->info.stats_num * mbr_idx;
+					for (i = 0; i < cnt_cb->info.stats_num; i++) {
+						cnt_cb->info.stats[stats_base_idx + i] = 0;
+						cnt_cb->info.last_stats[stats_base_idx + i] = 0;
+					}
+					return 0;
+				}
+		err = set_cls_cnt_classif_tbl_pair(cnt_cb, tbl_cb->td,
+						   prm->pair, mbr_idx);
+		if (err != 0) {
+			log_err("Cannot configure the pair key for counter id %d of member %d\n",
+				cnt_cb->id, mbr_idx);
+			return -EINVAL;
 		}
 	}
 
+	if (cnt_cb->f_get_cnt_stats != get_cnt_cls_tbl_frag_stats) {
+		if (tbl_cb->keys[mbr_idx].miss_key) {
+			/* Get Classifier Table counter statistics for 'miss' */
+			return get_classif_tbl_miss_stats(cnt_cb, mbr_idx);
+		} else {
+			/* Get Classifier Table counter statistics for a key */
+			return get_classif_tbl_key_stats(cnt_cb, mbr_idx);
+		}
+	} else{
+		err = set_frag_manip(tbl_cb->td, &tbl_cb->keys[mbr_idx]);
+		if (err < 0) {
+			log_err("Invalid Fragmentation manip handle for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+	}
 	return 0;
 }
 
 int set_ipsec_member(const struct dpa_stats_cls_member_params *params,
-		     int member_idx,
+		     int mbr_idx,
 		     struct dpa_stats_cnt_cb *cnt_cb)
 {
 	struct dpa_stats_cnt_ipsec_cb *ipsec_cb = &cnt_cb->ipsec_cb;
+	struct dpa_ipsec_sa_stats stats;
 	uint32_t i = 0;
+	uint32_t stats_base_idx;
+	int err = 0;
 
 	/* Check that counter is of type IPSec */
 	if (cnt_cb->type != DPA_STATS_CNT_IPSEC) {
-		pr_err("Operation permitted only on counter "
-				"type DPA_STATS_CNT_IPSEC\n");
+		log_err("Operation permitted only on counter type DPA_STATS_CNT_IPSEC %d for counter id %d\n",
+			DPA_STATS_CNT_IPSEC, cnt_cb->id);
 		return -EINVAL;
 	}
 
 	/* Check that member index does not exceeds class size */
-	if (member_idx < 0 || member_idx >= cnt_cb->members_num) {
-		pr_err("Member index is out of class counter size\n");
+	if (mbr_idx < 0 || mbr_idx >= cnt_cb->members_num) {
+		log_err("Parameter member_index %d must be in range (0 - %d) for counter id %d\n",
+			mbr_idx, cnt_cb->members_num - 1, cnt_cb->id);
 		return -EINVAL;
-	}
-
-	/* Reset the statistics */
-	for (i = 0; i < cnt_cb->info.stats_num; i++) {
-		cnt_cb->info.stats[member_idx][i] = 0;
-		cnt_cb->info.last_stats[member_idx][i] = 0;
 	}
 
 	if (params->sa_id == DPA_OFFLD_INVALID_OBJECT_ID) {
 		/* Mark that corresponding SA id as invalid */
-		ipsec_cb->valid[member_idx] = FALSE;
+		ipsec_cb->valid[mbr_idx] = FALSE;
+		/* Reset the statistics */
+		stats_base_idx = cnt_cb->info.stats_num * mbr_idx;
+		for (i = 0; i < cnt_cb->info.stats_num; i++) {
+			cnt_cb->info.stats[stats_base_idx + i] = 0;
+			cnt_cb->info.last_stats[stats_base_idx + i] = 0;
+		}
 	} else {
 		/* Mark the corresponding SA id as valid */
-		ipsec_cb->valid[member_idx] = TRUE;
-		ipsec_cb->sa_id[member_idx] = params->sa_id;
-	}
+		ipsec_cb->valid[mbr_idx] = TRUE;
+		ipsec_cb->sa_id[mbr_idx] = params->sa_id;
 
+		err = dpa_ipsec_sa_get_stats(
+				cnt_cb->ipsec_cb.sa_id[mbr_idx], &stats);
+		if (err < 0) {
+			log_err("Get failed for IPSec counter id %d due to incorrect parameters: sa_id=%d\n",
+				cnt_cb->id, cnt_cb->ipsec_cb.sa_id[mbr_idx]);
+			return -EINVAL;
+		}
+		init_cnt_32bit_stats(&cnt_cb->info, &stats, 0);
+	}
 	return 0;
+}
+
+static void init_cnt_32bit_stats(struct stats_info *stats_info,
+				 void *stats, uint32_t idx)
+{
+	uint32_t j = 0;
+	uint32_t stats_val, stats_base_idx;
+
+	stats_base_idx = stats_info->stats_num * idx;
+
+	for (j = 0; j < stats_info->stats_num; j++) {
+		if (stats_info->stats_off[j] == UNSUPPORTED_CNT_SEL)
+			continue;
+
+		/* Get statistics value */
+		stats_val = *((uint32_t *)(stats + stats_info->stats_off[j]));
+
+		/* Store the current value as the last read value */
+		stats_info->stats[stats_base_idx + j] = 0;
+		stats_info->last_stats[stats_base_idx + j] = stats_val;
+	}
+}
+
+static void init_cnt_64bit_stats(struct stats_info *stats_info,
+				 void *stats, uint32_t idx)
+{
+	uint32_t j = 0;
+	uint32_t stats_base_idx;
+	uint64_t stats_val;
+
+	stats_base_idx = stats_info->stats_num * idx;
+
+	for (j = 0; j < stats_info->stats_num; j++) {
+		/* Get statistics value */
+		stats_val = *((uint64_t *)(stats + stats_info->stats_off[j]));
+
+		/* Store the current value as the last read value */
+		stats_info->stats[stats_base_idx + j] = 0;
+		stats_info->last_stats[stats_base_idx + j] = stats_val;
+	}
 }
 
 static inline void get_cnt_32bit_stats(struct dpa_stats_req_cb *req_cb,
@@ -2096,10 +3153,12 @@ static inline void get_cnt_32bit_stats(struct dpa_stats_req_cb *req_cb,
 				       void *stats, uint32_t idx)
 {
 	uint32_t j = 0;
-	uint64_t stats_val;
+	uint32_t stats_val;
+	uint32_t stats_base_idx, stats_index;
+
+	stats_base_idx = stats_info->stats_num * idx;
 
 	for (j = 0; j < stats_info->stats_num; j++) {
-
 		if (stats_info->stats_off[j] == UNSUPPORTED_CNT_SEL) {
 			/* Write the memory location */
 			memset(req_cb->request_area, 0, STATS_VAL_SIZE);
@@ -2110,30 +3169,32 @@ static inline void get_cnt_32bit_stats(struct dpa_stats_req_cb *req_cb,
 		}
 
 		/* Get statistics value */
-		stats_val = (uint64_t)(*((uint32_t *)
-				(stats + stats_info->stats_off[j])));
+		stats_val = *((uint32_t *)(stats + stats_info->stats_off[j]));
+
+		stats_index = stats_base_idx + j;
 
 		/* Check for rollover */
-		if (stats_val < stats_info->last_stats[idx][j])
-			stats_info->stats[idx][j] +=
+		if (stats_val < stats_info->last_stats[stats_index])
+			stats_info->stats[stats_index] +=
 				((unsigned long int)0xffffffff -
-				stats_info->last_stats[idx][j]) + stats_val;
+				stats_info->last_stats[stats_index]) +
+								stats_val;
 		else
-			stats_info->stats[idx][j] += stats_val -
-				stats_info->last_stats[idx][j];
+			stats_info->stats[stats_index] += stats_val -
+				stats_info->last_stats[stats_index];
 
 		/* Store the current value as the last read value */
-		stats_info->last_stats[idx][j] = stats_val;
+		stats_info->last_stats[stats_index] = stats_val;
 
 		/* Write the memory location */
 		*(uint32_t *)(req_cb->request_area) =
-				(uint32_t)stats_info->stats[idx][j];
+					stats_info->stats[stats_index];
 
 		/* Update the memory pointer */
 		req_cb->request_area += STATS_VAL_SIZE;
 
 		if (stats_info->reset)
-			stats_info->stats[idx][j] = 0;
+			stats_info->stats[stats_index] = 0;
 	}
 }
 
@@ -2143,32 +3204,37 @@ static inline void get_cnt_64bit_stats(struct dpa_stats_req_cb *req_cb,
 {
 	uint32_t j = 0;
 	uint64_t stats_val;
+	uint32_t stats_base_idx, stats_index;
+
+	stats_base_idx = stats_info->stats_num * idx;
 
 	for (j = 0; j < stats_info->stats_num; j++) {
 		/* Get statistics value */
 		stats_val = *((uint64_t *)(stats + stats_info->stats_off[j]));
 
+		stats_index = stats_base_idx + j;
+
 		/* Check for rollover */
-		if (stats_val < stats_info->last_stats[idx][j])
-			stats_info->stats[idx][j] +=
+		if (stats_val < stats_info->last_stats[stats_index])
+			stats_info->stats[stats_index] +=
 				((unsigned long int)0xffffffff -
-				stats_info->last_stats[idx][j]) + stats_val;
+				stats_info->last_stats[stats_index]) + stats_val;
 		else
-			stats_info->stats[idx][j] += stats_val -
-				stats_info->last_stats[idx][j];
+			stats_info->stats[stats_index] += stats_val -
+				stats_info->last_stats[stats_index];
 
 		/* Store the current value as the last read value */
-		stats_info->last_stats[idx][j] = stats_val;
+		stats_info->last_stats[stats_index] = stats_val;
 
 		/* Write the memory location */
 		*(uint32_t *)(req_cb->request_area) =
-				(uint32_t)stats_info->stats[idx][j];
+					(uint32_t)stats_info->stats[stats_index];
 
 		/* Update the memory pointer */
 		req_cb->request_area += STATS_VAL_SIZE;
 
 		if (stats_info->reset)
-			stats_info->stats[idx][j] = 0;
+			stats_info->stats[stats_index] = 0;
 	}
 }
 
@@ -2182,7 +3248,8 @@ static int get_cnt_eth_stats(struct dpa_stats_req_cb *req_cb,
 	for (i = 0; i < cnt_cb->members_num; i++) {
 		err = FM_MAC_GetStatistics(cnt_cb->gen_cb.objs[i], &stats);
 		if (err != 0) {
-			pr_err("Couldn't retrieve Ethernet Counter value\n");
+			log_err("Cannot retrieve Ethernet statistics for counter id %d\n",
+				cnt_cb->id);
 			return -ENOENT;
 		}
 
@@ -2202,7 +3269,8 @@ static int get_cnt_reass_stats(struct dpa_stats_req_cb *req_cb,
 	for (i = 0; i < cnt_cb->members_num; i++) {
 		err = FM_PCD_ManipGetStatistics(cnt_cb->gen_cb.objs[i], &stats);
 		if (err < 0) {
-			pr_err("Couldn't retrieve Reassembly statistics\n");
+			log_err("Cannot retrieve Reassembly statistics for counter id %d\n",
+				cnt_cb->id);
 			return -ESRCH;
 		}
 
@@ -2223,7 +3291,8 @@ static int get_cnt_frag_stats(struct dpa_stats_req_cb *req_cb,
 	for (i = 0; i < cnt_cb->members_num; i++) {
 		err = FM_PCD_ManipGetStatistics(cnt_cb->gen_cb.objs[i], &stats);
 		if (err < 0) {
-			pr_err("Couldn't retrieve Fragmentation statistics\n");
+			log_err("Cannot retrieve Fragmentation statistics for counter id %d\n",
+				cnt_cb->id);
 			return -EINTR;
 		}
 
@@ -2240,33 +3309,39 @@ static int get_cnt_plcr_stats(struct dpa_stats_req_cb *req_cb,
 	struct stats_info *info = &cnt_cb->info;
 	uint64_t stats_val = 0;
 	uint32_t i = 0, j = 0;
+	uint32_t stats_index, stats_base_idx;
 
 	for (i = 0; i < cnt_cb->members_num; i++) {
+
+		stats_base_idx = info->stats_num * i;
+
 		for (j = 0; j < info->stats_num; j++) {
 			stats_val = (uint64_t)FM_PCD_PlcrProfileGetCounter(
 				cnt_cb->gen_cb.objs[i], info->stats_off[j]);
 
+			stats_index = stats_base_idx + j;
+
 			/* Check for rollover */
-			if (stats_val < info->last_stats[i][j])
-				info->stats[i][j] +=
+			if (stats_val < info->last_stats[stats_index])
+				info->stats[stats_index] +=
 					((unsigned long int)0xffffffff -
-					info->last_stats[i][j]) + stats_val;
+					info->last_stats[stats_index]) + stats_val;
 			else
-				info->stats[i][j] += stats_val -
-					info->last_stats[i][j];
+				info->stats[stats_index] += stats_val -
+					info->last_stats[stats_index];
 
 			/* Store the current value as the last read value */
-			info->last_stats[i][j] = stats_val;
+			info->last_stats[stats_index] = stats_val;
 
 			/* Write the memory location */
 			*(uint32_t *)(req_cb->request_area) =
-					(uint32_t)info->stats[i][j];
+					(uint32_t)info->stats[stats_index];
 
 			/* Update the memory pointer */
 			req_cb->request_area += STATS_VAL_SIZE;
 
 			if (info->reset)
-				info->stats[i][j] = 0;
+				info->stats[stats_index] = 0;
 		}
 	}
 
@@ -2291,13 +3366,29 @@ static int get_cnt_cls_tbl_match_stats(struct dpa_stats_req_cb *req_cb,
 					cnt_cb->info.stats_num;
 			continue;
 		}
-		err = FM_PCD_MatchTableFindNGetKeyStatistics(
-				cnt_cb->tbl_cb.keys[i].cc_node,
-				cnt_cb->tbl_cb.keys[i].key.size,
-				cnt_cb->tbl_cb.keys[i].key.byte,
-				cnt_cb->tbl_cb.keys[i].key.mask, &stats);
+
+		if (cnt_cb->tbl_cb.keys[i].miss_key) {
+			err = FM_PCD_MatchTableGetMissStatistics(
+					cnt_cb->tbl_cb.keys[i].cc_node, &stats);
+		} else {
+			uint8_t *mask_data;
+
+			if (cnt_cb->tbl_cb.keys[i].key.valid_mask)
+				mask_data = cnt_cb->tbl_cb.keys[i].key.data.mask;
+			else
+				mask_data = NULL;
+
+			err = FM_PCD_MatchTableFindNGetKeyStatistics(
+					cnt_cb->tbl_cb.keys[i].cc_node,
+					cnt_cb->tbl_cb.keys[i].key.data.size,
+					cnt_cb->tbl_cb.keys[i].key.data.byte,
+					mask_data,
+					&stats);
+		}
+
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Table statistics\n");
+			log_err("Cannot retrieve Classifier Exact Match Table statistics for counter id %d\n",
+				cnt_cb->id);
 			return -EIO;
 		}
 		get_cnt_32bit_stats(req_cb, &cnt_cb->info, &stats, i);
@@ -2324,13 +3415,20 @@ static int get_cnt_cls_tbl_hash_stats(struct dpa_stats_req_cb *req_cb,
 					cnt_cb->info.stats_num;
 			continue;
 		}
-		err = FM_PCD_HashTableFindNGetKeyStatistics(
-				cnt_cb->tbl_cb.keys[i].cc_node,
-				cnt_cb->tbl_cb.keys[i].key.size,
-				cnt_cb->tbl_cb.keys[i].key.byte,
-				&stats);
+
+		if (cnt_cb->tbl_cb.keys[i].miss_key) {
+			err = FM_PCD_HashTableGetMissStatistics(
+					cnt_cb->tbl_cb.keys[i].cc_node, &stats);
+		} else {
+			err = FM_PCD_HashTableFindNGetKeyStatistics(
+					cnt_cb->tbl_cb.keys[i].cc_node,
+					cnt_cb->tbl_cb.keys[i].key.data.size,
+					cnt_cb->tbl_cb.keys[i].key.data.byte,
+					&stats);
+		}
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Table statistics\n");
+			log_err("Cannot retrieve Classifier Hash Table statistics for counter id %d\n",
+				cnt_cb->id);
 			return -EIO;
 		}
 		get_cnt_32bit_stats(req_cb, &cnt_cb->info, &stats, i);
@@ -2357,12 +3455,20 @@ static int get_cnt_cls_tbl_index_stats(struct dpa_stats_req_cb *req_cb,
 					cnt_cb->info.stats_num;
 			continue;
 		}
-		err = FM_PCD_MatchTableGetKeyStatistics(
-				cnt_cb->tbl_cb.keys[i].cc_node,
-				cnt_cb->tbl_cb.keys[i].key.byte[0],
-				&stats);
+
+		if (cnt_cb->tbl_cb.keys[i].miss_key) {
+			err = FM_PCD_MatchTableGetMissStatistics(
+					cnt_cb->tbl_cb.keys[i].cc_node, &stats);
+		} else {
+			err = FM_PCD_MatchTableGetKeyStatistics(
+					cnt_cb->tbl_cb.keys[i].cc_node,
+					cnt_cb->tbl_cb.keys[i].key.data.byte[0],
+					&stats);
+		}
+
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Table statistics\n");
+			log_err("Cannot retrieve Classifier Indexed Table statistics for counter id %d\n",
+				cnt_cb->id);
 			return -EIO;
 		}
 		get_cnt_32bit_stats(req_cb, &cnt_cb->info, &stats, i);
@@ -2393,7 +3499,8 @@ static int get_cnt_cls_tbl_frag_stats(struct dpa_stats_req_cb *req_cb,
 		err = FM_PCD_ManipGetStatistics(
 				cnt_cb->tbl_cb.keys[i].frag, &stats);
 		if (err < 0) {
-			pr_err("Couldn't retrieve Fragmentation statistics\n");
+			log_err("Cannot retrieve Fragmentation statistics for counter id %d\n",
+				cnt_cb->id);
 			return -EINTR;
 		}
 		get_cnt_32bit_stats(req_cb,
@@ -2411,13 +3518,26 @@ static int get_cnt_ccnode_match_stats(struct dpa_stats_req_cb *req_cb,
 	int err = 0;
 
 	for (i = 0; i < cnt_cb->members_num; i++) {
-		err = FM_PCD_MatchTableFindNGetKeyStatistics(
+		if (!cnt_cb->ccnode_cb.keys[i].valid_key) {
+			err = FM_PCD_MatchTableGetMissStatistics(
+					cnt_cb->ccnode_cb.cc_node, &stats);
+		} else {
+			uint8_t *mask_data;
+
+			if (cnt_cb->ccnode_cb.keys[i].valid_mask)
+				mask_data = cnt_cb->ccnode_cb.keys[i].data.mask;
+			else
+				mask_data = NULL;
+
+			err = FM_PCD_MatchTableFindNGetKeyStatistics(
 				cnt_cb->ccnode_cb.cc_node,
-				cnt_cb->ccnode_cb.keys[i].size,
-				cnt_cb->ccnode_cb.keys[i].byte,
-				cnt_cb->ccnode_cb.keys[i].mask, &stats);
+				cnt_cb->ccnode_cb.keys[i].data.size,
+				cnt_cb->ccnode_cb.keys[i].data.byte,
+				mask_data, &stats);
+		}
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Node statistics\n");
+			log_err("Cannot retrieve Classification Cc Node Exact Match statistics for counter id %d\n",
+				cnt_cb->id);
 			return -ENXIO;
 		}
 
@@ -2434,12 +3554,19 @@ static int get_cnt_ccnode_hash_stats(struct dpa_stats_req_cb *req_cb,
 	int err = 0;
 
 	for (i = 0; i < cnt_cb->members_num; i++) {
-		err = FM_PCD_HashTableFindNGetKeyStatistics(
+		if (!cnt_cb->ccnode_cb.keys[i].valid_key) {
+			err = FM_PCD_HashTableGetMissStatistics(
+					cnt_cb->ccnode_cb.cc_node, &stats);
+		} else {
+			err = FM_PCD_HashTableFindNGetKeyStatistics(
 				cnt_cb->ccnode_cb.cc_node,
-				cnt_cb->ccnode_cb.keys[i].size,
-				cnt_cb->ccnode_cb.keys[i].byte, &stats);
+				cnt_cb->ccnode_cb.keys[i].data.size,
+				cnt_cb->ccnode_cb.keys[i].data.byte, &stats);
+		}
+
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Node statistics\n");
+			log_err("Cannot retrieve Classification Cc Node Hash statistics for counter id %d\n",
+				cnt_cb->id);
 			return -ENXIO;
 		}
 
@@ -2456,11 +3583,17 @@ static int get_cnt_ccnode_index_stats(struct dpa_stats_req_cb *req_cb,
 	int err = 0;
 
 	for (i = 0; i < cnt_cb->members_num; i++) {
-		err = FM_PCD_MatchTableGetKeyStatistics(
+		if (!cnt_cb->ccnode_cb.keys[i].valid_key) {
+			err = FM_PCD_MatchTableGetMissStatistics(
+					cnt_cb->ccnode_cb.cc_node, &stats);
+		} else {
+			err = FM_PCD_MatchTableGetKeyStatistics(
 				cnt_cb->ccnode_cb.cc_node,
-				cnt_cb->ccnode_cb.keys[i].byte[0], &stats);
+				cnt_cb->ccnode_cb.keys[i].data.byte[0], &stats);
+		}
 		if (err != 0) {
-			pr_err("Couldn't retrieve Classif Node statistics\n");
+			log_err("Cannot retrieve Classification Cc Node Index statistics for counter id %d\n",
+				cnt_cb->id);
 			return -ENXIO;
 		}
 
@@ -2491,13 +3624,74 @@ static int get_cnt_ipsec_stats(struct dpa_stats_req_cb *req_cb,
 
 		err = dpa_ipsec_sa_get_stats(cnt_cb->ipsec_cb.sa_id[i], &stats);
 		if (err < 0) {
-			pr_err("Couldn't retrieve IPSec statistics\n");
+			log_err("Cannot retrieve IPSec statistics for counter id %d\n",
+				cnt_cb->id);
 			return -E2BIG;
 		}
 
 		get_cnt_32bit_stats(req_cb, &cnt_cb->info, &stats, i);
 	}
 
+	return 0;
+}
+
+static int get_cnt_traffic_mng_cq_stats(struct dpa_stats_req_cb *req_cb,
+					struct dpa_stats_cnt_cb *cnt_cb)
+{
+	uint32_t i = 0;
+	u64 stats_val[2];
+	int err = 0;
+
+	for (i = 0; i < cnt_cb->members_num; i++) {
+		/* Retrieve statistics for the current member */
+		err = qman_ceetm_cq_get_dequeue_statistics(
+				cnt_cb->gen_cb.objs[i], 0,
+				&stats_val[1], &stats_val[0]);
+		if (err < 0) {
+			log_err("Cannot retrieve Traffic Manager Class Queue statistics for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+		get_cnt_64bit_stats(req_cb, &cnt_cb->info, stats_val, i);
+	}
+	return 0;
+}
+
+static int get_cnt_traffic_mng_ccg_stats(struct dpa_stats_req_cb *req_cb,
+					 struct dpa_stats_cnt_cb *cnt_cb)
+{
+	uint32_t i = 0;
+	u64 stats_val[2];
+	int err = 0;
+
+	for (i = 0; i < cnt_cb->members_num; i++) {
+		err = qman_ceetm_ccg_get_reject_statistics(
+				cnt_cb->gen_cb.objs[i], 0,
+				&stats_val[1], &stats_val[0]);
+		if (err < 0) {
+			log_err("Cannot retrieve Traffic Manager Class Congestion Group statistics for counter id %d\n",
+				cnt_cb->id);
+			return -EINVAL;
+		}
+		get_cnt_64bit_stats(req_cb, &cnt_cb->info, stats_val, i);
+	}
+	return 0;
+}
+
+static int get_cnt_us_stats(struct dpa_stats_req_cb *req_cb,
+			    struct dpa_stats_cnt_cb *cnt_cb)
+{
+	uint32_t i = 0, j = 0;
+	req_cb->config.cnts_ids[req_cb->cnts_num] = req_cb->bytes_num;
+
+	for (i = 0; i < cnt_cb->members_num; i++) {
+		for (j = 0; j < cnt_cb->info.stats_num; j++) {
+			/* Write the memory location */
+			*(uint32_t *)(req_cb->request_area) = 0;
+			/* Update the memory pointer */
+			req_cb->request_area += STATS_VAL_SIZE;
+		}
+	}
 	return 0;
 }
 
@@ -2514,7 +3708,7 @@ static void async_req_work_func(struct work_struct *work)
 
 	err = treat_cnts_request(dpa_stats, req_cb);
 	if (err < 0) {
-		pr_err("Failed to retrieve counter values\n");
+		log_err("Cannot obtain counter values in asynchronous mode\n");
 		req_cb->bytes_num = err;
 	}
 
@@ -2525,7 +3719,7 @@ static void async_req_work_func(struct work_struct *work)
 	/* Release the request control block */
 	err = put_req(dpa_stats, req_cb);
 	if (err < 0)
-		pr_err("Failed to release request control block\n");
+		log_err("Cannot release internal request structure\n");
 
 	return;
 }
@@ -2540,8 +3734,7 @@ int dpa_stats_init(const struct dpa_stats_params *params, int *dpa_stats_id)
 
 	/* Sanity checks */
 	if (gbl_dpa_stats) {
-		pr_err("dpa_stats component already initialized.\n");
-		pr_err("Multiple DPA Stats Instances are not supported.\n");
+		log_err("DPA Stats component already initialized. Multiple DPA Stats instances are not supported.\n");
 		return -EPERM;
 	}
 
@@ -2553,7 +3746,7 @@ int dpa_stats_init(const struct dpa_stats_params *params, int *dpa_stats_id)
 	/* Control block allocation */
 	dpa_stats = kzalloc(sizeof(struct dpa_stats), GFP_KERNEL);
 	if (!dpa_stats) {
-		pr_err("Could not allocate memory for control block.\n");
+		log_err("Cannot allocate memory for internal DPA Stats structure.\n");
 		return -ENOMEM;
 	}
 
@@ -2596,6 +3789,9 @@ int dpa_stats_init(const struct dpa_stats_params *params, int *dpa_stats_id)
 	/* Map IPSec counters  */
 	create_cnt_ipsec_stats(dpa_stats);
 
+	/* Map Traffic Manager counters to QMan CEETM statistics */
+	create_cnt_traffic_mng_stats(dpa_stats);
+
 	gbl_dpa_stats = dpa_stats;
 
 	return 0;
@@ -2614,21 +3810,26 @@ int dpa_stats_create_counter(int dpa_stats_id,
 	unused(dpa_stats_id);
 
 	if (!gbl_dpa_stats) {
-		pr_err("dpa_stats component is not initialized\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EPERM;
 	}
 
 	if (!dpa_stats_cnt_id) {
-		pr_err("dpa_stats_cnt_id can't be NULL\n");
+		log_err("Parameter dpa_stats_cnt_id cannot be NULL\n");
 		return -EINVAL;
 	}
 	*dpa_stats_cnt_id = DPA_OFFLD_INVALID_OBJECT_ID;
+
+	if (!params) {
+		log_err("Parameter params cannot be NULL\n");
+		return -EFAULT;
+	}
 
 	dpa_stats = gbl_dpa_stats;
 
 	err = get_new_cnt(dpa_stats, &cnt_cb);
 	if (err < 0) {
-		pr_err("Failed retrieving a preallocated counter\n");
+		log_err("Cannot retrieve preallocated internal counter structure\n");
 		return err;
 	}
 
@@ -2642,7 +3843,8 @@ int dpa_stats_create_counter(int dpa_stats_id,
 
 		err = set_cnt_eth_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create ETH counter\n");
+			log_err("Cannot create Ethernet counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2652,7 +3854,8 @@ int dpa_stats_create_counter(int dpa_stats_id,
 
 		err = set_cnt_reass_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Reassembly counter\n");
+			log_err("Cannot create Reassembly counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2662,7 +3865,8 @@ int dpa_stats_create_counter(int dpa_stats_id,
 
 		err = set_cnt_frag_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Fragmentation counter\n");
+			log_err("Cannot create Fragmentation counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2672,7 +3876,8 @@ int dpa_stats_create_counter(int dpa_stats_id,
 
 		err = set_cnt_plcr_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Policer counter\n");
+			log_err("Cannot create Policer counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2681,7 +3886,8 @@ int dpa_stats_create_counter(int dpa_stats_id,
 
 		err = set_cnt_classif_tbl_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Classif Table counter\n");
+			log_err("Cannot create Classifier Table counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2690,7 +3896,8 @@ int dpa_stats_create_counter(int dpa_stats_id,
 
 		err = set_cnt_ccnode_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Classif Cc Node counter\n");
+			log_err("Cannot create Classification Cc Node counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2700,16 +3907,24 @@ int dpa_stats_create_counter(int dpa_stats_id,
 
 		err = set_cnt_ipsec_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create IPSec counter\n");
+			log_err("Cannot create IPSec counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
 	case DPA_STATS_CNT_TRAFFIC_MNG:
-		pr_err("Counter type not supported\n");
-		mutex_unlock(&cnt_cb->lock);
-		return -EINVAL;
+		cnt_cb->type = DPA_STATS_CNT_TRAFFIC_MNG;
+
+		err = set_cnt_traffic_mng_cb(cnt_cb, params);
+		if (err != 0) {
+			log_err("Cannot crate Traffic Manager counter id %d\n",
+				cnt_cb->id);
+			goto create_counter_err;
+		}
+		break;
 	default:
-		pr_err("Invalid counter type\n");
+		log_err("Unsupported counter type %d for counter id %d\n",
+			params->type, cnt_cb->id);
 		mutex_unlock(&cnt_cb->lock);
 		return -EINVAL;
 	};
@@ -2754,19 +3969,25 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 	unused(dpa_stats_id);
 
 	if (!gbl_dpa_stats) {
-		pr_err("dpa_stats component is not initialized\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EPERM;
 	}
 
 	if (!dpa_stats_cnt_id) {
-		pr_err("dpa_stats_cnt_id can't be NULL\n");
+		log_err("Parameter dpa_stats_cnt_id cannot be NULL\n");
 		return -EINVAL;
 	}
 	*dpa_stats_cnt_id = DPA_OFFLD_INVALID_OBJECT_ID;
 
+	if (!params) {
+		log_err("Parameter params cannot be NULL\n");
+		return -EFAULT;
+	}
+
 	if (params->class_members > DPA_STATS_MAX_NUM_OF_CLASS_MEMBERS) {
-		pr_err("exceed maximum number of class members: %d\n",
-				DPA_STATS_MAX_NUM_OF_CLASS_MEMBERS);
+		log_err("Parameter class_members %d exceeds maximum number of class members: %d\n",
+			params->class_members,
+			DPA_STATS_MAX_NUM_OF_CLASS_MEMBERS);
 		return -EINVAL;
 	}
 
@@ -2774,7 +3995,7 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 
 	err = get_new_cnt(dpa_stats, &cnt_cb);
 	if (err < 0) {
-		pr_err("Failed retrieving a preallocated counter\n");
+		log_err("Cannot retrieve preallocated internal counter structure\n");
 		return err;
 	}
 
@@ -2788,7 +4009,8 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 
 		err = set_cls_cnt_eth_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create ETH counter\n");
+			log_err("Cannot create Ethernet counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2798,7 +4020,8 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 
 		err = set_cls_cnt_reass_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Reassembly counter\n");
+			log_err("Cannot create Reassembly counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2808,7 +4031,8 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 
 		err = set_cls_cnt_frag_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Fragmentation counter\n");
+			log_err("Cannot create Fragmentation counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2818,16 +4042,19 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 
 		err = set_cls_cnt_plcr_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Policer counter\n");
+			log_err("Cannot create Policer counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
 	case DPA_STATS_CNT_CLASSIF_TBL:
 		cnt_cb->type = DPA_STATS_CNT_CLASSIF_TBL;
+		cnt_cb->f_get_cnt_stats = get_cnt_cls_tbl_match_stats;
 
 		err = set_cls_cnt_classif_tbl_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Classif Table counter\n");
+			log_err("Cannot create Classifier Table counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2836,7 +4063,8 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 
 		err = set_cls_cnt_ccnode_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create Classif Cc Node counter\n");
+			log_err("Cannot create Classification Cc Node counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
 		break;
@@ -2846,17 +4074,24 @@ int dpa_stats_create_class_counter(int dpa_stats_id,
 
 		err = set_cls_cnt_ipsec_cb(cnt_cb, params);
 		if (err != 0) {
-			pr_err("Failed to create IPSec counter\n");
+			log_err("Cannot create IPSec counter id %d\n",
+				cnt_cb->id);
 			goto create_counter_err;
 		}
-
 		break;
 	case DPA_STATS_CNT_TRAFFIC_MNG:
-		pr_err("Counter type not supported\n");
-		mutex_unlock(&cnt_cb->lock);
-		return -EINVAL;
+		cnt_cb->type = DPA_STATS_CNT_TRAFFIC_MNG;
+
+		err = set_cls_cnt_traffic_mng_cb(cnt_cb, params);
+		if (err != 0) {
+			log_err("Cannot create Traffic Manager counter id %d\n",
+				cnt_cb->id);
+			goto create_counter_err;
+		}
+		break;
 	default:
-		pr_err("Invalid counter type\n");
+		log_err("Unsupported counter type %d for counter id %d\n",
+			params->type, cnt_cb->id);
 		mutex_unlock(&cnt_cb->lock);
 		return -EINVAL;
 	};
@@ -2897,7 +4132,7 @@ int dpa_stats_modify_class_counter(int dpa_stats_cnt_id,
 	int err = 0;
 
 	if (!gbl_dpa_stats) {
-		pr_err("dpa_stats component is not initialized\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EPERM;
 	}
 
@@ -2905,13 +4140,19 @@ int dpa_stats_modify_class_counter(int dpa_stats_cnt_id,
 
 	if (dpa_stats_cnt_id < 0 ||
 			dpa_stats_cnt_id > dpa_stats->config.max_counters) {
-		pr_err("Invalid Counter id %d provided\n", dpa_stats_cnt_id);
+		log_err("Parameter dpa_stats_cnt_id %d must be in range (0 - %d)\n",
+			dpa_stats_cnt_id, dpa_stats->config.max_counters - 1);
 		return -EINVAL;
+	}
+
+	if (!params) {
+		log_err("Parameter params cannot be NULL\n");
+		return -EFAULT;
 	}
 
 	/* Counter scheduled for the retrieve mechanism can't be modified */
 	if (cnt_is_sched(dpa_stats, dpa_stats_cnt_id)) {
-		pr_err("Counter id %d is in use\n", dpa_stats_cnt_id);
+		log_err("Counter id %d is in use\n", dpa_stats_cnt_id);
 		return -EBUSY;
 	}
 
@@ -2925,17 +4166,18 @@ int dpa_stats_modify_class_counter(int dpa_stats_cnt_id,
 
 	/* Validity check for this counter */
 	if (cnt_cb->index == DPA_OFFLD_INVALID_OBJECT_ID) {
-		pr_err("Invalid Counter id %d provided\n", dpa_stats_cnt_id);
+		log_err("Counter id %d is not initialized\n", dpa_stats_cnt_id);
 		mutex_unlock(&cnt_cb->lock);
 		return -EINVAL;
 	}
 
 	if (params->type == DPA_STATS_CLS_MEMBER_SINGLE_KEY ||
-		params->type == DPA_STATS_CLS_MEMBER_PAIR_KEY) {
+	    params->type == DPA_STATS_CLS_MEMBER_PAIR_KEY) {
 		/* Modify classifier table class member */
 		err = set_classif_tbl_member(params, member_index, cnt_cb);
 		if (err < 0) {
-			pr_err("Failed to modify class member\n");
+			log_err("Cannot modify member %d of counter id %d\n",
+				member_index, dpa_stats_cnt_id);
 			mutex_unlock(&cnt_cb->lock);
 			return -EINVAL;
 		}
@@ -2944,12 +4186,16 @@ int dpa_stats_modify_class_counter(int dpa_stats_cnt_id,
 		/* Modify IPSec class member */
 		err = set_ipsec_member(params, member_index, cnt_cb);
 		if (err < 0) {
-			pr_err("Failed to modify class member\n");
+			log_err("Cannot modify member %d of counter id %d\n",
+				member_index, dpa_stats_cnt_id);
 			mutex_unlock(&cnt_cb->lock);
 			return -EINVAL;
 		}
 	} else {
-		pr_err("Invalid member type\n");
+		log_err("Parameter type %d for counter id %d must be in range (%d - %d)\n",
+			params->type, dpa_stats_cnt_id,
+			DPA_STATS_CLS_MEMBER_SINGLE_KEY,
+			DPA_STATS_CLS_MEMBER_SA_ID);
 		mutex_unlock(&cnt_cb->lock);
 		return -EINVAL;
 	}
@@ -2969,7 +4215,7 @@ int dpa_stats_remove_counter(int dpa_stats_cnt_id)
 	uint32_t i;
 
 	if (!gbl_dpa_stats) {
-		pr_err("dpa_stats component is not initialized\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EPERM;
 	}
 
@@ -2977,13 +4223,14 @@ int dpa_stats_remove_counter(int dpa_stats_cnt_id)
 
 	if (dpa_stats_cnt_id < 0 ||
 			dpa_stats_cnt_id > dpa_stats->config.max_counters) {
-		pr_err("Invalid Counter id %d provided\n", dpa_stats_cnt_id);
+		log_err("Parameter dpa_stats_cnt_id %d must be in range (0 - %d)\n",
+			dpa_stats_cnt_id, dpa_stats->config.max_counters - 1);
 		return -EINVAL;
 	}
 
 	/* Counter scheduled for the retrieve mechanism can't be removed */
 	if (cnt_is_sched(dpa_stats, dpa_stats_cnt_id)) {
-		pr_err("Counter id %d is in use\n", dpa_stats_cnt_id);
+		log_err("Counter id %d is in use\n", dpa_stats_cnt_id);
 		return -EBUSY;
 	}
 
@@ -2997,29 +4244,60 @@ int dpa_stats_remove_counter(int dpa_stats_cnt_id)
 
 	/* Validity check for this counter */
 	if (cnt_cb->index == DPA_OFFLD_INVALID_OBJECT_ID) {
-		pr_err("Invalid Counter id %d provided\n", dpa_stats_cnt_id);
+		log_err("Counter id %d is not initialized\n", dpa_stats_cnt_id);
 		mutex_unlock(&cnt_cb->lock);
 		return -EINVAL;
 	}
 
-	/* Remove the allocated memory for keys bytes and masks */
-	if (cnt_cb->type == DPA_STATS_CNT_CLASSIF_NODE)
+	switch (cnt_cb->type) {
+	case DPA_STATS_CNT_ETH:
+	case DPA_STATS_CNT_REASS:
+	case DPA_STATS_CNT_FRAG:
+	case DPA_STATS_CNT_POLICER:
+	case DPA_STATS_CNT_TRAFFIC_MNG:
+		kfree(cnt_cb->gen_cb.objs);
+		break;
+	case DPA_STATS_CNT_CLASSIF_NODE:
+		/* Remove the allocated memory for keys bytes and masks */
 		for (i = 0; i < cnt_cb->members_num; i++) {
-			kfree(cnt_cb->ccnode_cb.keys[i].byte);
-			kfree(cnt_cb->ccnode_cb.keys[i].mask);
+			kfree(cnt_cb->ccnode_cb.keys[i].data.byte);
+			kfree(cnt_cb->ccnode_cb.keys[i].data.mask);
 		}
+		kfree(cnt_cb->ccnode_cb.keys);
+		break;
+	case DPA_STATS_CNT_CLASSIF_TBL:
+		/* Remove the allocated memory for keys bytes, masks and keys */
+		for (i = 0; i < cnt_cb->members_num; i++) {
+			kfree(cnt_cb->tbl_cb.keys[i].key.data.byte);
+			kfree(cnt_cb->tbl_cb.keys[i].key.data.mask);
+		}
+		kfree(cnt_cb->tbl_cb.keys);
+		break;
+	case DPA_STATS_CNT_IPSEC:
+		/* Remove the allocated memory for security associations */
+		kfree(cnt_cb->ipsec_cb.sa_id);
+		kfree(cnt_cb->ipsec_cb.valid);
+		break;
+	default:
+		break;
+	}
 
-	/* Remove the allocated memory for keys bytes and masks */
-	if (cnt_cb->type == DPA_STATS_CNT_CLASSIF_TBL)
-		for (i = 0; i < cnt_cb->members_num; i++) {
-			kfree(cnt_cb->tbl_cb.keys[i].key.byte);
-			kfree(cnt_cb->tbl_cb.keys[i].key.mask);
-		}
+	/*
+	 * In case of user space counters, the [stats] and [last_stats] members
+	 * may not be initialized.
+	 */
+	if (cnt_cb->info.stats) {
+		kfree(cnt_cb->info.stats);
+		kfree(cnt_cb->info.last_stats);
+		cnt_cb->info.stats 	= NULL;
+		cnt_cb->info.last_stats	= NULL;
+	}
+	kfree(cnt_cb->info.stats_off);
 
 	/* Release the counter id in the Counter IDs circular queue */
 	err = put_cnt(dpa_stats, cnt_cb);
 	if (err < 0) {
-		pr_err("Failed to release a preallocated counter\n");
+		log_err("Cannot release preallocated internal structure\n");
 		mutex_unlock(&cnt_cb->lock);
 		return -EINVAL;
 	}
@@ -3042,19 +4320,19 @@ int dpa_stats_get_counters(struct dpa_stats_cnt_request_params params,
 	uint32_t i = 0;
 
 	if (!gbl_dpa_stats) {
-		pr_err("dpa_stats component is not initialized\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EPERM;
 	}
 
 	/* Check user-provided cnts_len pointer */
 	if (!cnts_len) {
-		pr_err("Parameter cnts_len can't be NULL\n");
+		log_err("Parameter cnts_len cannot be NULL\n");
 		return -EINVAL;
 	}
 
 	/* Check user-provided params.cnts_ids pointer */
 	if (!params.cnts_ids) {
-		pr_err("Parameter params.cnts_ids can't be NULL\n");
+		log_err("Parameter cnts_ids cannot be NULL\n");
 		return -EINVAL;
 	}
 
@@ -3065,8 +4343,9 @@ int dpa_stats_get_counters(struct dpa_stats_cnt_request_params params,
 	for (i = 0; i < params.cnts_ids_len; i++) {
 		if (params.cnts_ids[i] == DPA_OFFLD_INVALID_OBJECT_ID ||
 		    params.cnts_ids[i] > dpa_stats->config.max_counters) {
-			pr_err("Invalid Counter id %d provided\n",
-					params.cnts_ids[i]);
+			log_err("Counter id (cnt_ids[%d]) %d is not initialized or is greater than maximum counters %d\n",
+				i, params.cnts_ids[i],
+				dpa_stats->config.max_counters);
 			return -EINVAL;
 		}
 	}
@@ -3085,7 +4364,8 @@ int dpa_stats_get_counters(struct dpa_stats_cnt_request_params params,
 
 		/* Check if counter control block is initialized */
 		if (cnt_cb->index == DPA_OFFLD_INVALID_OBJECT_ID) {
-			pr_err("Invalid Counter id %d provided\n", cnt_id);
+			log_err("Counter id (cnt_ids[%d]) %d is not initialized\n",
+				i, cnt_id);
 			mutex_unlock(&cnt_cb->lock);
 			unblock_sched_cnts(dpa_stats, params.cnts_ids,
 					   params.cnts_ids_len);
@@ -3099,8 +4379,9 @@ int dpa_stats_get_counters(struct dpa_stats_cnt_request_params params,
 	/* Check user-provided parameters */
 	if ((params.storage_area_offset + *cnts_len) >
 		dpa_stats->config.storage_area_len) {
-		pr_err("Invalid offset %d provided\n",
-				params.storage_area_offset);
+		log_err("Parameter storage_area_offset %d and counters length %d exceeds configured storage_area_len %d\n",
+			params.storage_area_offset, *cnts_len,
+			dpa_stats->config.storage_area_len);
 		unblock_sched_cnts(dpa_stats, params.cnts_ids,
 				   params.cnts_ids_len);
 		return -EINVAL;
@@ -3109,21 +4390,22 @@ int dpa_stats_get_counters(struct dpa_stats_cnt_request_params params,
 	/* Create a new request */
 	err = get_new_req(dpa_stats, &req_id, &req_cb);
 	if (err < 0) {
-		pr_err("Failed retrieving a preallocated request\n");
+		log_err("Cannot retrieve preallocated internal request structure\n");
 		/* Release counters locks */
 		unblock_sched_cnts(dpa_stats, params.cnts_ids,
 				   params.cnts_ids_len);
 		return err;
 	}
 
-	/* Store user-provided request parameters */
-	memcpy(req_cb->config.cnts_ids,
-			params.cnts_ids, params.cnts_ids_len * sizeof(int));
-
+	req_cb->config.cnts_ids = params.cnts_ids;
 	req_cb->config.reset_cnts = params.reset_cnts;
 	req_cb->config.storage_area_offset = params.storage_area_offset;
 	req_cb->config.cnts_ids_len = params.cnts_ids_len;
 	req_cb->request_done = request_done;
+
+	/* Copy user-provided array of counter ids */
+	memcpy(req_cb->cnts_ids,
+	       params.cnts_ids, params.cnts_ids_len * sizeof(int));
 
 	/* Set memory area where the request should write */
 	req_cb->request_area = dpa_stats->config.storage_area +
@@ -3133,7 +4415,7 @@ int dpa_stats_get_counters(struct dpa_stats_cnt_request_params params,
 		/* Call is synchronous */
 		err = treat_cnts_request(dpa_stats, req_cb);
 		if (err < 0)
-			pr_err("Failed to retrieve counter values\n");
+			log_err("Cannot retrieve counter values\n");
 
 		err = put_req(dpa_stats, req_cb);
 
@@ -3156,19 +4438,19 @@ int dpa_stats_reset_counters(int *cnts_ids, unsigned int cnts_ids_len)
 	int err = 0;
 
 	if (!gbl_dpa_stats) {
-		pr_err("dpa_stats component is not initialized\n");
+		log_err("DPA Stats component is not initialized\n");
 		return -EPERM;
 	}
 
 	/* Check user-provided cnts_len pointer */
 	if (cnts_ids_len == 0) {
-		pr_err("Parameter cnts_ids_len can't be 0\n");
+		log_err("Parameter cnts_ids_len cannot be 0\n");
 		return -EINVAL;
 	}
 
 	/* Check user-provided cnts_ids pointer */
 	if (!cnts_ids) {
-		pr_err("Parameter cnts_ids can't be NULL\n");
+		log_err("Parameter cnts_ids cannot be NULL\n");
 		return -EINVAL;
 	}
 
@@ -3177,7 +4459,9 @@ int dpa_stats_reset_counters(int *cnts_ids, unsigned int cnts_ids_len)
 	for (i = 0; i < cnts_ids_len; i++)
 		if (cnts_ids[i] == DPA_OFFLD_INVALID_OBJECT_ID ||
 		    cnts_ids[i] > dpa_stats->config.max_counters) {
-			pr_err("Invalid Counter id %d provided\n", cnts_ids[i]);
+			log_err("Counter id (cnts_ids[%d]) %d is not initialized or is greater than maximum counters %d\n",
+				i, cnts_ids[i],
+				dpa_stats->config.max_counters - 1);
 			return -EINVAL;
 		}
 
@@ -3191,7 +4475,8 @@ int dpa_stats_reset_counters(int *cnts_ids, unsigned int cnts_ids_len)
 		/* Acquire counter lock */
 		err = mutex_trylock(&cnt_cb->lock);
 		if (err == 0) {
-			pr_err("Counter %d is being used\n", cnts_ids[i]);
+			log_err("Counter id (cnt_ids[%d]) %d is in use\n", i,
+				cnts_ids[i]);
 			unblock_sched_cnts(dpa_stats,
 					   cnts_ids, cnts_ids_len);
 			return -EBUSY;
@@ -3199,14 +4484,22 @@ int dpa_stats_reset_counters(int *cnts_ids, unsigned int cnts_ids_len)
 
 		/* Check if counter control block is initialized */
 		if (cnt_cb->index == DPA_OFFLD_INVALID_OBJECT_ID) {
-			pr_err("Invalid Counter id %d provided\n", cnts_ids[i]);
+			log_err("Counter id (cnt_ids[%d]) %d is not initialized\n",
+				i, cnts_ids[i]);
 			mutex_unlock(&cnt_cb->lock);
 			unblock_sched_cnts(dpa_stats,
 					   cnts_ids, cnts_ids_len);
 			return -EINVAL;
 		}
-		memset(&cnt_cb->info.stats, 0, (MAX_NUM_OF_MEMBERS *
-		       MAX_NUM_OF_STATS * sizeof(uint64_t)));
+
+		/* User space counters make no sense in being reset. */
+		if (cnt_cb->info.stats) {
+			/* Reset stored statistics values */
+			memset(cnt_cb->info.stats, 0,
+				(cnt_cb->members_num * cnt_cb->info.stats_num) *
+				sizeof(uint64_t));
+		}
+
 		mutex_unlock(&cnt_cb->lock);
 	}
 
@@ -3221,8 +4514,6 @@ int dpa_stats_free(int dpa_stats_id)
 	/* multiple DPA Stats instances are not currently supported */
 	unused(dpa_stats_id);
 
-	free_resources();
-
-	return 0;
+	return free_resources();
 }
 EXPORT_SYMBOL(dpa_stats_free);

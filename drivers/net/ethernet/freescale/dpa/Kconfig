@@ -1,10 +1,13 @@
-config FSL_DPAA_ETH
+menuconfig FSL_DPAA_ETH
 	bool "DPAA Ethernet"
 	depends on FSL_SOC && FSL_BMAN && FSL_QMAN && FSL_FMAN
 	select PHYLIB
+	select FSL_DPAA_TX_RECYCLE if FMAN_T4240
 	---help---
 	  Data Path Acceleration Architecture Ethernet driver, supporting the
 	  Freescale QorIQ chips.
+
+if FSL_DPAA_ETH
 
 config FSL_DPAA_OFFLINE_PORTS
 	bool "Offline Ports support"
@@ -22,36 +25,23 @@ config FSL_DPAA_OFFLINE_PORTS
 	  Choosing this feature will not impact the functionality and/or performance of the system,
 	  so it is safe to have it.
 
-config FSL_DPAA_ETH_SG_SUPPORT
-	bool
-
-choice FSL_DPAA_ETH_OPTIMIZE
-	prompt "Optimization choices for the DPAA Ethernet driver"
-	depends on FSL_DPAA_ETH
-	default FSL_DPAA_ETH_OPTIMIZE_FOR_IPFWD
+config FSL_DPAA_ETH_JUMBO_FRAME
+	bool "Optimize for jumbo frames (EXPERIMENTAL)"
+	depends on EXPERIMENTAL
+	select FMAN_RESOURCE_ALLOCATION_ALGORITHM if (FMAN_P3040_P4080_P5020 || FMAN_P1023)
+	default n
 	---help---
-	  Compile-time switch between driver optimizations for forwarding use-cases and
-	  termination scenarios.
-
-	config FSL_DPAA_ETH_OPTIMIZE_FOR_IPFWD
-		bool "Optimize for forwarding"
-		select FSL_DPAA_TX_RECYCLE if FMAN_T4240
-		select FMAN_RESOURCE_ALLOCATION_ALGORITHM if (FMAN_P3040_P4080_P5020 || FMAN_P1023)
-		---help---
-		  Optimize the DPAA-Ethernet driver for IP/IPSec forwarding use-cases.
-		  This option disabled SG support in the DPAA Ethernet driver.
-
-	config FSL_DPAA_ETH_OPTIMIZE_FOR_TERM
-		bool "Optimize for termination"
-		select FSL_DPAA_ETH_SG_SUPPORT
-		---help---
-		  Optimize the DPAA-Ethernet driver for termination (TCP, UDP) use-cases.
-		  In particular, this choice enables Scatter-Gather (SG) support
-		  in the driver, which is momentarily not accessible otherwise.
-endchoice
+	  Optimize the DPAA Ethernet driver throughput for large frames
+	  termination traffic (e.g. 4K and above).
+	  NOTE: This option can only be used if FSL_FM_MAX_FRAME_SIZE
+	  is set to 9600 bytes.
+	  Using this option in combination with small frames increases
+	  significantly the driver's memory footprint and may even deplete
+	  the system memory.
 
 config FSL_DPAA_TX_RECYCLE
 	bool
+	depends on FSL_DPAA_ETH
 	depends on FMAN_T4240
 
 config FSL_DPAA_1588
@@ -121,10 +111,40 @@ config FSL_DPAA_ETH_REFILL_THRESHOLD
 	  falls below this threshold. This must be related to DPAA_ETH_MAX_BUF_COUNT. One needn't normally
 	  modify this value unless one has very specific performance reasons.
 
-config FSL_DPAA_ETH_UNIT_TESTS
-	bool
+config FSL_DPAA_CS_THRESHOLD_1G
+	hex "Egress congestion threshold on 1G ports"
 	depends on FSL_DPAA_ETH
-	default n
+	range 0x1000 0x10000000
+	default "0x06000000"
+	---help---
+	  The size in bytes of the egress Congestion State notification threshold on 1G ports.
+	  The 1G dTSECs can quite easily be flooded by cores doing Tx in a tight loop
+	  (e.g. by sending UDP datagrams at "while(1) speed"),
+	  and the larger the frame size, the more acute the problem.
+	  So we have to find a balance between these factors:
+	       - avoiding the device staying congested for a prolonged time (risking
+                 the netdev watchdog to fire - see also the tx_timeout module param);
+               - affecting performance of protocols such as TCP, which otherwise
+	         behave well under the congestion notification mechanism;
+	       - preventing the Tx cores from tightly-looping (as if the congestion
+	         threshold was too low to be effective);
+	       - running out of memory if the CS threshold is set too high.
+
+config FSL_DPAA_CS_THRESHOLD_10G
+	hex "Egress congestion threshold on 10G ports"
+	depends on FSL_DPAA_ETH
+	range 0x1000 0x20000000
+	default "0x10000000"
+	---help ---
+	  The size in bytes of the egress Congestion State notification threshold on 10G ports.
+
+config FSL_DPAA_INGRESS_CS_THRESHOLD
+	hex "Ingress congestion threshold on FMan ports"
+	depends on FSL_DPAA_ETH
+	default "0x10000000"
+	---help---
+	  The size in bytes of the ingress tail-drop threshold on FMan ports.
+	  Traffic piling up above this value will be rejected by QMan and discarded by FMan.
 
 config FSL_DPAA_ETH_DEBUGFS
 	tristate "DPAA Ethernet debugfs interface"
@@ -132,3 +152,12 @@ config FSL_DPAA_ETH_DEBUGFS
 	default y
 	---help---
 	  This option compiles debugfs code for the DPAA Ethernet driver.
+
+config FSL_DPAA_ETH_DEBUG
+	bool "DPAA Ethernet Debug Support"
+	depends on FSL_DPAA_ETH
+	default n
+	---help---
+	  This option compiles debug code for the DPAA Ethernet driver.
+
+endif # FSL_DPAA_ETH

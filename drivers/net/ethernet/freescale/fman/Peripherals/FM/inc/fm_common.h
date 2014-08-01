@@ -242,6 +242,7 @@ typedef struct {
     uint8_t             hardwarePortId;
     t_FmRevisionInfo    revInfo;
     uint32_t            nia;
+    uint32_t            discardMask;
 } t_GetCcParams;
 
 typedef struct {
@@ -300,6 +301,7 @@ static __inline__ bool TRY_LOCK(t_Handle h_Spinlock, volatile bool *p_Flag)
 #define GET_NIA_FPNE                            0x01000000
 #define GET_NIA_PNDN                            0x00800000
 #define NUM_OF_EXTRA_TASKS                      0x00400000
+#define DISCARD_MASK                            0x00200000
 
 #define UPDATE_NIA_PNEN                         0x80000000
 #define UPDATE_PSO                              0x40000000
@@ -374,7 +376,6 @@ static __inline__ bool TRY_LOCK(t_Handle h_Spinlock, volatile bool *p_Flag)
 #define NIA_BMI_AC_TX               0x00000274
 #define NIA_BMI_AC_FETCH            0x00000208
 #define NIA_BMI_AC_MASK             0x000003FF
-#define NIA_BMI_AC_FETCH_ALL_FRAME  0x0000020c
 
 #define NIA_KG_DIRECT               0x00000100
 #define NIA_KG_CC_EN                0x00000200
@@ -443,59 +444,59 @@ static __inline__ bool TRY_LOCK(t_Handle h_Spinlock, volatile bool *p_Flag)
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal OH_PORT port id"))
 #endif
 #if (FM_MAX_NUM_OF_1G_RX_PORTS > 0)
-#define CHECK_PORT_ID_1G_RX_PORTS(_relativePortId)                     \
-    if ((_relativePortId) >= FM_MAX_NUM_OF_1G_RX_PORTS)                \
+#define CHECK_PORT_ID_1G_RX_PORTS(_relativePortId)                  \
+    if ((_relativePortId) >= FM_MAX_NUM_OF_1G_RX_PORTS)             \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 1G_RX_PORT port id"))
 #else
-#define CHECK_PORT_ID_1G_RX_PORTS(_relativePortId)                     \
+#define CHECK_PORT_ID_1G_RX_PORTS(_relativePortId)                  \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 1G_RX_PORT port id"))
 #endif
 #if (FM_MAX_NUM_OF_10G_RX_PORTS > 0)
-#define CHECK_PORT_ID_10G_RX_PORTS(_relativePortId)                     \
-    if ((_relativePortId) >= FM_MAX_NUM_OF_10G_RX_PORTS)                \
+#define CHECK_PORT_ID_10G_RX_PORTS(_relativePortId)                 \
+    if ((_relativePortId) >= FM_MAX_NUM_OF_10G_RX_PORTS)            \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 10G_RX_PORT port id"))
 #else
-#define CHECK_PORT_ID_10G_RX_PORTS(_relativePortId)                     \
+#define CHECK_PORT_ID_10G_RX_PORTS(_relativePortId)                 \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 10G_RX_PORT port id"))
 #endif
 #if (FM_MAX_NUM_OF_1G_TX_PORTS > 0)
-#define CHECK_PORT_ID_1G_TX_PORTS(_relativePortId)                     \
-    if ((_relativePortId) >= FM_MAX_NUM_OF_1G_TX_PORTS)                \
+#define CHECK_PORT_ID_1G_TX_PORTS(_relativePortId)                  \
+    if ((_relativePortId) >= FM_MAX_NUM_OF_1G_TX_PORTS)             \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 1G_TX_PORT port id"))
 #else
-#define CHECK_PORT_ID_1G_TX_PORTS(_relativePortId)                     \
+#define CHECK_PORT_ID_1G_TX_PORTS(_relativePortId)                  \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 1G_TX_PORT port id"))
 #endif
 #if (FM_MAX_NUM_OF_10G_TX_PORTS > 0)
-#define CHECK_PORT_ID_10G_TX_PORTS(_relativePortId)                     \
-    if ((_relativePortId) >= FM_MAX_NUM_OF_10G_TX_PORTS)                \
+#define CHECK_PORT_ID_10G_TX_PORTS(_relativePortId)                 \
+    if ((_relativePortId) >= FM_MAX_NUM_OF_10G_TX_PORTS)            \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 10G_TX_PORT port id"))
 #else
-#define CHECK_PORT_ID_10G_TX_PORTS(_relativePortId)                     \
+#define CHECK_PORT_ID_10G_TX_PORTS(_relativePortId)                 \
         REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("Illegal 10G_TX_PORT port id"))
 #endif
 
 
 #define SW_PORT_ID_TO_HW_PORT_ID(_port, _type, _relativePortId)         \
 switch (_type) {                                                        \
-    case (e_FM_PORT_TYPE_OH_OFFLINE_PARSING):                            \
-    case (e_FM_PORT_TYPE_OH_HOST_COMMAND):                               \
+    case (e_FM_PORT_TYPE_OH_OFFLINE_PARSING):                           \
+    case (e_FM_PORT_TYPE_OH_HOST_COMMAND):                              \
         CHECK_PORT_ID_OH_PORTS(_relativePortId);                        \
         _port = (uint8_t)(BASE_OH_PORTID + (_relativePortId));          \
         break;                                                          \
-    case (e_FM_PORT_TYPE_RX):                                            \
+    case (e_FM_PORT_TYPE_RX):                                           \
         CHECK_PORT_ID_1G_RX_PORTS(_relativePortId);                     \
         _port = (uint8_t)(BASE_1G_RX_PORTID + (_relativePortId));       \
         break;                                                          \
-    case (e_FM_PORT_TYPE_RX_10G):                                        \
+    case (e_FM_PORT_TYPE_RX_10G):                                       \
         CHECK_PORT_ID_10G_RX_PORTS(_relativePortId);                    \
         _port = (uint8_t)(BASE_10G_RX_PORTID + (_relativePortId));      \
         break;                                                          \
-    case (e_FM_PORT_TYPE_TX):                                            \
+    case (e_FM_PORT_TYPE_TX):                                           \
         CHECK_PORT_ID_1G_TX_PORTS(_relativePortId);                     \
         _port = (uint8_t)(BASE_1G_TX_PORTID + (_relativePortId));       \
         break;                                                          \
-    case (e_FM_PORT_TYPE_TX_10G):                                        \
+    case (e_FM_PORT_TYPE_TX_10G):                                       \
         CHECK_PORT_ID_10G_TX_PORTS(_relativePortId);                    \
         _port = (uint8_t)(BASE_10G_TX_PORTID + (_relativePortId));      \
         break;                                                          \
@@ -733,14 +734,12 @@ t_Error     FmPcdPlcrCcGetSetParams(t_Handle h_FmPcd, uint16_t profileIndx,uint3
 /***********************************************************************/
 uint8_t     FmPcdCcGetParseCode(t_Handle h_CcNode);
 uint8_t     FmPcdCcGetOffset(t_Handle h_CcNode);
-uint32_t    FmPcdCcGetNodeAddrOffset(t_Handle h_FmPcd, t_Handle h_Pointer);
 t_Error     FmPcdCcRemoveKey(t_Handle h_FmPcd, t_Handle h_FmPcdCcNode, uint16_t keyIndex);
 t_Error     FmPcdCcAddKey(t_Handle h_FmPcd, t_Handle h_CcNode, uint16_t keyIndex, uint8_t keySize, t_FmPcdCcKeyParams *p_FmPCdCcKeyParams);
 t_Error     FmPcdCcModifyKey(t_Handle h_FmPcd, t_Handle h_CcNode, uint16_t keyIndex, uint8_t keySize, uint8_t *p_Key, uint8_t *p_Mask);
 t_Error     FmPcdCcModifyKeyAndNextEngine(t_Handle h_FmPcd, t_Handle h_FmPcdCcNode, uint16_t keyIndex, uint8_t keySize, t_FmPcdCcKeyParams *p_FmPcdCcKeyParams);
 t_Error     FmPcdCcModifyMissNextEngineParamNode(t_Handle h_FmPcd,t_Handle h_FmPcdCcNode, t_FmPcdCcNextEngineParams *p_FmPcdCcNextEngineParams);
 t_Error     FmPcdCcModifyNextEngineParamTree(t_Handle h_FmPcd, t_Handle h_FmPcdCcTree, uint8_t grpId, uint8_t index, t_FmPcdCcNextEngineParams *p_FmPcdCcNextEngineParams);
-t_Error     FmPcdCcModiyNextEngineParamNode(t_Handle h_FmPcd,t_Handle h_FmPcdCcNode, uint16_t keyIndex,t_FmPcdCcNextEngineParams *p_FmPcdCcNextEngineParams);
 uint32_t    FmPcdCcGetNodeAddrOffsetFromNodeInfo(t_Handle h_FmPcd, t_Handle h_Pointer);
 t_Handle    FmPcdCcTreeGetSavedManipParams(t_Handle h_FmTree);
 void        FmPcdCcTreeSetSavedManipParams(t_Handle h_FmTree, t_Handle h_SavedManipParams);

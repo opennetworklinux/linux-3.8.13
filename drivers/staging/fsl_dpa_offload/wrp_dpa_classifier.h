@@ -43,6 +43,7 @@
 
 
 #define WRP_DPA_CLS_CDEVNAME				"dpa_classifier"
+#define WRP_DPA_CLS_CLASS_NAME				"dpa_classifier"
 
 
 int	wrp_dpa_classif_init(void);

@@ -290,6 +290,9 @@ static int __init caam_rng_init(void)
 			return -ENODEV;
 	}
 
+	if (of_device_is_compatible(dev_node,"fsl,sec-v6.0"))
+		return -ENODEV;
+
 	pdev = of_find_device_by_node(dev_node);
 	if (!pdev)
 		return -ENODEV;
@@ -297,6 +300,13 @@ static int __init caam_rng_init(void)
 	ctrldev = &pdev->dev;
 	priv = dev_get_drvdata(ctrldev);
 	of_node_put(dev_node);
+
+	/*
+	 * If priv is NULL, it's probably because the caam driver wasn't
+	 * properly initialized (e.g. RNG4 init failed). Thus, bail out here.
+	 */
+	if (!priv)
+		return -ENODEV;
 
 	caam_init_rng(&rng_ctx, priv->jrdev[0]);
 

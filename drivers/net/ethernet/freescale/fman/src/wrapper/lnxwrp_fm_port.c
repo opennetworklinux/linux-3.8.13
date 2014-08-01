@@ -61,6 +61,8 @@
 #include "lnxwrp_resources.h"
 #include "lnxwrp_sysfs_fm_port.h"
 
+#define __ERR_MODULE__  MODULE_FM
+
 extern struct device_node *GetFmAdvArgsDevTreeNode (uint8_t fmIndx);
 
 /* TODO: duplicated, see lnxwrp_fm.c */
@@ -796,14 +798,6 @@ static t_Error InitFmPortDev(t_LnxWrpFmPortDev *p_LnxWrpFmPortDev)
 	fm_config_precalculate_tnums(p_LnxWrpFmPortDev);
 #endif
 #endif
-
-    if ((p_LnxWrpFmPortDev->settings.param.portType != e_FM_PORT_TYPE_TX) &&
-        (p_LnxWrpFmPortDev->settings.param.portType != e_FM_PORT_TYPE_TX_10G)) {
-            if (FM_PORT_ConfigErrorsToDiscard(p_LnxWrpFmPortDev->h_Dev, (FM_PORT_FRM_ERR_IPRE |
-                                                                         FM_PORT_FRM_ERR_IPR_NCSP |
-                                                                         FM_PORT_FRM_ERR_CLS_DISCARD)) !=E_OK)
-            RETURN_ERROR(MAJOR, E_INVALID_STATE, NO_MSG);
-    }
 
     if (CheckNConfigFmPortAdvArgs(p_LnxWrpFmPortDev) != E_OK)
 		RETURN_ERROR(MAJOR, E_INVALID_STATE, NO_MSG);

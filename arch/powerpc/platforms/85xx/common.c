@@ -6,6 +6,7 @@
  * published by the Free Software Foundation.
  */
 #include <linux/of_platform.h>
+#include <linux/suspend.h>
 
 #include <sysdev/cpm2_pic.h>
 
@@ -46,6 +47,19 @@ int __init mpc85xx_common_publish_devices(void)
 {
 	return of_platform_bus_probe(NULL, mpc85xx_common_ids, NULL);
 }
+
+static suspend_state_t pm_state;
+
+void set_pm_suspend_state(suspend_state_t state)
+{
+	pm_state = state;
+}
+
+suspend_state_t pm_suspend_state(void)
+{
+	return pm_state;
+}
+
 #ifdef CONFIG_CPM2
 static void cpm2_cascade(unsigned int irq, struct irq_desc *desc)
 {
@@ -57,7 +71,6 @@ static void cpm2_cascade(unsigned int irq, struct irq_desc *desc)
 
 	chip->irq_eoi(&desc->irq_data);
 }
-
 
 void __init mpc85xx_cpm2_pic_init(void)
 {

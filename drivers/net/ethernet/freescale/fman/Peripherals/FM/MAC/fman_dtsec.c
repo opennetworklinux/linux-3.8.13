@@ -379,6 +379,20 @@ void fman_dtsec_get_mac_address(struct dtsec_regs *regs, uint8_t *macaddr)
 	macaddr[5] = (uint8_t)((tmp1 & 0xff000000) >> 24);
 }
 
+void fman_dtsec_set_hash_table(struct dtsec_regs *regs, uint32_t crc, bool mcast, bool ghtx)
+{
+    int32_t bucket;
+    if (ghtx)
+        bucket = (int32_t)((crc >> 23) & 0x1ff);
+    else {
+        bucket = (int32_t)((crc >> 24) & 0xff);
+        /* if !ghtx and mcast the bit must be set in gaddr instead of igaddr. */
+        if (mcast)
+            bucket += 0x100;
+    }
+    fman_dtsec_set_bucket(regs, bucket, TRUE);
+}
+
 void fman_dtsec_set_bucket(struct dtsec_regs *regs, int bucket, bool enable)
 {
 	int reg_idx = (bucket >> 5) & 0xf;
@@ -430,6 +444,8 @@ int fman_dtsec_adjust_link(struct dtsec_regs *regs,
 		enum enet_speed speed, bool full_dx)
 {
 	uint32_t		tmp;
+	
+	UNUSED(iface_mode);
 
 	if ((speed == E_ENET_SPEED_1000) && !full_dx)
 		return -EINVAL;
@@ -500,7 +516,6 @@ bool fman_dtsec_get_clear_carry_regs(struct dtsec_regs *regs,
 	return (bool)((*car1 | *car2) ? TRUE : FALSE);
 }
 
-
 void fman_dtsec_reset_stat(struct dtsec_regs *regs)
 {
 	/* clear HW counters */
@@ -508,7 +523,7 @@ void fman_dtsec_reset_stat(struct dtsec_regs *regs)
 			DTSEC_ECNTRL_CLRCNT, &regs->ecntrl);
 }
 
-int fman_dtsec_set_stat_level(struct dtsec_regs *regs, enum mac_stat_level level)
+int fman_dtsec_set_stat_level(struct dtsec_regs *regs, enum dtsec_stat_level level)
 {
 	switch (level) {
 	case E_MAC_STAT_NONE:

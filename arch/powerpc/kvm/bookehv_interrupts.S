@@ -62,6 +62,7 @@
 #define NEED_EMU		0x00000001 /* emulation -- save nv regs */
 #define NEED_DEAR		0x00000002 /* save faulting DEAR */
 #define NEED_ESR		0x00000004 /* save faulting ESR */
+#define NEED_LPER		0x00000008 /* save faulting LPER */
 
 /*
  * On entry:
@@ -157,6 +158,12 @@
 	.if	\flags & NEED_DEAR
 	mfspr	r9, SPRN_DEAR
 	PPC_STL	r9, VCPU_FAULT_DEAR(r4)
+	.endif
+
+	/* Only suppported on 64-bit cores for now */
+	.if	\flags & NEED_LPER
+	mfspr	r7, SPRN_LPER
+	std	r7, VCPU_FAULT_LPER(r4)
 	.endif
 
 	b	kvmppc_resume_host
@@ -277,6 +284,8 @@ kvm_handler BOOKE_INTERRUPT_DEBUG, EX_PARAMS(DBG), \
 	SPRN_DSRR0, SPRN_DSRR1, 0
 kvm_handler BOOKE_INTERRUPT_DEBUG, EX_PARAMS(CRIT), \
 	SPRN_CSRR0, SPRN_CSRR1, 0
+kvm_handler BOOKE_INTERRUPT_LRAT_ERROR, EX_PARAMS(GEN), \
+	SPRN_SRR0, SPRN_SRR1, (NEED_EMU | NEED_DEAR | NEED_ESR | NEED_LPER)
 kvm_handler BOOKE_INTERRUPT_ALTIVEC_UNAVAIL, EX_PARAMS(GEN), \
 	SPRN_SRR0, SPRN_SRR1, NEED_ESR
 kvm_handler BOOKE_INTERRUPT_ALTIVEC_ASSIST, EX_PARAMS(GEN), \

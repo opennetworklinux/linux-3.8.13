@@ -12,4 +12,4 @@ EXTRA_CFLAGS += -I$(NCSW_FM_INC)
 
 obj-y		+= fsl-ncsw-Pcd.o
 
-fsl-ncsw-Pcd-objs	:=   fm_port.o fm_port_im.o
+fsl-ncsw-Pcd-objs	:=   fm_port.o fm_port_im.o fman_port.o

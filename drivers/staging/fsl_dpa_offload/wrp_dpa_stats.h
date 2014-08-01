@@ -36,6 +36,7 @@
 /* Other includes */
 #include "linux/fs.h"
 #include <linux/fsl_dpa_stats.h>
+#include <linux/compat.h>
 
 #define DPA_STATS_CDEV				"dpa_stats"
 
@@ -61,11 +62,17 @@ long	wrp_dpa_stats_compat_ioctl(struct file *filp, unsigned int cmd,
 #define QUEUE_MAX_EVENTS 2048
 
 struct dpa_stats_event_params {
-	int		dpa_stats_id;
-	unsigned int	storage_area_offset;
-	unsigned int	cnts_written;
-	int		bytes_written;
-	dpa_stats_request_cb request_done;
+	int			dpa_stats_id;
+	unsigned int		storage_area_offset;
+	unsigned int		cnts_written;
+	int			bytes_written;
+#ifdef CONFIG_COMPAT
+	compat_uptr_t		us_cnt_ids;
+#else
+	int			*us_cnt_ids;
+#endif /* CONFIG_COMPAT */
+	unsigned int		cnt_ids_len;
+	dpa_stats_request_cb	request_done;
 };
 
 struct dpa_stats_event_queue {
@@ -77,6 +84,7 @@ struct dpa_stats_event_queue {
 struct dpa_stats_event {
 	struct dpa_stats_event_params  params;     /* Event data */
 	struct list_head    lh;         /* Event queue list head */
+	int *ks_cnt_ids; /* Request array of counter ids from kernel-space */
 };
 
 struct dpa_stats_async_req_ev {
@@ -84,6 +92,11 @@ struct dpa_stats_async_req_ev {
 	unsigned int storage_area_offset; /* Storage offset for this request */
 	/* Pointers to other async requests in the current set  */
 	struct list_head node;
+#ifdef CONFIG_COMPAT
+	compat_uptr_t us_cnt_ids; /* Request array of counter ids from US */
+#endif /* CONFIG COMPAT */
+	int *ks_cnt_ids; /* Request array of counter ids from KS */
+	unsigned int cnt_ids_len; /* Number of counter ids in array */
 };
 
 struct wrp_dpa_stats_cb {

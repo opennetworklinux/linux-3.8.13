@@ -50,6 +50,9 @@
 		pci0 = &pci0;
 		pci1 = &pci1;
 		pci2 = &pci2;
+		/*inaccurate vga name for U-Boot compatibility*/
+		vga = &display;
+		display = &display;
 	};
 
 	cpus {

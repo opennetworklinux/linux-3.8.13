@@ -47,6 +47,8 @@
 #include "fm_sp_common.h"
 #include "fsl_fman_sp.h"
 
+#include "fm_port_ext.h"
+#include "fsl_fman_port.h"
 
 #define __ERR_MODULE__  MODULE_FM_PORT
 
@@ -54,6 +56,7 @@
 #define MIN_EXT_BUF_SIZE                                64
 #define DATA_ALIGNMENT                                  64
 #define MAX_LIODN_OFFSET                                64
+#define MAX_PORT_FIFO_SIZE                              MIN(BMI_MAX_FIFO_SIZE, 1024*BMI_FIFO_UNITS)
 
 /**************************************************************************//**
  @Description       Memory Map defines
@@ -105,8 +108,8 @@
 #define DEFAULT_notSupported                            0xff
 
 #if (DPAA_VERSION < 11)
-#define DEFAULT_PORT_rxFifoPriElevationLevel            BMI_MAX_FIFO_SIZE
-#define DEFAULT_PORT_rxFifoThreshold                    (BMI_MAX_FIFO_SIZE*3/4)
+#define DEFAULT_PORT_rxFifoPriElevationLevel            MAX_PORT_FIFO_SIZE
+#define DEFAULT_PORT_rxFifoThreshold                    (MAX_PORT_FIFO_SIZE*3/4)
 
 #define DEFAULT_PORT_txFifoMinFillLevel                 0
 #define DEFAULT_PORT_txFifoLowComfLevel                 (5*KILOBYTE)
@@ -124,26 +127,22 @@
                  ((type) == e_FM_PORT_TYPE_OH_OFFLINE_PARSING)) ? 3 : 1))
 
 #define DEFAULT_PORT_extraNumOfTasks(type)                  \
-    (uint32_t)((((type) == e_FM_PORT_TYPE_RX_10G) ||        \
-                ((type) == e_FM_PORT_TYPE_TX_10G)) ? 8 :    \
-               ((((type) == e_FM_PORT_TYPE_RX) ||           \
-                 ((type) == e_FM_PORT_TYPE_TX)) ? 2 : 0))
+    (uint32_t)(((type) == e_FM_PORT_TYPE_RX_10G)  ? 8 :    \
+               (((type) == e_FM_PORT_TYPE_RX) ? 2 : 0))
 
 #define DEFAULT_PORT_numOfOpenDmas(type)                    \
     (uint32_t)((((type) == e_FM_PORT_TYPE_TX_10G) ||        \
                 ((type) == e_FM_PORT_TYPE_RX_10G)) ? 8 : 1 )
 
 #define DEFAULT_PORT_extraNumOfOpenDmas(type)               \
-    (uint32_t)((((type) == e_FM_PORT_TYPE_RX_10G) ||        \
-                ((type) == e_FM_PORT_TYPE_TX_10G)) ? 8 :    \
-               ((((type) == e_FM_PORT_TYPE_RX) ||           \
-                 ((type) == e_FM_PORT_TYPE_TX)) ? 1 : 0))
+    (uint32_t)(((type) == e_FM_PORT_TYPE_RX_10G) ? 8 :    \
+               (((type) == e_FM_PORT_TYPE_RX) ? 1 : 0))
 
 #define DEFAULT_PORT_numOfFifoBufs(type)                    \
     (uint32_t)((((type) == e_FM_PORT_TYPE_RX_10G) ||        \
                 ((type) == e_FM_PORT_TYPE_TX_10G)) ? 48 :   \
-               ((((type) == e_FM_PORT_TYPE_RX) ||           \
-                 ((type) == e_FM_PORT_TYPE_TX)) ? 44 : 8))
+                ((type) == e_FM_PORT_TYPE_RX) ? 45 :        \
+                ((type) == e_FM_PORT_TYPE_TX) ? 44 : 8)
 
 #define DEFAULT_PORT_extraNumOfFifoBufs             0
 
@@ -161,7 +160,7 @@
 
 #define DEFAULT_PORT_numOfTasks(type)                       \
     (uint32_t)((((type) == e_FM_PORT_TYPE_RX_10G) ||        \
-                ((type) == e_FM_PORT_TYPE_TX_10G)) ? 14 :  \
+                ((type) == e_FM_PORT_TYPE_TX_10G)) ? 14 :   \
                (((type) == e_FM_PORT_TYPE_RX) ||            \
                  ((type) == e_FM_PORT_TYPE_TX)) ? 4 :       \
                  ((type) == e_FM_PORT_TYPE_OH_OFFLINE_PARSING) ? 6 : 1)
@@ -170,17 +169,17 @@
 
 #define DEFAULT_PORT_numOfOpenDmas(type)                    \
     (uint32_t)(((type) == e_FM_PORT_TYPE_RX_10G) ? 8 :      \
-               ((type) == e_FM_PORT_TYPE_TX_10G) ? 12 :    \
+               ((type) == e_FM_PORT_TYPE_TX_10G) ? 12 :     \
                ((type) == e_FM_PORT_TYPE_RX)     ? 2 :      \
                ((type) == e_FM_PORT_TYPE_TX)     ? 3 :      \
-               ((type) == e_FM_PORT_TYPE_OH_HOST_COMMAND) ? 2 : 4 )
+               ((type) == e_FM_PORT_TYPE_OH_HOST_COMMAND) ? 2 : 4)
 
 #define DEFAULT_PORT_extraNumOfOpenDmas(type)       0
 
 #define DEFAULT_PORT_numOfFifoBufs(type)                   \
     (uint32_t) (((type) == e_FM_PORT_TYPE_RX_10G) ? 96 : \
                 ((type) == e_FM_PORT_TYPE_TX_10G) ? 64 : \
-                ((type) == e_FM_PORT_TYPE_OH_HOST_COMMAND) ? 10 : 50 )
+                ((type) == e_FM_PORT_TYPE_OH_HOST_COMMAND) ? 10 : 50)
 
 #define DEFAULT_PORT_extraNumOfFifoBufs             0
 
@@ -491,7 +490,6 @@ typedef _Packed struct
 #define BMI_SP_ID_MASK                          0xff000000
 #define BMI_SP_ID_SHIFT                         24
 #define BMI_SP_EN                               0x01000000
-#define BMI_EBD_EN                              0x80000000
 #endif /* (DPAA_VERSION >= 11) */
 
 #define BMI_PORT_CFG_EN                         0x80000000
@@ -500,7 +498,6 @@ typedef _Packed struct
 #define BMI_PORT_CFG_IM                         0x01000000
 #define BMI_PORT_STATUS_BSY                     0x80000000
 #define BMI_COUNTERS_EN                         0x80000000
-#define BMI_DMA_ATTR_WRITE_OPTIMIZE             FMAN_SP_DMA_ATTR_WRITE_OPTIMIZE
 
 #define BMI_PORT_RFNE_FRWD_DCL4C                0x10000000
 #define BMI_PORT_RFNE_FRWD_RPD                  0x40000000
@@ -510,7 +507,6 @@ typedef _Packed struct
 #define BMI_CMD_MR_SLEAC                        0x00100000
 #define BMI_CMD_MR_MA                           0x00080000
 #define BMI_CMD_MR_DEAS                         0x00040000
-#define BMI_CMD_TX_MR_DEF                       (0)
 #define BMI_CMD_RX_MR_DEF                       (BMI_CMD_MR_LEAC | \
                                                  BMI_CMD_MR_SLEAC | \
                                                  BMI_CMD_MR_MA | \
@@ -522,11 +518,6 @@ typedef _Packed struct
 #define BMI_CMD_ATTR_MACCMD_OVERRIDE            0x00008000
 #define BMI_CMD_ATTR_MACCMD_SECURED             0x00001000
 #define BMI_CMD_ATTR_MACCMD_SC_MASK             0x00000f00
-
-#define BMI_EXT_BUF_POOL_EN_COUNTER             FMAN_SP_EXT_BUF_POOL_EN_COUNTER
-#define BMI_EXT_BUF_POOL_VALID                  FMAN_SP_EXT_BUF_POOL_VALID
-
-#define BMI_EXT_BUF_POOL_BACKUP                 FMAN_SP_EXT_BUF_POOL_BACKUP
 
 #define BMI_EXT_BUF_POOL_ID_MASK                0x003F0000
 #define BMI_STATUS_RX_MASK_UNUSED               (uint32_t)(~(FM_PORT_FRM_ERR_DMA                    | \
@@ -592,7 +583,6 @@ typedef _Packed struct
 
 /* shifts */
 #define BMI_PORT_CFG_MS_SEL_SHIFT               16
-#define BMI_DMA_ATTR_SWP_SHIFT                  FMAN_SP_DMA_ATTR_SWP_SHIFT
 #define BMI_DMA_ATTR_IC_CACHE_SHIFT             FMAN_SP_DMA_ATTR_IC_CACHE_SHIFT
 #define BMI_DMA_ATTR_HDR_CACHE_SHIFT            FMAN_SP_DMA_ATTR_HDR_CACHE_SHIFT
 #define BMI_DMA_ATTR_SG_CACHE_SHIFT             FMAN_SP_DMA_ATTR_SG_CACHE_SHIFT
@@ -606,14 +596,10 @@ typedef _Packed struct
 #define BMI_RX_FRAME_END_CS_IGNORE_SHIFT        24
 #define BMI_RX_FRAME_END_CUT_SHIFT              16
 
-#define BMI_IC_TO_EXT_SHIFT                     FMAN_SP_IC_TO_EXT_SHIFT
-#define BMI_IC_FROM_INT_SHIFT                   FMAN_SP_IC_FROM_INT_SHIFT
 #define BMI_IC_SIZE_SHIFT                       FMAN_SP_IC_SIZE_SHIFT
 
 #define BMI_INT_BUF_MARG_SHIFT                  28
 
-#define BMI_EXT_BUF_MARG_START_SHIFT            FMAN_SP_EXT_BUF_MARG_START_SHIFT
-#define BMI_SG_DISABLE                          FMAN_SP_SG_DISABLE
 #define BMI_EXT_BUF_MARG_END_SHIFT              FMAN_SP_EXT_BUF_MARG_END_SHIFT
 
 #define BMI_CMD_ATTR_COLOR_SHIFT                26
@@ -623,15 +609,10 @@ typedef _Packed struct
 #define BMI_CMD_ATTR_MACCMD_SECURED_SHIFT       12
 #define BMI_CMD_ATTR_MACCMD_SC_SHIFT            8
 
-#define BMI_POOL_DEP_NUM_OF_POOLS_SHIFT         FMAN_SP_POOL_DEP_NUM_OF_POOLS_SHIFT
 #define BMI_POOL_DEP_NUM_OF_POOLS_VECTOR_SHIFT  24
 
-#define BMI_EXT_BUF_POOL_ID_SHIFT               FMAN_SP_EXT_BUF_POOL_ID_SHIFT
 #define BMI_TX_FIFO_MIN_FILL_SHIFT              16
-#define BMI_FIFO_PIPELINE_DEPTH_SHIFT           12
 #define BMI_TX_LOW_COMF_SHIFT                   0
-
-#define BMI_FRAME_END_CS_IGNORE_SHIFT           24
 
 #define BMI_PERFORMANCE_TASK_COMP_SHIFT         24
 #define BMI_PERFORMANCE_PORT_COMP_SHIFT         16
@@ -657,6 +638,7 @@ typedef _Packed struct
 #define MAX_NUM_OF_EXTRA_DMAS                   8
 #define MAX_BURST_SIZE                          1024
 #define MIN_NUM_OF_OP_DMAS                      2
+
 
 /**************************************************************************//**
  @Description       QMI defines
@@ -810,6 +792,7 @@ typedef struct {
 
 
 typedef struct {
+    struct fman_port_cfg                dfltCfg;
     uint32_t                            dfltFqid;
     uint32_t                            confFqid;
     uint32_t                            errFqid;
@@ -873,6 +856,7 @@ typedef struct t_FmPortRxPoolsParams
 } t_FmPortRxPoolsParams;
 
 typedef struct {
+    struct fman_port            port;
     t_Handle                    h_Fm;
     t_Handle                    h_FmPcd;
     t_Handle                    h_FmMuram;
@@ -902,7 +886,6 @@ typedef struct {
     /* Independent-Mode parameters support */
     bool                        imEn;
     t_FmMacIm                   im;
-    uint8_t                     fifoDeqPipelineDepth;
     volatile bool               lock;
     t_Handle                    h_Spinlock;
     t_FmPortExceptionCallback   *f_Exception;

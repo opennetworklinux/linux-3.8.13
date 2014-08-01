@@ -34,7 +34,6 @@
 #include <linux/fsl_qman.h>	/* struct qm_mcr_querycgr */
 #include <linux/debugfs.h>
 #include <asm/debug.h>
-#include <asm/smp.h>		/* get_hard_smp_processor_id() if !CONFIG_SMP */
 #include "dpaa_debugfs.h"
 #include "dpaa_eth.h" /* struct dpa_priv_s, dpa_percpu_priv_s, dpa_bp */
 
@@ -78,12 +77,8 @@ static int dpa_debugfs_show(struct seq_file *file, void *offset)
 	for_each_online_cpu(i) {
 		percpu_priv = per_cpu_ptr(priv->percpu_priv, i);
 
-		/* Only private interfaces have an associated counter for bp
-		 * buffers. Also the counter isn't initialized before the first
-		 * ifconfig up
-		 */
-		if (!priv->shared && percpu_priv->dpa_bp_count)
-			dpa_bp_count = *percpu_priv->dpa_bp_count;
+		if (dpa_bp->percpu_count)
+			dpa_bp_count = *(per_cpu_ptr(dpa_bp->percpu_count, i));
 
 		total.in_interrupt += percpu_priv->in_interrupt;
 		total.stats.rx_packets += percpu_priv->stats.rx_packets;
@@ -95,8 +90,8 @@ static int dpa_debugfs_show(struct seq_file *file, void *offset)
 		total.stats.rx_errors += percpu_priv->stats.rx_errors;
 		count_total += dpa_bp_count;
 
-		seq_printf(file, "     %hu/%hu  %8llu  %8llu  %8llu  %8llu  ",
-				get_hard_smp_processor_id(i), i,
+		seq_printf(file, "     %hu  %8llu  %8llu  %8llu  %8llu  ",
+				i,
 				percpu_priv->in_interrupt,
 				percpu_priv->stats.rx_packets,
 				percpu_priv->stats.tx_packets,
@@ -148,8 +143,8 @@ static int dpa_debugfs_show(struct seq_file *file, void *offset)
 		total.rx_errors.phe += percpu_priv->rx_errors.phe;
 		total.rx_errors.cse += percpu_priv->rx_errors.cse;
 
-		seq_printf(file, "     %hu/%hu  %8llu  %8llu  ",
-				get_hard_smp_processor_id(i), i,
+		seq_printf(file, "     %hu  %8llu  %8llu  ",
+				i,
 				percpu_priv->rx_errors.dme,
 				percpu_priv->rx_errors.fpe);
 		seq_printf(file, "%8llu  %8llu  %8llu\n",
@@ -180,8 +175,8 @@ static int dpa_debugfs_show(struct seq_file *file, void *offset)
 		total.ern_cnt.fq_retired += percpu_priv->ern_cnt.fq_retired;
 		total.ern_cnt.orp_zero += percpu_priv->ern_cnt.orp_zero;
 
-		seq_printf(file, "  %hu/%hu  %8llu  %8llu  %8llu  %8llu  ",
-			get_hard_smp_processor_id(i), i,
+		seq_printf(file, "  %hu  %8llu  %8llu  %8llu  %8llu  ",
+			i,
 			percpu_priv->ern_cnt.cg_tdrop,
 			percpu_priv->ern_cnt.wred,
 			percpu_priv->ern_cnt.err_cond,

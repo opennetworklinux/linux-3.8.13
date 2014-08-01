@@ -62,7 +62,7 @@ static int handle_cmd(struct sk_buff *skb, struct genl_info *info)
 		rep_nlh = nlmsg_hdr(rep_buf);
 		memcpy(rep_nlh, req_nlh, hdr_space);
 		rep_nlh->nlmsg_len = rep_buf->len;
-		genlmsg_unicast(&init_net, rep_buf, NETLINK_CB(skb).portid);
+		genlmsg_unicast(genl_info_net(info), rep_buf, NETLINK_CB(skb).portid);
 	}
 
 	return 0;
@@ -74,6 +74,7 @@ static struct genl_family tipc_genl_family = {
 	.version	= TIPC_GENL_VERSION,
 	.hdrsize	= TIPC_GENL_HDRLEN,
 	.maxattr	= 0,
+	.netnsok	= true,
 };
 
 static struct genl_ops tipc_genl_ops = {

@@ -89,19 +89,6 @@ config FSL_QMAN
 
 if FSL_QMAN
 
-config FSL_QMAN_BUG_AND_FEATURE_REV1
-	bool "workarounds for errata and missing features in p4080 rev1"
-	default y
-	---help---
-	  If this option is selected, the driver will be compiled with
-	  workarounds for errata as well as feature limitations (relative to
-	  more recent parts) of p4080 rev1. On unaffected revisions, this
-	  support incurs only a negligable overhead, typically only a couple of
-	  instructions per non-fast-path operation (the fast-path operations are
-	  unaffected).
-
-	  If in doubt, say Y.
-
 config FSL_QMAN_POLL_LIMIT
 	int
 	default 32
@@ -217,6 +204,13 @@ config QMAN_CEETM_UPDATE_PERIOD
 	a good balance between granularity and range.
 
 	Unless you know what you are doing, leave this value at its default.
+
+config FSL_QMAN_INIT_TIMEOUT
+	int "timeout for qman init stage, in seconds"
+	default 10
+	---help---
+	The timeout setting to quit the initialization loop for non-control
+	partition in case the control partition fails to boot-up.
 
 endif # FSL_QMAN
 

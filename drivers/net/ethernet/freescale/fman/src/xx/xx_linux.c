@@ -168,7 +168,7 @@ void XX_Print(char *str, ...)
 #ifdef CONFIG_SMP
     if (vsnprintf (buf, BUF_SIZE, str, args) >= BUF_SIZE)
         printk(KERN_WARNING "Illegal string to print!\n    more than %d characters.\n\tString was not printed completelly.\n", BUF_SIZE);
-    printk (KERN_CRIT "cpu%d: %s",raw_smp_processor_id(), buf);
+    printk(KERN_CRIT "cpu%d/%d: %s", get_hard_smp_processor_id(raw_smp_processor_id()), raw_smp_processor_id(), buf);
 #else
     vprintk(str, args);
 #endif /* CONFIG_SMP */
@@ -186,7 +186,8 @@ void XX_Fprint(void *file, char *str, ...)
 #ifdef CONFIG_SMP
     if (vsnprintf (buf, BUF_SIZE, str, args) >= BUF_SIZE)
         printk(KERN_WARNING "Illegal string to print!\n    more than %d characters.\n\tString was not printed completelly.\n", BUF_SIZE);
-    printk (KERN_CRIT "cpu%d: %s", raw_smp_processor_id(), buf);
+    printk (KERN_CRIT "cpu%d/%d: %s",hard_smp_processor_id(), smp_processor_id(), buf);
+
 #else
     vprintk(str, args);
 #endif /* CONFIG_SMP */
@@ -353,14 +354,14 @@ uint32_t XX_DisableAllIntr(void)
 {
     unsigned long flags;
 
-    local_irq_save(flags);
+    local_irq_save_nort(flags);
 
     return (uint32_t)flags;
 }
 
 void XX_RestoreAllIntr(uint32_t flags)
 {
-    local_irq_restore((unsigned long)flags);
+    local_irq_restore_nort((unsigned long)flags);
 }
 
 t_Error XX_Call( uint32_t qid, t_Error (* f)(t_Handle), t_Handle id, t_Handle appId, uint16_t flags )

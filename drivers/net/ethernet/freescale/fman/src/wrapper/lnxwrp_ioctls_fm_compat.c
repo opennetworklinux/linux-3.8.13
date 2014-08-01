@@ -506,7 +506,7 @@ void compat_copy_fm_pcd_hash_table(
 {
     if (compat == COMPAT_US_TO_K)
     {
-        param-> max_num_of_keys = compat_param->max_num_of_keys;
+        param->max_num_of_keys  = compat_param->max_num_of_keys;
         param->statistics_mode  = compat_param->statistics_mode;
         param->kg_hash_shift    = compat_param->kg_hash_shift;
         param->hash_res_mask    = compat_param->hash_res_mask;
@@ -516,7 +516,7 @@ void compat_copy_fm_pcd_hash_table(
     }
     else
     {
-        compat_param-> max_num_of_keys = param->max_num_of_keys;
+        compat_param->max_num_of_keys  = param->max_num_of_keys;
         compat_param->statistics_mode  = param->statistics_mode;
         compat_param->kg_hash_shift    = param->kg_hash_shift;
         compat_param->hash_res_mask    = param->hash_res_mask;
@@ -844,6 +844,22 @@ void compat_copy_fm_port_vsp_alloc_params(
 }
 #endif /* (DPAA_VERSION >= 11) */
 
+void compat_copy_fm_pcd_cc_tbl_get_miss(
+        ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *compat_param,
+        ioc_fm_pcd_cc_tbl_get_miss_params_t *param,
+        uint8_t compat)
+{
+    if (compat == COMPAT_US_TO_K)
+    {
+        param->id = compat_pcd_id2ptr(compat_param->id);
+        memcpy(&param->miss_statistics, &compat_param->miss_statistics, sizeof(ioc_fm_pcd_cc_key_statistics_t));
+    } else {
+        compat_param->id = compat_add_ptr2id(param->id, FM_MAP_TYPE_PCD_NODE);
+        memcpy(&compat_param->miss_statistics, &param->miss_statistics, sizeof(ioc_fm_pcd_cc_key_statistics_t));
+    }
+}
+
+  
 void compat_copy_fm_pcd_net_env(
         ioc_compat_fm_pcd_net_env_params_t *compat_param,
         ioc_fm_pcd_net_env_params_t *param,
@@ -909,8 +925,8 @@ void compat_copy_keys(
 #if (DPAA_VERSION >= 11)
         memcpy(&param->frame_length_ranges,
                 &compat_param->frame_length_ranges,
-                sizeof(param->frame_length_ranges[0] *
-                    IOC_FM_PCD_CC_STATS_MAX_NUM_OF_FLR));
+                sizeof(param->frame_length_ranges[0]) *
+                    IOC_FM_PCD_CC_STATS_MAX_NUM_OF_FLR);
 #endif /* (DPAA_VERSION >= 11) */
     }
     else {

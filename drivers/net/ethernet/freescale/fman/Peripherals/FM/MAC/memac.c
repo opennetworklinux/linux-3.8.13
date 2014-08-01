@@ -83,6 +83,13 @@ static uint32_t GetMacAddrHashCode(uint64_t ethAddr)
 static void SetupSgmiiInternalPhy(t_Memac *p_Memac, uint8_t phyAddr)
 {
     uint16_t    tmpReg16;
+    e_EnetMode  enetMode;
+
+     /* In case the higher MACs are used (i.e. the MACs that should support 10G),
+        speed=10000 is provided for SGMII ports. Temporary modify enet mode
+        to 1G one, so MII functions can work correctly. */
+    enetMode = p_Memac->enetMode;
+    p_Memac->enetMode = MAKE_ENET_MODE(ENET_INTERFACE_FROM_MODE(p_Memac->enetMode), e_ENET_SPEED_1000);
 
     /* SGMII mode + AN enable */
     tmpReg16 = PHY_SGMII_IF_MODE_AN | PHY_SGMII_IF_MODE_SGMII;
@@ -109,6 +116,9 @@ static void SetupSgmiiInternalPhy(t_Memac *p_Memac, uint8_t phyAddr)
     /* Restart AN */
     tmpReg16 = PHY_SGMII_CR_DEF_VAL | PHY_SGMII_CR_RESET_AN;
     MEMAC_MII_WritePhyReg(p_Memac, phyAddr, 0x0, tmpReg16);
+
+    /* Restore original enet mode */
+    p_Memac->enetMode = enetMode;
 }
 
 /* ......................................................................... */
@@ -116,6 +126,13 @@ static void SetupSgmiiInternalPhy(t_Memac *p_Memac, uint8_t phyAddr)
 static void SetupSgmiiInternalPhyBaseX(t_Memac *p_Memac, uint8_t phyAddr)
 {
     uint16_t    tmpReg16;
+    e_EnetMode  enetMode;
+
+     /* In case the higher MACs are used (i.e. the MACs that should support 10G),
+        speed=10000 is provided for SGMII ports. Temporary modify enet mode
+        to 1G one, so MII functions can work correctly. */
+    enetMode = p_Memac->enetMode;
+    p_Memac->enetMode = MAKE_ENET_MODE(ENET_INTERFACE_FROM_MODE(p_Memac->enetMode), e_ENET_SPEED_1000);
 
     /* 1000BaseX mode */
     tmpReg16 = PHY_SGMII_IF_MODE_1000X;
@@ -142,6 +159,9 @@ static void SetupSgmiiInternalPhyBaseX(t_Memac *p_Memac, uint8_t phyAddr)
     /* Restart AN */
     tmpReg16 = PHY_SGMII_CR_DEF_VAL | PHY_SGMII_CR_RESET_AN;
     MEMAC_MII_WritePhyReg(p_Memac, phyAddr, 0x0, tmpReg16);
+
+    /* Restore original enet mode */
+    p_Memac->enetMode = enetMode;
 }
 
 /* ......................................................................... */
@@ -415,7 +435,6 @@ static t_Error MemacSetTxPauseFrames(t_Handle h_Memac,
                                      uint16_t threshTime)
 {
     t_Memac     *p_Memac = (t_Memac *)h_Memac;
-    t_Error     err = E_OK;
 
     SANITY_CHECK_RETURN_ERROR(p_Memac, E_INVALID_STATE);
     SANITY_CHECK_RETURN_ERROR(!p_Memac->p_MemacDriverParam, E_INVALID_STATE);
@@ -854,7 +873,8 @@ static t_Error MemacInit(t_Handle h_Memac)
     	FM_GetRevision(p_Memac->fmMacControllerDriver.h_Fm, &p_Memac->fmMacControllerDriver.fmRevInfo);
         /* check the FMAN version - the bug exists only in rev1 */
         if ((p_Memac->fmMacControllerDriver.fmRevInfo.majorRev == 6) &&
-        	(p_Memac->fmMacControllerDriver.fmRevInfo.minorRev == 0))
+            ((p_Memac->fmMacControllerDriver.fmRevInfo.minorRev == 0) ||
+             (p_Memac->fmMacControllerDriver.fmRevInfo.minorRev == 3)))
         {
         	/* MAC strips CRC from received frames - this workaround should
         	   decrease the likelihood of bug appearance
@@ -1047,7 +1067,7 @@ t_Handle MEMAC_Config(t_FmMacParams *p_FmMacParam)
     p_Memac->addr           = ENET_ADDR_TO_UINT64(p_FmMacParam->addr);
 
     p_Memac->p_MemMap       = (struct memac_regs *)UINT_TO_PTR(baseAddr);
-    p_Memac->p_MiiMemMap    = (t_MemacMiiAccessMemMap *)UINT_TO_PTR(baseAddr + MEMAC_TO_MII_OFFSET);
+    p_Memac->p_MiiMemMap    = (struct memac_mii_access_mem_map*)UINT_TO_PTR(baseAddr + MEMAC_TO_MII_OFFSET);
 
     p_Memac->enetMode       = p_FmMacParam->enetMode;
     p_Memac->macId          = p_FmMacParam->macId;

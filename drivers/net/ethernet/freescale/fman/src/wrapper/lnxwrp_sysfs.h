@@ -30,13 +30,6 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/*
- @File          lnxwrp_sysfs.h
-
- @Description   FM sysfs functions.
-
-*/
-
 #ifndef LNXWRP_SYSFS_H_
 #define LNXWRP_SYSFS_H_
 
@@ -55,13 +48,13 @@
 #include <linux/device.h>
 #include <linux/sysfs.h>
 
-struct SysfsStats_t {
-	const char *statisticName;
-	uint8_t statisticCounter;
+struct sysfs_stats_t {
+	const char *stat_name;
+	uint8_t stat_counter;
 };
 
 uint8_t fm_find_statistic_counter_by_name(const char *attr_name,
-					  const struct SysfsStats_t *sysfs_stats,
-					  uint8_t *offset);
+				const struct sysfs_stats_t *sysfs_stats,
+				uint8_t *offset);
 
 #endif /* LNXWRP_SYSFS_H_ */

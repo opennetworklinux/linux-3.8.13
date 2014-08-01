@@ -231,8 +231,7 @@ typedef enum
 
 /* QMI defines */
 #define QMI_MAX_NUM_OF_TNUMS            64
-#define QMI_DEF_TNUMS_THRESH            48
-
+#define QMI_DEF_TNUMS_THRESH            32
 /* FPM defines */
 #define FM_NUM_OF_FMAN_CTRL_EVENT_REGS  4
 
@@ -256,11 +255,14 @@ typedef enum
 #define FM_DEQ_PIPELINE_PARAMS_FOR_OP
 #define FM_QMI_NO_SINGLE_ECC_EXCEPTION
 
+#define FM_NO_GUARANTEED_RESET_VALUES
+
 /* FM errata */
 #define FM_HEAVY_TRAFFIC_HANG_ERRATA_FMAN_A005669
 #define FM_WRONG_RESET_VALUES_ERRATA_FMAN_A005127
 #define FM_RX_FIFO_CORRUPT_ERRATA_10GMAC_A006320
 #define FM_OP_NO_VSP_NO_RELEASE_ERRATA_FMAN_A006675
+#define FM_HEAVY_TRAFFIC_SEQUENCER_HANG_ERRATA_FMAN_A006981
 
 #define FM_BCB_ERRATA_BMI_SW001
 #define FM_LEN_CHECK_ERRATA_FMAN_SW002
@@ -273,5 +275,7 @@ typedef enum
 #define RM_MAX_NUM_OF_IB        4           /**< Number of inbound blocks */
 #define RM_NUM_OF_IBCU          8           /**< NUmber of classification units in an inbound block */
 
+/* RMan erratas */
+#define RM_ERRONEOUS_ACK_ERRATA_RMAN_A006756
 
 #endif /* __DPAA_INTEGRATION_EXT_H */

@@ -61,14 +61,11 @@ struct usdpaa_irq_ctx {
 	struct file *usdpaa_filp;
 };
 
-
 static int usdpaa_irq_open(struct inode *inode, struct file *filp)
 {
-	struct usdpaa_irq_ctx *ctx = kmalloc(sizeof(struct usdpaa_irq_ctx),
-					     GFP_KERNEL);
+	struct usdpaa_irq_ctx *ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
-
 	ctx->irq_set = 0;
 	ctx->irq_count = 0;
 	ctx->last_irq_count = 0;
@@ -92,80 +89,58 @@ static int usdpaa_irq_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-
-irqreturn_t usdpaa_irq_handler(int irq, void *_ctx)
+static irqreturn_t usdpaa_irq_handler(int irq, void *_ctx)
 {
 	unsigned long flags;
 	struct usdpaa_irq_ctx *ctx = _ctx;
 	spin_lock_irqsave(&ctx->lock, flags);
 	++ctx->irq_count;
-	wake_up_all(&ctx->wait_queue);
 	spin_unlock_irqrestore(&ctx->lock, flags);
+	wake_up_all(&ctx->wait_queue);
 	/* Set the inhibit register.  This will be reenabled
 	   once the USDPAA code handles the IRQ */
 	out_be32(ctx->inhibit_addr, 0x1);
 	return IRQ_HANDLED;
 }
 
-
-
 static int map_irq(struct file *fp, struct usdpaa_ioctl_irq_map *irq_map)
 {
 	struct usdpaa_irq_ctx *ctx = fp->private_data;
-	struct qm_portal_config *qportal = NULL;
-	struct bm_portal_config *bportal = NULL;
-	int irq, ret;
-	void *inhibit_reg;
-	struct file *old_filp = ctx->usdpaa_filp;
+	int ret;
+
+	if (ctx->irq_set) {
+		pr_debug("Setting USDPAA IRQ when it was already set!\n");
+		return -EBUSY;
+	}
 
 	ctx->usdpaa_filp = fget(irq_map->fd);
 	if (!ctx->usdpaa_filp) {
-		pr_err("fget() returned NULL for fd %d\n", irq_map->fd);
+		pr_debug("USDPAA fget(%d) returned NULL\n", irq_map->fd);
 		return -EINVAL;
 	}
 
-	if (irq_map->type == usdpaa_portal_qman) {
-		qportal = usdpaa_get_qm_portal_config(ctx->usdpaa_filp,
-						   irq_map->portal_cinh);
-		if (!qportal) {
-			pr_err("Couldn't associate info to QMan Portal\n");
-			fput(ctx->usdpaa_filp);
-			return -EINVAL;
-		}
-		/* Lookup IRQ number for portal */
-		irq = qportal->public_cfg.irq;
-		inhibit_reg = qportal->addr_virt[1] + QM_REG_IIR;
-	} else {
-		bportal = usdpaa_get_bm_portal_config(ctx->usdpaa_filp,
-					      irq_map->portal_cinh);
-		if (!bportal) {
-			pr_err("Couldn't associate info to BMan Portal\n");
-			fput(ctx->usdpaa_filp);
-			return -EINVAL;
-		}
-		/* Lookup IRQ number for portal */
-		irq = bportal->public_cfg.irq;
-		inhibit_reg = bportal->addr_virt[1] + BM_REG_IIR;
-	}
-	if (ctx->irq_set) {
-		fput(old_filp);
-		free_irq(ctx->irq_num, ctx);
+	ret = usdpaa_get_portal_config(ctx->usdpaa_filp, irq_map->portal_cinh,
+				       irq_map->type, &ctx->irq_num,
+				       &ctx->inhibit_addr);
+	if (ret) {
+		pr_debug("USDPAA IRQ couldn't identify portal\n");
+		fput(ctx->usdpaa_filp);
+		return ret;
 	}
 
 	ctx->irq_set = 1;
-	ctx->irq_num = irq;
-	ctx->inhibit_addr = inhibit_reg;
 
-	ret = request_irq(irq, usdpaa_irq_handler, 0,
+	ret = request_irq(ctx->irq_num, usdpaa_irq_handler, 0,
 			  "usdpaa_irq", ctx);
 	if (ret) {
-		pr_err("request_irq for irq %d failed, ret= %d\n", irq, ret);
+		pr_err("USDPAA request_irq(%d) failed, ret= %d\n",
+		       ctx->irq_num, ret);
 		ctx->irq_set = 0;
 		fput(ctx->usdpaa_filp);
 		return ret;
 	}
 	return 0;
-};
+}
 
 static long usdpaa_irq_ioctl(struct file *fp, unsigned int cmd,
 			     unsigned long arg)
@@ -174,7 +149,7 @@ static long usdpaa_irq_ioctl(struct file *fp, unsigned int cmd,
 	struct usdpaa_ioctl_irq_map irq_map;
 
 	if (cmd != USDPAA_IOCTL_PORTAL_IRQ_MAP) {
-		pr_err("Unknown command 0x%x\n", cmd);
+		pr_debug("USDPAA IRQ unknown command 0x%x\n", cmd);
 		return -EINVAL;
 	}
 
@@ -183,7 +158,7 @@ static long usdpaa_irq_ioctl(struct file *fp, unsigned int cmd,
 	if (ret)
 		return ret;
 	return map_irq(fp, &irq_map);
-};
+}
 
 static ssize_t usdpaa_irq_read(struct file *filp, char __user *buff,
 			       size_t count, loff_t *offp)
@@ -192,12 +167,12 @@ static ssize_t usdpaa_irq_read(struct file *filp, char __user *buff,
 	int ret;
 
 	if (!ctx->irq_set) {
-		pr_err("Reading USDPAA IRQ before it was set\n");
+		pr_debug("Reading USDPAA IRQ before it was set\n");
 		return -EINVAL;
 	}
 
 	if (count < sizeof(ctx->irq_count)) {
-		pr_err("USDPAA IRQ Read too small\n");
+		pr_debug("USDPAA IRQ Read too small\n");
 		return -EINVAL;
 	}
 	if (ctx->irq_count == ctx->last_irq_count) {
@@ -216,7 +191,6 @@ static ssize_t usdpaa_irq_read(struct file *filp, char __user *buff,
 			 sizeof(ctx->last_irq_count)))
 		return -EFAULT;
 	return sizeof(ctx->irq_count);
-
 }
 
 static unsigned int usdpaa_irq_poll(struct file *filp, poll_table *wait)
@@ -240,7 +214,9 @@ static unsigned int usdpaa_irq_poll(struct file *filp, poll_table *wait)
 static long usdpaa_irq_ioctl_compat(struct file *fp, unsigned int cmd,
 				unsigned long arg)
 {
+#ifdef CONFIG_COMPAT
 	void __user *a = (void __user *)arg;
+#endif
 	switch (cmd) {
 #ifdef CONFIG_COMPAT
 	case  USDPAA_IOCTL_PORTAL_IRQ_MAP_COMPAT:
@@ -258,7 +234,7 @@ static long usdpaa_irq_ioctl_compat(struct file *fp, unsigned int cmd,
 	default:
 		return usdpaa_irq_ioctl(fp, cmd, arg);
 	}
-};
+}
 
 static const struct file_operations usdpaa_irq_fops = {
 	.open		   = usdpaa_irq_open,

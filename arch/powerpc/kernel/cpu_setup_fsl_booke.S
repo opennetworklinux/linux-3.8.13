@@ -53,12 +53,90 @@ _GLOBAL(__e500_dcache_setup)
 	isync
 	blr
 
+_GLOBAL(has_pw20_altivec_idle)
+	/* 0 false, 1 true */
+	li	r3, 0
+
+	/* PW20 & AltiVec idle feature only exists for E6500 */
+	mfspr	r0, SPRN_PVR
+	rlwinm	r11, r0, 16, 16, 31
+	lis	r12, 0
+	ori	r12, r12, PVR_VER_E6500@l
+	cmpw	r11, r12
+	bne	2f
+
+	/* Fix erratum, e6500 rev1 does not support PW20 & AltiVec idle */
+	rlwinm	r11, r0, 0, 16, 31
+	cmpwi	r11, 0x20
+	blt	2f
+	li	r3, 1
+2:
+	blr
+
+/*
+ * FIXME - we haven't yet done testing to determine a reasonable default
+ * value for PW20_WAIT_IDLE_BIT.
+ */
+#define PW20_WAIT_IDLE_BIT		50 /* 1ms, TB frequency is 41.66MHZ */
+_GLOBAL(setup_pw20_idle)
+	mflr	r10
+	bl	has_pw20_altivec_idle
+	mtlr	r10
+	cmpwi	r3, 0
+	beq	2f
+
+	mfspr	r3, SPRN_PWRMGTCR0
+
+	/* Set PW20_WAIT bit, enable pw20 state*/
+	ori	r3, r3, PWRMGTCR0_PW20_WAIT
+	li	r11, PW20_WAIT_IDLE_BIT
+
+	/* Set Automatic PW20 Core Idle Count */
+	rlwimi	r3, r11, PWRMGTCR0_PW20_ENT_SHIFT, PWRMGTCR0_PW20_ENT
+
+	mtspr	SPRN_PWRMGTCR0, r3
+2:
+	blr
+
+/*
+ * FIXME - we haven't yet done testing to determine a reasonable default
+ * value for AV_WAIT_IDLE_BIT.
+ */
+#define AV_WAIT_IDLE_BIT		50 /* 1ms, TB frequency is 41.66MHZ */
+_GLOBAL(setup_altivec_idle)
+	mflr	r10
+	bl	has_pw20_altivec_idle
+	mtlr	r10
+	cmpwi	r3, 0
+	beq	2f
+
+	mfspr	r3, SPRN_PWRMGTCR0
+
+	/* Enable Altivec Idle */
+	oris	r3, r3, PWRMGTCR0_AV_IDLE_PD_EN@h
+	li	r11, AV_WAIT_IDLE_BIT
+
+	/* Set Automatic AltiVec Idle Count */
+	rlwimi	r3, r11, PWRMGTCR0_AV_IDLE_CNT_SHIFT, PWRMGTCR0_AV_IDLE_CNT
+
+	mtspr	SPRN_PWRMGTCR0, r3
+2:
+	blr
+
 #ifdef CONFIG_PPC_BOOK3E_64
 _GLOBAL(__setup_cpu_e6500)
 	mflr	r6
 #ifdef CONFIG_PPC64
 	bl	.setup_altivec_ivors
+	/* Touch IVOR42 only if the CPU supports E.HV category */
+	mfspr	r10,SPRN_MMUCFG
+	rlwinm.	r10,r10,0,MMUCFG_LPIDSIZE
+	beq	1f
+	bl	.setup_lrat_ivor
+1:
 #endif
+	bl	.setup_pw20_idle
+	bl	.setup_altivec_idle
 	bl	__setup_cpu_e5500
 	mtlr	r6
 	blr
@@ -121,6 +199,14 @@ _GLOBAL(__setup_cpu_e5500)
 _GLOBAL(__restore_cpu_e6500)
 	mflr	r5
 	bl	.setup_altivec_ivors
+	bl	.setup_pw20_idle
+	bl	.setup_altivec_idle
+	/* Touch IVOR42 only if the CPU supports E.HV category */
+	mfspr	r10,SPRN_MMUCFG
+	rlwinm.	r10,r10,0,MMUCFG_LPIDSIZE
+	beq	1f
+	bl	.setup_lrat_ivor
+1:
 	bl	__restore_cpu_e5500
 	mtlr	r5
 	blr

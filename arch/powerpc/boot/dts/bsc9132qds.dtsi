@@ -40,33 +40,6 @@
 		reg = <0x0 0x0 0x8000000>;
 		bank-width = <2>;
 		device-width = <1>;
-
-		partition@40000 {
-			/* 256KB for DTB Image */
-			reg = <0x00040000 0x00040000>;
-			label = "NOR DTB Image";
-		};
-
-		partition@80000 {
-			/* 7MB for Linux Kernel Image */
-			reg = <0x00080000 0x00700000>;
-			label = "NAND Linux Kernel Image";
-		};
-
-		partition@800000 {
-			/* 55MB for Root file system */
-			reg = <0x00800000 0x03700000>;
-			label = "NOR RFS Image";
-		};
-
-		partition@3f00000 {
-			/* This location must not be altered  */
-			/* 512KB for u-boot Bootloader Image */
-			/* 512KB for u-boot Environment Variables */
-			reg = <0x03f00000 0x00100000>;
-			label = "NOR U-boot Image";
-			read-only;
-		};
 	};
 
 	nand@1,0 {

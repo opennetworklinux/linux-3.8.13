@@ -77,25 +77,23 @@
 		fsl,bpid = <12>;
 		fsl,bpool-thresholds = <0x100 0x300 0x0 0x0>;
 	};
-
 	bp16: buffer-pool@16 {
-                        compatible = "fsl,b4420-bpool", "fsl,bpool";
-                        fsl,bpid = <16>;
-			fsl,bpool-ethernet-cfg = <0 2048 0 1728 0 0>;
-                        fsl,bpool-thresholds = <0x100 0x300 0x0 0x0>;
-       };
-
+		compatible = "fsl,b4420-bpool", "fsl,bpool";
+		fsl,bpid = <16>;
+		fsl,bpool-ethernet-cfg = <0 2048 0 1728 0 0>;
+		fsl,bpool-thresholds = <0x100 0x300 0x0 0x0>;
+	};
 
 	fsl,dpaa {
 		ethernet@0 {
 			compatible = "fsl,b4420-dpa-ethernet-init", "fsl,dpa-ethernet-init";
-			fsl,bman-buffer-pools = <&bp7 &bp8 &bp9>;
+			fsl,bman-buffer-pools = <&bp16>;
 			fsl,qman-frame-queues-rx = <0x50 1 0x51 1>;
 			fsl,qman-frame-queues-tx = <0x70 1 0x71 1>;
 		};
 		ethernet@1 {
 			compatible = "fsl,b4420-dpa-ethernet-init", "fsl,dpa-ethernet-init";
-			fsl,bman-buffer-pools = <&bp7 &bp8 &bp9>;
+			fsl,bman-buffer-pools = <&bp16>;
 			fsl,qman-frame-queues-rx = <0x52 1 0x53 1>;
 			fsl,qman-frame-queues-tx = <0x72 1 0x73 1>;
 		};
@@ -118,20 +116,26 @@
 		 * On receiving frame at this interface, the ethernet driver will do
 		 * kmap_atomic/kunmap_atomic for that frame. */
 		ethernet@16 {
-			compatible = "fsl,b4420-dpa-ethernet", "fsl,dpa-ethernet";
+			compatible = "fsl,b4420-dpa-ethernet-macless", "fsl,dpa-ethernet-macless";
 			fsl,bman-buffer-pools = <&bp16>;
 			fsl,qman-frame-queues-rx = <4000 8>;
 			fsl,qman-frame-queues-tx = <4008 8>;
 			local-mac-address = [00 11 22 33 44 55];
 		};
 		ethernet@17 {
-			compatible = "fsl,b4420-dpa-ethernet", "fsl,dpa-ethernet";
+			compatible = "fsl,b4420-dpa-ethernet-macless", "fsl,dpa-ethernet-macless";
 			fsl,bman-buffer-pools = <&bp16>;
 			fsl,qman-frame-queues-rx = <5000 8>;
 			fsl,qman-frame-queues-tx = <5008 8>;
 			local-mac-address = [00 11 22 33 44 66];
 		};
-
+		ethernet@18 {
+                        compatible = "fsl,b4420-dpa-ethernet-macless", "fsl,dpa-ethernet-macless";
+                        fsl,bman-buffer-pools = <&bp16>;
+                        fsl,qman-frame-queues-rx = <6000 8>;
+                        fsl,qman-frame-queues-tx = <6008 8>;
+                        local-mac-address = [00 11 22 33 44 77];
+                };
 		dpa-fman0-oh@2 {
 			compatible = "fsl,dpa-oh";
 			/* Define frame queues for the OH port*/

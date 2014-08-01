@@ -409,8 +409,7 @@ static t_Error GracefulStop(t_Dtsec *p_Dtsec, e_CommMode mode)
     }
 
     if (mode & e_COMM_MODE_TX)
-#if defined(FM_GTS_ERRATA_DTSEC_A004) || \
-    defined(FM_GTS_AFTER_MAC_ABORTED_FRAME_ERRATA_DTSEC_A0012)
+#if defined(FM_GTS_ERRATA_DTSEC_A004) || defined(FM_GTS_AFTER_MAC_ABORTED_FRAME_ERRATA_DTSEC_A0012)
     if (p_Dtsec->fmMacControllerDriver.fmRevInfo.majorRev == 2)
         DBG(INFO, ("GTS not supported due to DTSEC_A004 errata."));
 #else  /* not defined(FM_GTS_ERRATA_DTSEC_A004) ||... */
@@ -1051,7 +1050,7 @@ static t_Error DtsecSetStatistics(t_Handle h_Dtsec, e_FmMacStatisticsLevel stati
     p_Dtsec->statisticsLevel = statisticsLevel;
 
     err = (t_Error)fman_dtsec_set_stat_level(p_Dtsec->p_MemMap,
-                                        (enum mac_stat_level)statisticsLevel);
+                                        (enum dtsec_stat_level)statisticsLevel);
     if (err != E_OK)
         return err;
 

@@ -3,6 +3,7 @@ config FSL_DPA_OFFLOAD
 	tristate "Freescale Datapath Offloading Driver"
 	depends on FSL_FMAN
 	select CRC8
+	select CRC64_ECMA
 	default n
 	---help---
 		The driver supports DPAA offloading capabilities.

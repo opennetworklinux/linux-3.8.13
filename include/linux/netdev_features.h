@@ -58,7 +58,9 @@ enum {
 	NETIF_F_RXALL_BIT,		/* Receive errored frames too */
 
 	/* Freescale DPA support */
+#ifdef CONFIG_AS_FASTPATH
 	NETIF_F_HW_QDISC_BIT,		/* Supports hardware Qdisc */
+#endif
 	NETIF_F_HW_ACCEL_MQ_BIT,	/* Hardware-accelerated multiqueue */
 
 	/*

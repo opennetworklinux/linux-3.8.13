@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2008-2012 Freescale Semiconductor Inc.
  *
@@ -41,8 +40,6 @@
 #include "dpaa_1588.h"
 #endif
 
-static u8 macless_idx;
-
 static ssize_t dpaa_eth_show_addr(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
@@ -60,13 +57,12 @@ static ssize_t dpaa_eth_show_type(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	struct dpa_priv_s *priv = netdev_priv(to_net_dev(dev));
+	ssize_t res = 0;
 
-	if (!priv->mac_dev)
-		return sprintf(buf, "macless%d", priv->macless_idx);
-	else if (priv->shared)
-		return sprintf(buf, "shared");
-	else
-		return sprintf(buf, "private");
+	if (priv)
+		res = sprintf(buf, "%s", priv->if_type);
+
+	return res;
 }
 
 static ssize_t dpaa_eth_show_fqids(struct device *dev,
@@ -95,7 +91,10 @@ static ssize_t dpaa_eth_show_fqids(struct device *dev,
 			str = "Rx PCD";
 			break;
 		case FQ_TYPE_TX_CONFIRM:
-			str = "Tx confirmation";
+			str = "Tx default confirmation";
+			break;
+		case FQ_TYPE_TX_CONF_MQ:
+			str = "Tx confirmation (mq)";
 			break;
 		case FQ_TYPE_TX_ERROR:
 			str = "Tx error";
@@ -145,17 +144,17 @@ static ssize_t dpaa_eth_show_fqids(struct device *dev,
 	return bytes;
 }
 
-static ssize_t dpaa_eth_show_dflt_bpid(struct device *dev,
+static ssize_t dpaa_eth_show_bpids(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	ssize_t bytes = 0;
 	struct dpa_priv_s *priv = netdev_priv(to_net_dev(dev));
 	struct dpa_bp *dpa_bp = priv->dpa_bp;
+	int i = 0;
 
-	if (priv->bp_count != 1)
-		bytes += snprintf(buf, PAGE_SIZE, "-1\n");
-	else
-		bytes += snprintf(buf, PAGE_SIZE, "%u\n", dpa_bp->bpid);
+	for (i = 0; i < priv->bp_count; i++)
+		bytes += snprintf(buf + bytes, PAGE_SIZE, "%u\n",
+				dpa_bp[i].bpid);
 
 	return bytes;
 }
@@ -165,13 +164,14 @@ static ssize_t dpaa_eth_show_mac_regs(struct device *dev,
 {
 	struct dpa_priv_s *priv = netdev_priv(to_net_dev(dev));
 	struct mac_device *mac_dev = priv->mac_dev;
+	int n = 0;
 
 	if (mac_dev)
-		fm_mac_dump_regs(mac_dev);
+		n = fm_mac_dump_regs(mac_dev, buf, n);
 	else
 		return sprintf(buf, "no mac registers\n");
 
-	return 0;
+	return n;
 }
 
 
@@ -218,7 +218,7 @@ static struct device_attribute dpaa_eth_attrs[] = {
 	__ATTR(device_addr, S_IRUGO, dpaa_eth_show_addr, NULL),
 	__ATTR(device_type, S_IRUGO, dpaa_eth_show_type, NULL),
 	__ATTR(fqids, S_IRUGO, dpaa_eth_show_fqids, NULL),
-	__ATTR(dflt_bpid, S_IRUGO, dpaa_eth_show_dflt_bpid, NULL),
+	__ATTR(bpids, S_IRUGO, dpaa_eth_show_bpids, NULL),
 	__ATTR(mac_regs, S_IRUGO, dpaa_eth_show_mac_regs, NULL),
 #ifdef CONFIG_FSL_DPAA_1588
 	__ATTR(ptp_1588, S_IRUGO | S_IWUSR, dpaa_eth_show_ptp_1588,
@@ -228,23 +228,15 @@ static struct device_attribute dpaa_eth_attrs[] = {
 
 void dpaa_eth_sysfs_init(struct device *dev)
 {
-	struct dpa_priv_s *priv = netdev_priv(to_net_dev(dev));
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(dpaa_eth_attrs); i++)
 		if (device_create_file(dev, &dpaa_eth_attrs[i])) {
 			dev_err(dev, "Error creating sysfs file\n");
-			goto device_create_file_failed;
+			while (i > 0)
+				device_remove_file(dev, &dpaa_eth_attrs[--i]);
+			return;
 		}
-
-	if (!priv->mac_dev)
-		priv->macless_idx = macless_idx++;
-
-	return;
-
-device_create_file_failed:
-	while (i > 0)
-		device_remove_file(dev, &dpaa_eth_attrs[--i]);
 }
 
 void dpaa_eth_sysfs_remove(struct device *dev)
@@ -254,8 +246,6 @@ void dpaa_eth_sysfs_remove(struct device *dev)
 	for (i = 0; i < ARRAY_SIZE(dpaa_eth_attrs); i++)
 		device_remove_file(dev, &dpaa_eth_attrs[i]);
 }
-
-
 
 
 

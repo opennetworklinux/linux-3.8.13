@@ -426,4 +426,24 @@ void fman_rtc_set_periodic_pulse(struct rtc_regs *regs, int id, uint32_t val,
 void fman_rtc_set_ext_trigger(struct rtc_regs *regs, int id, bool enable,
 	bool use_pulse_as_input);
 
+struct fm_rtc_alarm_params {
+	uint8_t alarm_id;            	/**< 0 or 1 */
+	uint64_t alarm_time;         	/**< In nanoseconds, the time when the
+					alarm should go off - must be a
+					multiple of the RTC period */
+	void (*f_alarm_callback)(void* app, uint8_t id); /**< This routine will
+					be called when RTC reaches alarmTime */
+	bool clear_on_expiration;   	/**< TRUE to turn off the alarm once
+					expired.*/
+};
+
+struct fm_rtc_periodic_pulse_params {
+	uint8_t periodic_pulse_id;      /**< 0 or 1 */
+	uint64_t periodic_pulse_period; /**< In Nanoseconds. Must be a multiple
+					of the RTC period */
+	void (*f_periodic_pulse_callback)(void* app, uint8_t id); /**< This
+					routine will be called every
+					periodicPulsePeriod. */
+};
+
 #endif /* __FSL_FMAN_RTC_H */

@@ -58,16 +58,17 @@ void kvmppc_set_pending_interrupt(struct kvm_vcpu *vcpu, enum int_class type)
 void kvmppc_e500_tlbil_one(struct kvmppc_vcpu_e500 *vcpu_e500,
 			   struct kvm_book3e_206_tlb_entry *gtlbe)
 {
-	unsigned int tid, ts;
+	unsigned int tid, ts, ind;
 	gva_t eaddr;
 	u32 val;
 	unsigned long flags;
 
 	ts = get_tlb_ts(gtlbe);
 	tid = get_tlb_tid(gtlbe);
+	ind = get_tlb_ind(&vcpu_e500->vcpu, gtlbe);
 
 	/* We search the host TLB to invalidate its shadow TLB entry */
-	val = (tid << 16) | ts;
+	val = (tid << 16) | ts | (ind << MAS6_SIND_SHIFT);
 	eaddr = get_tlb_eaddr(gtlbe);
 
 	local_irq_save(flags);
@@ -89,15 +90,54 @@ void kvmppc_e500_tlbil_one(struct kvmppc_vcpu_e500 *vcpu_e500,
 	local_irq_restore(flags);
 }
 
-void kvmppc_e500_tlbil_all(struct kvmppc_vcpu_e500 *vcpu_e500)
+void inval_ea_on_host(struct kvm_vcpu *vcpu, gva_t ea, int pid, int sas,
+		      int sind)
 {
 	unsigned long flags;
 
 	local_irq_save(flags);
-	mtspr(SPRN_MAS5, MAS5_SGS | vcpu_e500->vcpu.arch.lpid);
+	mtspr(SPRN_MAS5, MAS5_SGS | vcpu->arch.lpid);
+	mtspr(SPRN_MAS6, (pid << MAS6_SPID_SHIFT) |
+		sas | (sind << MAS6_SIND_SHIFT));
+	asm volatile("tlbilx 3, 0, %[ea]\n" : : [ea] "r" (ea));
+	local_irq_restore(flags);
+}
+
+void kvmppc_e500_tlbil_pid(struct kvm_vcpu *vcpu, int pid)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	mtspr(SPRN_MAS5, MAS5_SGS | vcpu->arch.lpid);
+	mtspr(SPRN_MAS6, pid << MAS6_SPID_SHIFT);
+	asm volatile("tlbilxpid");
+	mtspr(SPRN_MAS5, 0);
+	local_irq_restore(flags);
+}
+
+void kvmppc_e500_tlbil_lpid(struct kvm_vcpu *vcpu)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	mtspr(SPRN_MAS5, MAS5_SGS | vcpu->arch.lpid);
 	asm volatile("tlbilxlpid");
 	mtspr(SPRN_MAS5, 0);
 	local_irq_restore(flags);
+}
+
+void inval_tlb_on_host(struct kvm_vcpu *vcpu, int type, int pid)
+{
+	if (type == 0)
+		kvmppc_e500_tlbil_lpid(vcpu);
+	else
+		kvmppc_e500_tlbil_pid(vcpu, pid);
+}
+
+void kvmppc_e500_tlbil_all(struct kvmppc_vcpu_e500 *vcpu_e500)
+{
+	kvmppc_e500_tlbil_lpid(&vcpu_e500->vcpu);
+	kvmppc_lrat_invalidate(&vcpu_e500->vcpu);
 }
 
 void kvmppc_set_pid(struct kvm_vcpu *vcpu, u32 pid)
@@ -301,7 +341,9 @@ void kvmppc_prepare_for_emulation(struct kvm_vcpu *vcpu, unsigned int *exit_nr)
 
 	if ((*exit_nr != BOOKE_INTERRUPT_DATA_STORAGE) &&
 	    (*exit_nr != BOOKE_INTERRUPT_DTLB_MISS) &&
-	    (*exit_nr != BOOKE_INTERRUPT_HV_PRIV))
+	    (*exit_nr != BOOKE_INTERRUPT_HV_PRIV) &&
+	    ((*exit_nr != BOOKE_INTERRUPT_LRAT_ERROR) ||
+	     (!(vcpu->arch.fault_esr & ESR_DATA))))
 		return;
 
 	/* Search guest translation to find the real addressss */

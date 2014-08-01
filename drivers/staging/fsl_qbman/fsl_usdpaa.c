@@ -50,6 +50,7 @@ struct mem_fragment {
 	unsigned long pfn_base; /* PFN version of 'base' */
 	unsigned long pfn_len; /* PFN version of 'len' */
 	unsigned int refs; /* zero if unmapped */
+	u64 root_len; /* Size of the orignal fragment */
 	struct list_head list;
 	/* if mapped, flags+name captured at creation time */
 	u32 flags;
@@ -64,7 +65,9 @@ struct mem_fragment {
  * ioctl(USDPAA_IOCTL_DMA_MAP), though the actual mapping then happens via a
  * mmap(). */
 struct mem_mapping {
-	struct mem_fragment *frag;
+	struct mem_fragment *root_frag;
+	u32 frag_count;
+	u64 total_size;
 	struct list_head list;
 };
 
@@ -123,12 +126,14 @@ static const struct alloc_backend {
 		.id_type = usdpaa_id_bpid,
 		.alloc = bman_alloc_bpid_range,
 		.release = bman_release_bpid_range,
+		.reserve = bman_reserve_bpid_range,
 		.acronym = "BPID"
 	},
 	{
 		.id_type = usdpaa_id_qpool,
 		.alloc = qman_alloc_pool_range,
 		.release = qman_release_pool_range,
+		.reserve = qman_reserve_pool_range,
 		.acronym = "QPOOL"
 	},
 	{
@@ -167,12 +172,28 @@ static const struct alloc_backend {
 	}
 };
 
+/* Determines the largest acceptable page size for a given size
+   The sizes are determined by what the TLB1 acceptable page sizes are */
+static u32 largest_page_size(u32 size)
+{
+	int shift = 30; /* Start at 1G size */
+	if (size < 4096)
+		return 0;
+	do {
+		if (size >= (1<<shift))
+			return 1<<shift;
+		shift -= 2;
+	} while (shift >= 12); /* Up to 4k */
+	return 0;
+}
+
 /* Helper for ioctl_dma_map() when we have a larger fragment than we need. This
  * splits the fragment into 4 and returns the upper-most. (The caller can loop
  * until it has a suitable fragment size.) */
 static struct mem_fragment *split_frag(struct mem_fragment *frag)
 {
 	struct mem_fragment *x[3];
+
 	x[0] = kmalloc(sizeof(struct mem_fragment), GFP_KERNEL);
 	x[1] = kmalloc(sizeof(struct mem_fragment), GFP_KERNEL);
 	x[2] = kmalloc(sizeof(struct mem_fragment), GFP_KERNEL);
@@ -194,68 +215,47 @@ static struct mem_fragment *split_frag(struct mem_fragment *frag)
 	x[2]->pfn_base = x[1]->pfn_base + frag->pfn_len;
 	x[0]->pfn_len = x[1]->pfn_len = x[2]->pfn_len = frag->pfn_len;
 	x[0]->refs = x[1]->refs = x[2]->refs = 0;
+	x[0]->root_len = x[1]->root_len = x[2]->root_len = frag->root_len;
 	list_add(&x[0]->list, &frag->list);
 	list_add(&x[1]->list, &x[0]->list);
 	list_add(&x[2]->list, &x[1]->list);
 	return x[2];
 }
 
-/* Conversely, when a fragment is released we look to see whether its
- * similarly-split siblings are free to be reassembled. */
-static struct mem_fragment *merge_frag(struct mem_fragment *frag)
+__maybe_unused static void dump_frags(void)
 {
-	/* If this fragment can be merged with its siblings, it will have
-	 * newbase and newlen as its geometry. */
-	uint64_t newlen = frag->len << 2;
-	uint64_t newbase = frag->base & ~(newlen - 1);
-	struct mem_fragment *tmp, *leftmost = frag, *rightmost = frag;
-	/* Scan left until we find the start */
-	tmp = list_entry(frag->list.prev, struct mem_fragment, list);
-	while ((&tmp->list != &mem_list) && (tmp->base >= newbase)) {
-		if (tmp->refs)
-			return NULL;
-		if (tmp->len != tmp->len)
-			return NULL;
-		leftmost = tmp;
-		tmp = list_entry(tmp->list.prev, struct mem_fragment, list);
+	struct mem_fragment *frag;
+	int i = 0;
+	list_for_each_entry(frag, &mem_list, list) {
+		pr_info("FRAG %d: base 0x%llx pfn_base 0x%lx len 0x%llx "
+			"root_len 0x%llx refs %d\n",
+			i, frag->base, frag->pfn_base,
+			frag->len, frag->root_len, frag->refs);
+		++i;
 	}
-	/* Scan right until we find the end */
-	tmp = list_entry(frag->list.next, struct mem_fragment, list);
-	while ((&tmp->list != &mem_list) && (tmp->base < (newbase + newlen))) {
-		if (tmp->refs)
-			return NULL;
-		if (tmp->len != tmp->len)
-			return NULL;
-		rightmost = tmp;
-		tmp = list_entry(tmp->list.next, struct mem_fragment, list);
-	}
-	if (leftmost == rightmost)
-		return NULL;
-	/* OK, we can merge */
-	frag = leftmost;
-	frag->len = newlen;
-	frag->pfn_len = newlen >> PAGE_SHIFT;
-	while (1) {
-		int lastone;
-		tmp = list_entry(frag->list.next, struct mem_fragment, list);
-		lastone = (tmp == rightmost);
-		if (&tmp->list == &mem_list)
-			break;
-		list_del(&tmp->list);
-		kfree(tmp);
-		if (lastone)
-			break;
-	}
-	return frag;
 }
 
-/* Helper to verify that 'sz' is (4096 * 4^x) for some x. */
-static int is_good_size(u64 sz)
+/* Walk the list of fragments and adjoin neighbouring segments if possible */
+static void compress_frags(void)
 {
-	int log = ilog2(phys_size);
-	if ((phys_size & (phys_size - 1)) || (log < 12) || (log & 1))
-		return 0;
-	return 1;
+	/* Walk the fragment list and combine fragments */
+	struct mem_fragment *frag, *tmpfrag;
+	list_for_each_entry_safe(frag, tmpfrag, &mem_list, list) {
+		struct mem_fragment *next_frag =
+			list_entry(frag->list.next, struct mem_fragment, list);
+		if (frag->refs == 0 &&
+		    frag->len < frag->root_len &&
+		    &next_frag->list != &mem_list) {
+			if (next_frag->refs == 0) {
+				/* Merge with next */
+				next_frag->base = frag->base;
+				next_frag->pfn_base = frag->pfn_base;
+				next_frag->len += frag->len;
+				next_frag->pfn_len += frag->pfn_len;
+				list_del(&frag->list);
+			}
+		}
+	}
 }
 
 /* Hook from arch/powerpc/mm/mem.c */
@@ -304,7 +304,6 @@ static int usdpaa_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
-
 #define DQRR_MAXFILL 15
 
 /* Reset a QMan portal to its default state */
@@ -313,6 +312,9 @@ static int init_qm_portal(struct qm_portal_config *config,
 {
 	portal->addr.addr_ce = config->addr_virt[DPA_PORTAL_CE];
 	portal->addr.addr_ci = config->addr_virt[DPA_PORTAL_CI];
+
+	/* Make sure interrupts are inhibited */
+	qm_out(IIR, 1);
 
 	/* Initialize the DQRR.  This will stop any dequeue
 	   commands that are in progress */
@@ -323,10 +325,14 @@ static int init_qm_portal(struct qm_portal_config *config,
 		return 1;
 	}
 	/* Consume any items in the dequeue ring */
-	qm_dqrr_cdc_consume_n(portal, 0xffff);
+	while (qm_dqrr_cdc_cci(portal) != qm_dqrr_cursor(portal)) {
+		qm_dqrr_cdc_consume_n(portal, 0xffff);
+		qm_dqrr_cdc_cce_prefetch(portal);
+	}
 
 	/* Initialize the EQCR */
-	if (qm_eqcr_init(portal, qm_eqcr_pvb, qm_eqcr_cce)) {
+	if (qm_eqcr_init(portal, qm_eqcr_pvb, 
+			qm_eqcr_get_ci_stashing(portal), 1)) {
 		pr_err("Qman EQCR initialisation failed\n");
 		return 1;
 	}
@@ -371,8 +377,7 @@ static int init_bm_portal(struct bm_portal_config *config,
    be torn down.  If the check_channel helper returns true the FQ will be
    transitioned to the OOS state */
 static int qm_check_and_destroy_fqs(struct qm_portal *portal, void *ctx,
-				    bool (*check_channel)
-				    (void *ctx, u32 channel))
+				    bool (*check_channel)(void*, u32))
 {
 	u32 fq_id = 0;
 	while (1) {
@@ -407,12 +412,11 @@ static int qm_check_and_destroy_fqs(struct qm_portal *portal, void *ctx,
 			goto next;
 
 		if (check_channel(ctx, channel))
-			qm_shutdown_fq(portal, fq_id);
+			qm_shutdown_fq(&portal, 1, fq_id);
  next:
 		++fq_id;
 	}
 	return 0;
-
 }
 
 static bool check_channel_device(void *_ctx, u32 channel)
@@ -441,6 +445,18 @@ static bool check_channel_device(void *_ctx, u32 channel)
 	return false;
 }
 
+static bool check_portal_channel(void *ctx, u32 channel)
+{
+	u32 portal_channel = *(u32 *)ctx;
+	if (portal_channel == channel) {
+		/* This FQs destination is a portal
+		   we're cleaning, send a retire */
+		return true;
+	}
+	return false;
+}
+
+
 
 
 static int usdpaa_release(struct inode *inode, struct file *filp)
@@ -455,6 +471,9 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 	struct qm_portal_config *qm_alloced_portal = NULL;
 	struct bm_portal_config *bm_alloced_portal = NULL;
 
+	struct qm_portal *portal_array[qman_portal_max];
+	int portal_count = 0;
+
 	/* The following logic is used to recover resources that were not
 	   correctly released by the process that is closing the FD.
 	   Step 1: syncronize the HW with the qm_portal/bm_portal structures
@@ -464,10 +483,19 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 	list_for_each_entry_safe(portal, tmpportal, &ctx->portals, list) {
 		/* Try to recover any portals that weren't shut down */
 		if (portal->user.type == usdpaa_portal_qman) {
+			portal_array[portal_count] = &portal->qman_portal_low;
+			++portal_count;
 			init_qm_portal(portal->qportal,
 				       &portal->qman_portal_low);
-			if (!qm_cleanup_portal)
+			if (!qm_cleanup_portal) {
 				qm_cleanup_portal = &portal->qman_portal_low;
+			} else {
+				/* Clean FQs on the dedicated channel */
+				u32 chan = portal->qportal->public_cfg.channel;
+				qm_check_and_destroy_fqs(
+					&portal->qman_portal_low, &chan,
+					check_portal_channel);
+			}
 		} else {
 			/* BMAN */
 			init_bm_portal(portal->bportal,
@@ -488,7 +516,8 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 		if (!qm_cleanup_portal)
 			return -ENOMEM;
 		init_qm_portal(qm_alloced_portal, qm_cleanup_portal);
-
+		portal_array[portal_count] = qm_cleanup_portal;
+		++portal_count;
 	}
 	if (!bm_cleanup_portal) {
 		bm_alloced_portal = bm_get_unused_portal();
@@ -510,6 +539,15 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 		int leaks = 0;
 		list_for_each_entry(res, &ctx->resources[backend->id_type],
 				    list) {
+			if (backend->id_type == usdpaa_id_fqid) {
+				int i = 0;
+				for (; i < res->num; i++) {
+					/* Clean FQs with the cleanup portal */
+					qm_shutdown_fq(portal_array,
+						       portal_count,
+						       res->id + i);
+				}
+			}
 			leaks += res->num;
 			backend->release(res->id, res->num);
 		}
@@ -521,16 +559,21 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 	/* Release any DMA regions */
 	spin_lock(&mem_lock);
 	list_for_each_entry_safe(map, tmpmap, &ctx->maps, list) {
-		if (map->frag->has_locking && (map->frag->owner == map)) {
-			map->frag->owner = NULL;
-			wake_up(&map->frag->wq);
+		struct mem_fragment *current_frag = map->root_frag;
+		int i;
+		if (map->root_frag->has_locking &&
+		    (map->root_frag->owner == map)) {
+			map->root_frag->owner = NULL;
+			wake_up(&map->root_frag->wq);
 		}
-		if (!--map->frag->refs) {
-			struct mem_fragment *frag = map->frag;
-			do {
-				frag = merge_frag(frag);
-			} while (frag);
+		/* Check each fragment and merge if the ref count is 0 */
+		for (i = 0; i < map->frag_count; i++) {
+			--current_frag->refs;
+			current_frag = list_entry(current_frag->list.next,
+						  struct mem_fragment, list);
 		}
+
+		compress_frags();
 		list_del(&map->list);
 		kfree(map);
 	}
@@ -540,8 +583,12 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 	list_for_each_entry_safe(portal, tmpportal, &ctx->portals, list) {
 		if (portal->user.type == usdpaa_portal_qman) {
 			/* Give the portal back to the allocator */
+			init_qm_portal(portal->qportal,
+				       &portal->qman_portal_low);
 			qm_put_unused_portal(portal->qportal);
 		} else {
+			init_bm_portal(portal->bportal,
+				       &portal->bman_portal_low);
 			bm_put_unused_portal(portal->bportal);
 		}
 		list_del(&portal->list);
@@ -566,12 +613,17 @@ static int check_mmap_dma(struct ctx *ctx, struct vm_area_struct *vma,
 	struct mem_mapping *map;
 
 	list_for_each_entry(map, &ctx->maps, list) {
-		if (map->frag->pfn_base == vma->vm_pgoff) {
-			*match = 1;
-			if (map->frag->len != (vma->vm_end - vma->vm_start))
-				return -EINVAL;
-			*pfn = map->frag->pfn_base;
-			return 0;
+		int i;
+		struct mem_fragment *frag = map->root_frag;
+
+		for (i = 0; i < map->frag_count; i++) {
+			if (frag->pfn_base == vma->vm_pgoff) {
+				*match = 1;
+				*pfn = frag->pfn_base;
+				return 0;
+			}
+			frag = list_entry(frag->list.next, struct mem_fragment,
+					  list);
 		}
 	}
 	*match = 0;
@@ -619,7 +671,7 @@ static int check_mmap_portal(struct ctx *ctx, struct vm_area_struct *vma,
 static int usdpaa_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	struct ctx *ctx = filp->private_data;
-	unsigned long pfn;
+	unsigned long pfn = 0;
 	int match, ret;
 
 	spin_lock(&mem_lock);
@@ -652,7 +704,7 @@ static unsigned long usdpaa_get_unmapped_area(struct file *file,
 {
 	struct vm_area_struct *vma;
 
-	if (!is_good_size(len))
+	if (len % PAGE_SIZE)
 		return -EINVAL;
 
 	addr = USDPAA_MEM_ROUNDUP(addr, len);
@@ -662,6 +714,7 @@ static unsigned long usdpaa_get_unmapped_area(struct file *file,
 	while (vma) {
 		if ((addr + len) < vma->vm_start)
 			return addr;
+
 		addr = USDPAA_MEM_ROUNDUP(vma->vm_end, len);
 		vma = vma->vm_next;
 	}
@@ -737,6 +790,8 @@ static long ioctl_id_release(struct ctx *ctx, void __user *arg)
 	}
 	/* Failed to find the resource */
 	spin_unlock(&ctx->lock);
+	pr_err("Couldn't find resource type %d base 0x%x num %d\n",
+	       i.id_type, i.base, i.num);
 	return -EINVAL;
 found:
 	/* Release the resource to the backend */
@@ -794,15 +849,20 @@ static long ioctl_id_reserve(struct ctx *ctx, void __user *arg)
 static long ioctl_dma_map(struct file *fp, struct ctx *ctx,
 			  struct usdpaa_ioctl_dma_map *i)
 {
-	struct mem_fragment *frag;
+	struct mem_fragment *frag, *start_frag, *next_frag;
 	struct mem_mapping *map, *tmp;
-	u64 search_size;
-	int ret = 0;
-	if (i->len && !is_good_size(i->len))
+	int ret = 0, k;
+	u32 largest_page, so_far = 0;
+	int frag_count = 0;
+	unsigned long next_addr = PAGE_SIZE;
+
+	if (i->len && i->len % PAGE_SIZE)
 		return -EINVAL;
+
 	map = kmalloc(sizeof(*map), GFP_KERNEL);
 	if (!map)
 		return -ENOMEM;
+
 	spin_lock(&mem_lock);
 	if (i->flags & USDPAA_DMA_FLAG_SHARE) {
 		list_for_each_entry(frag, &mem_list, list) {
@@ -816,19 +876,23 @@ static long ioctl_dma_map(struct file *fp, struct ctx *ctx,
 					ret = -EBUSY;
 					goto out;
 				}
+				/* Check if this has already been mapped
+				   to this process */
 				list_for_each_entry(tmp, &ctx->maps, list)
-					if (tmp->frag == frag) {
+					if (tmp->root_frag == frag) {
 						ret = -EBUSY;
 						goto out;
 					}
 				i->has_locking = frag->has_locking;
 				i->did_create = 0;
 				i->len = frag->len;
+				start_frag = frag;
 				goto do_map;
 			}
 		}
 		/* No matching entry */
 		if (!(i->flags & USDPAA_DMA_FLAG_CREATE)) {
+			pr_err("ioctl_dma_map() No matching entry\n");
 			ret = -ENOMEM;
 			goto out;
 		}
@@ -838,52 +902,122 @@ static long ioctl_dma_map(struct file *fp, struct ctx *ctx,
 		ret = -EINVAL;
 		goto out;
 	}
-	/* We search for the required size and if that fails, for the next
-	 * biggest size, etc. */
-	for (search_size = i->len; search_size <= phys_size;
-	     search_size <<= 2) {
-		list_for_each_entry(frag, &mem_list, list) {
-			if (!frag->refs && (frag->len == search_size)) {
-				while (frag->len > i->len) {
-					frag = split_frag(frag);
-					if (!frag) {
-						ret = -ENOMEM;
-						goto out;
-					}
-				}
-				frag->flags = i->flags;
-				strncpy(frag->name, i->name,
-					USDPAA_DMA_NAME_MAX);
-				frag->has_locking = i->has_locking;
-				init_waitqueue_head(&frag->wq);
-				frag->owner = NULL;
-				i->did_create = 1;
-				goto do_map;
-			}
-		}
+	/* Verify there is sufficent space to do the mapping */
+	down_write(&current->mm->mmap_sem);
+	next_addr = usdpaa_get_unmapped_area(fp, next_addr, i->len, 0, 0);
+	up_write(&current->mm->mmap_sem);
+
+	if (next_addr & ~PAGE_MASK) {
+		ret = -ENOMEM;
+		goto out;
 	}
-	ret = -ENOMEM;
-	goto out;
 
+	/* Find one of more contiguous fragments that satisfy the total length
+	   trying to minimize the number of fragments
+	   compute the largest page size that the allocation could use */
+	largest_page = largest_page_size(i->len);
+	start_frag = NULL;
+	while (largest_page &&
+	       largest_page <= largest_page_size(phys_size) &&
+	       start_frag == NULL) {
+		/* Search the list for a frag of that size */
+		list_for_each_entry(frag, &mem_list, list) {
+			if (!frag->refs && (frag->len == largest_page)) {
+				/* See if the next x fragments are free
+				   and can accomidate the size */
+				u32 found_size = largest_page;
+				next_frag = list_entry(frag->list.prev,
+						       struct mem_fragment,
+						       list);
+				/* If the fragement is too small check
+				   if the neighbours cab support it */
+				while (found_size < i->len) {
+					if (&mem_list == &next_frag->list)
+						break; /* End of list */
+					if (next_frag->refs != 0 ||
+					    next_frag->len == 0)
+						break; /* not enough space */
+					found_size += next_frag->len;
+					next_frag = list_entry(
+						next_frag->list.prev,
+						struct mem_fragment,
+						list);
+				}
+				if (found_size >= i->len) {
+					/* Success! there is enough contigous
+					   free space */
+					start_frag = frag;
+					break;
+				}
+			}
+		} /* next frag loop */
+		/* Couldn't statisfy the request with this
+		   largest page size, try a smaller one */
+		largest_page <<= 2;
+	}
+	if (start_frag == NULL) {
+		/* Couldn't find proper amount of space */
+		ret = -ENOMEM;
+		goto out;
+	}
+	i->did_create = 1;
 do_map:
-	map->frag = frag;
-	frag->refs++;
-	list_add(&map->list, &ctx->maps);
-	i->phys_addr = frag->base;
+	/* We may need to divide the final fragment to accomidate the mapping */
+	next_frag = start_frag;
+	while (so_far != i->len) {
+		BUG_ON(next_frag->len == 0);
+		while ((next_frag->len + so_far) > i->len) {
+			/* Split frag until they match */
+			if (next_frag == start_frag)
+				start_frag = next_frag = split_frag(next_frag);
+			else
+				next_frag = split_frag(next_frag);
+		}
+		so_far += next_frag->len;
+		++frag_count;
+		next_frag = list_entry(next_frag->list.prev,
+				       struct mem_fragment, list);
+	}
 
+	/* we need to reserve start count fragments starting at start frag */
+	for (k = 0; k < frag_count; k++) {
+		start_frag->refs++;
+		if (k+1 != frag_count)
+			start_frag = list_entry(start_frag->list.prev,
+					       struct mem_fragment, list);
+	}
+
+	start_frag->flags = i->flags;
+	strncpy(start_frag->name, i->name, USDPAA_DMA_NAME_MAX);
+	start_frag->has_locking = i->has_locking;
+	init_waitqueue_head(&start_frag->wq);
+	start_frag->owner = NULL;
+
+	/* Setup the map entry */
+	map->root_frag = start_frag;
+	map->total_size = i->len;
+	map->frag_count = frag_count;
+	list_add(&map->list, &ctx->maps);
+	i->phys_addr = start_frag->base;
 out:
 	spin_unlock(&mem_lock);
+
 	if (!ret) {
 		unsigned long longret;
 		down_write(&current->mm->mmap_sem);
-		longret = do_mmap_pgoff(fp, PAGE_SIZE, map->frag->len, PROT_READ |
-			(i->flags & USDPAA_DMA_FLAG_RDONLY ? 0 : PROT_WRITE),
-			MAP_SHARED, map->frag->pfn_base);
+		longret = do_mmap_pgoff(fp, PAGE_SIZE, map->total_size,
+					PROT_READ |
+					(i->flags &
+					 USDPAA_DMA_FLAG_RDONLY ? 0
+					 : PROT_WRITE),
+					MAP_SHARED,
+					start_frag->pfn_base);
 		up_write(&current->mm->mmap_sem);
 		if (longret & ~PAGE_MASK)
 			ret = (int)longret;
 		else
 			i->ptr = (void *)longret;
+
 	} else
 		kfree(map);
 	return ret;
@@ -903,12 +1037,12 @@ static long ioctl_dma_unmap(struct ctx *ctx, void __user *arg)
 	}
 	spin_lock(&mem_lock);
 	list_for_each_entry(map, &ctx->maps, list) {
-		if (map->frag->pfn_base == vma->vm_pgoff) {
+		if (map->root_frag->pfn_base == vma->vm_pgoff) {
 			/* Drop the map lock if we hold it */
-			if (map->frag->has_locking &&
-					(map->frag->owner == map)) {
-				map->frag->owner = NULL;
-				wake_up(&map->frag->wq);
+			if (map->root_frag->has_locking &&
+					(map->root_frag->owner == map)) {
+				map->root_frag->owner = NULL;
+				wake_up(&map->root_frag->wq);
 			}
 			goto map_match;
 		}
@@ -945,8 +1079,8 @@ static int test_lock(struct mem_mapping *map)
 {
 	int ret = 0;
 	spin_lock(&mem_lock);
-	if (!map->frag->owner) {
-		map->frag->owner = map;
+	if (!map->root_frag->owner) {
+		map->root_frag->owner = map;
 		ret = 1;
 	}
 	spin_unlock(&mem_lock);
@@ -966,7 +1100,7 @@ static long ioctl_dma_lock(struct ctx *ctx, void __user *arg)
 	}
 	spin_lock(&mem_lock);
 	list_for_each_entry(map, &ctx->maps, list) {
-		if (map->frag->pfn_base == vma->vm_pgoff)
+		if (map->root_frag->pfn_base == vma->vm_pgoff)
 			goto map_match;
 	}
 	map = NULL;
@@ -974,9 +1108,9 @@ map_match:
 	spin_unlock(&mem_lock);
 	up_read(&current->mm->mmap_sem);
 
-	if (!map->frag->has_locking)
+	if (!map->root_frag->has_locking)
 		return -ENODEV;
-	return wait_event_interruptible(map->frag->wq, test_lock(map));
+	return wait_event_interruptible(map->root_frag->wq, test_lock(map));
 }
 
 static long ioctl_dma_unlock(struct ctx *ctx, void __user *arg)
@@ -992,12 +1126,12 @@ static long ioctl_dma_unlock(struct ctx *ctx, void __user *arg)
 	else {
 		spin_lock(&mem_lock);
 		list_for_each_entry(map, &ctx->maps, list) {
-			if (map->frag->pfn_base == vma->vm_pgoff) {
-				if (!map->frag->has_locking)
+			if (map->root_frag->pfn_base == vma->vm_pgoff) {
+				if (!map->root_frag->has_locking)
 					ret = -ENODEV;
-				else if (map->frag->owner == map) {
-					map->frag->owner = NULL;
-					wake_up(&map->frag->wq);
+				else if (map->root_frag->owner == map) {
+					map->root_frag->owner = NULL;
+					wake_up(&map->root_frag->wq);
 					ret = 0;
 				} else
 					ret = -EBUSY;
@@ -1046,7 +1180,8 @@ static long ioctl_portal_map(struct file *fp, struct ctx *ctx,
 		return -ENOMEM;
 	memcpy(&mapping->user, arg, sizeof(mapping->user));
 	if (mapping->user.type == usdpaa_portal_qman) {
-		mapping->qportal = qm_get_unused_portal();
+		mapping->qportal =
+			qm_get_unused_portal_idx(mapping->user.index);
 		if (!mapping->qportal) {
 			ret = -ENODEV;
 			goto err_get_portal;
@@ -1054,13 +1189,16 @@ static long ioctl_portal_map(struct file *fp, struct ctx *ctx,
 		mapping->phys = &mapping->qportal->addr_phys[0];
 		mapping->user.channel = mapping->qportal->public_cfg.channel;
 		mapping->user.pools = mapping->qportal->public_cfg.pools;
+		mapping->user.index = mapping->qportal->public_cfg.index;
 	} else if (mapping->user.type == usdpaa_portal_bman) {
-		mapping->bportal = bm_get_unused_portal();
+		mapping->bportal =
+			bm_get_unused_portal_idx(mapping->user.index);
 		if (!mapping->bportal) {
 			ret = -ENODEV;
 			goto err_get_portal;
 		}
 		mapping->phys = &mapping->bportal->addr_phys[0];
+		mapping->user.index = mapping->bportal->public_cfg.index;
 	} else {
 		ret = -EINVAL;
 		goto err_copy_from_user;
@@ -1095,17 +1233,6 @@ err_get_portal:
 err_copy_from_user:
 	kfree(mapping);
 	return ret;
-}
-
-static bool check_portal_channel(void *ctx, u32 channel)
-{
-	u32 portal_channel = *(u32 *)ctx;
-	if (portal_channel == channel) {
-		/* This FQs destination is a portal
-		   we're cleaning, send a retire */
-		return true;
-	}
-	return false;
 }
 
 static long ioctl_portal_unmap(struct ctx *ctx, struct usdpaa_portal_map *i)
@@ -1146,7 +1273,8 @@ found:
 
 		/* Tear down any FQs this portal is referencing */
 		channel = mapping->qportal->public_cfg.channel;
-		qm_check_and_destroy_fqs(&mapping->qman_portal_low, &channel,
+		qm_check_and_destroy_fqs(&mapping->qman_portal_low,
+					 &channel,
 					 check_portal_channel);
 		qm_put_unused_portal(mapping->qportal);
 	} else if (mapping->user.type == usdpaa_portal_bman) {
@@ -1210,13 +1338,13 @@ static long usdpaa_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
 	return -EINVAL;
 }
 
-
-
 static long usdpaa_ioctl_compat(struct file *fp, unsigned int cmd,
 				unsigned long arg)
 {
+#ifdef CONFIG_COMPAT
 	struct ctx *ctx = fp->private_data;
 	void __user *a = (void __user *)arg;
+#endif
 	switch (cmd) {
 #ifdef CONFIG_COMPAT
 	case USDPAA_IOCTL_DMA_MAP_COMPAT:
@@ -1254,11 +1382,13 @@ static long usdpaa_ioctl_compat(struct file *fp, unsigned int cmd,
 		if (copy_from_user(&input, a, sizeof(input)))
 			return -EFAULT;
 		converted.type = input.type;
+		converted.index = input.index;
 		ret = ioctl_portal_map(fp, ctx, &converted);
 		input.addr.cinh = ptr_to_compat(converted.addr.cinh);
 		input.addr.cena = ptr_to_compat(converted.addr.cena);
 		input.channel = converted.channel;
 		input.pools = converted.pools;
+		input.index = converted.index;
 		if (copy_to_user(a, &input, sizeof(input)))
 			return -EFAULT;
 		return ret;
@@ -1281,56 +1411,36 @@ static long usdpaa_ioctl_compat(struct file *fp, unsigned int cmd,
 	return -EINVAL;
 }
 
-struct qm_portal_config *usdpaa_get_qm_portal_config(struct file *filp,
-						     void *hint)
+int usdpaa_get_portal_config(struct file *filp, void *cinh,
+			     enum usdpaa_portal_type ptype, unsigned int *irq,
+			     void **iir_reg)
 {
 	/* Walk the list of portals for filp and return the config
 	   for the portal that matches the hint */
-
 	struct ctx *context;
 	struct portal_mapping *portal;
 
 	/* First sanitize the filp */
 	if (filp->f_op->open != usdpaa_open)
-		return NULL;
+		return -ENODEV;
 	context = filp->private_data;
 	spin_lock(&context->lock);
 	list_for_each_entry(portal, &context->portals, list) {
-		if (portal->user.type == usdpaa_portal_qman &&
-		    portal->user.addr.cinh == hint) {
+		if (portal->user.type == ptype &&
+		    portal->user.addr.cinh == cinh) {
+			if (ptype == usdpaa_portal_qman) {
+				*irq = portal->qportal->public_cfg.irq;
+				*iir_reg = portal->qportal->addr_virt[1] + QM_REG_IIR;
+			} else {
+				*irq = portal->bportal->public_cfg.irq;
+				*iir_reg = portal->bportal->addr_virt[1] + BM_REG_IIR;
+			}
 			spin_unlock(&context->lock);
-			return portal->qportal;
+			return 0;
 		}
 	}
 	spin_unlock(&context->lock);
-	return NULL;
-}
-
-struct bm_portal_config *usdpaa_get_bm_portal_config(struct file *filp,
-						     void *hint)
-{
-	/* Walk the list of portals for filp and return the config
-	   for the portal that matches the hint */
-
-	struct ctx *context;
-	struct portal_mapping *portal;
-
-	/* First sanitize the filp */
-	if (filp->f_op->open != usdpaa_open)
-		return NULL;
-
-	context = filp->private_data;
-
-	spin_lock(&context->lock);
-	list_for_each_entry(portal, &context->portals, list) {
-		if (portal->user.type == usdpaa_portal_bman &&
-		    portal->user.addr.cinh == hint) {
-			spin_unlock(&context->lock);
-			return portal->bportal;
-		}
-	}
-	spin_unlock(&context->lock);
-	return NULL;
+	return -EINVAL;
 }
 
 static const struct file_operations usdpaa_fops = {
@@ -1376,12 +1486,12 @@ __init void fsl_usdpaa_init_early(void)
 		pr_info("No USDPAA memory, no 'usdpaa_mem' bootarg\n");
 		return;
 	}
-	if (!is_good_size(phys_size)) {
-		pr_err("'usdpaa_mem' bootarg must be 4096*4^x\n");
+	if (phys_size % PAGE_SIZE) {
+		pr_err("'usdpaa_mem' bootarg must be a multiple of page size\n");
 		phys_size = 0;
 		return;
 	}
-	phys_start = memblock_alloc(phys_size, phys_size);
+	phys_start = memblock_alloc(phys_size, largest_page_size(phys_size));
 	if (!phys_start) {
 		pr_err("Failed to reserve USDPAA region (sz:%llx)\n",
 		       phys_size);
@@ -1399,25 +1509,40 @@ static int __init usdpaa_init(void)
 {
 	struct mem_fragment *frag;
 	int ret;
+	u64 tmp_size = phys_size;
+	u64 tmp_start = phys_start;
+	u64 tmp_pfn_size = pfn_size;
+	u64 tmp_pfn_start = pfn_start;
 
 	pr_info("Freescale USDPAA process driver\n");
 	if (!phys_start) {
 		pr_warn("fsl-usdpaa: no region found\n");
-		return 0;
+		goto skip_setup;
 	}
-	frag = kmalloc(sizeof(*frag), GFP_KERNEL);
-	if (!frag) {
-		pr_err("Failed to setup USDPAA memory accounting\n");
-		return -ENOMEM;
+
+	while (tmp_size != 0) {
+		u32 frag_size = largest_page_size(tmp_size);
+		frag = kmalloc(sizeof(*frag), GFP_KERNEL);
+		if (!frag) {
+			pr_err("Failed to setup USDPAA memory accounting\n");
+			return -ENOMEM;
+		}
+		frag->base = tmp_start;
+		frag->len = frag->root_len = frag_size;
+		frag->pfn_base = tmp_pfn_start;
+		frag->pfn_len = frag_size / PAGE_SIZE;
+		frag->refs = 0;
+		init_waitqueue_head(&frag->wq);
+		frag->owner = NULL;
+		list_add(&frag->list, &mem_list);
+
+		/* Adjust for this frag */
+		tmp_start += frag_size;
+		tmp_size -= frag_size;
+		tmp_pfn_start += frag_size / PAGE_SIZE;
+		tmp_pfn_size -= frag_size / PAGE_SIZE;
 	}
-	frag->base = phys_start;
-	frag->len = phys_size;
-	frag->pfn_base = pfn_start;
-	frag->pfn_len = pfn_size;
-	frag->refs = 0;
-	init_waitqueue_head(&frag->wq);
-	frag->owner = NULL;
-	list_add(&frag->list, &mem_list);
+skip_setup:
 	ret = misc_register(&usdpaa_miscdev);
 	if (ret)
 		pr_err("fsl-usdpaa: failed to register misc device\n");

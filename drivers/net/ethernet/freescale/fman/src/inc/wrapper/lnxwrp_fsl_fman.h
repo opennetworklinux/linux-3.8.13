@@ -44,6 +44,8 @@
 #include <linux/fsl_qman.h> /* struct qman_fq */
 #include "dpaa_integration_ext.h"
 #include "fm_port_ext.h"
+#include "fm_mac_ext.h"
+#include "fm_rtc_ext.h"
 
 /**************************************************************************//**
  @Group		FM_LnxKern_grp Frame Manager Linux wrapper API
@@ -67,9 +69,14 @@
 /*****************************************************************************/
 
 /**************************************************************************//**
- @Description	A structure ..,
+ @Description	FM device opaque structure used for type checking
 *//***************************************************************************/
 struct fm;
+
+/**************************************************************************//**
+ @Description	FM MAC device opaque structure used for type checking
+*//***************************************************************************/
+struct fm_mac_dev;
 
 /**************************************************************************//**
  @Description	A structure ..,
@@ -271,9 +278,12 @@ int fm_port_enable(struct fm_port *port);
 
  @Cautions	Allowed only after the port is initialized.
 *//***************************************************************************/
-void fm_port_disable(struct fm_port *port);
+int fm_port_disable(struct fm_port *port);
 
-void *fm_port_get_handle(struct fm_port *port);
+void *fm_port_get_handle(const struct fm_port *port);
+
+u64 *fm_port_get_buffer_time_stamp(const struct fm_port *port,
+		const void *data);
 
 /**************************************************************************//**
  @Function	fm_port_get_base_address
@@ -339,6 +349,83 @@ int fm_port_set_rate_limit(struct fm_port *port,
 @Cautions     Allowed only after the port is initialized.
 *//***************************************************************************/
 int fm_port_del_rate_limit(struct fm_port *port);
+
+/**************************************************************************//**
+@Function     fm_mac_set_exception
+
+@Description  Set MAC exception state.
+
+@Param[in]    fm_mac_dev   - A handle of the FM MAC device.
+@Param[in]    exception    - FM MAC exception type.
+@Param[in]    enable       - new state.
+
+*//***************************************************************************/
+int fm_mac_set_exception(struct fm_mac_dev *fm_mac_dev,
+		e_FmMacExceptions exception, bool enable);
+
+int fm_mac_free(struct fm_mac_dev *fm_mac_dev);
+
+struct fm_mac_dev *fm_mac_config(t_FmMacParams *params);
+
+int fm_mac_config_max_frame_length(struct fm_mac_dev *fm_mac_dev,
+		int len);
+
+int fm_mac_config_pad_and_crc(struct fm_mac_dev *fm_mac_dev, bool enable);
+
+int fm_mac_config_half_duplex(struct fm_mac_dev *fm_mac_dev, bool enable);
+
+int fm_mac_config_reset_on_init(struct fm_mac_dev *fm_mac_dev, bool enable);
+
+int fm_mac_init(struct fm_mac_dev *fm_mac_dev);
+
+int fm_mac_get_version(struct fm_mac_dev *fm_mac_dev, uint32_t *version);
+
+int fm_mac_enable(struct fm_mac_dev *fm_mac_dev);
+
+int fm_mac_disable(struct fm_mac_dev *fm_mac_dev);
+
+int fm_mac_set_promiscuous(struct fm_mac_dev *fm_mac_dev,
+		bool enable);
+
+int fm_mac_remove_hash_mac_addr(struct fm_mac_dev *fm_mac_dev,
+		t_EnetAddr *mac_addr);
+
+int fm_mac_add_hash_mac_addr(struct fm_mac_dev *fm_mac_dev,
+		t_EnetAddr *mac_addr);
+
+int fm_mac_modify_mac_addr(struct fm_mac_dev *fm_mac_dev,
+					 uint8_t *addr);
+
+int fm_mac_adjust_link(struct fm_mac_dev *fm_mac_dev,
+		bool link, int speed, bool duplex);
+
+int fm_mac_enable_1588_time_stamp(struct fm_mac_dev *fm_mac_dev);
+
+int fm_mac_disable_1588_time_stamp(struct fm_mac_dev *fm_mac_dev);
+
+int fm_mac_set_rx_ignore_pause_frames(
+		struct fm_mac_dev *fm_mac_dev, bool en);
+
+int fm_mac_set_tx_pause_frames(struct fm_mac_dev *fm_mac_dev,
+					     bool en);
+
+int fm_rtc_enable(struct fm *fm_dev);
+
+int fm_rtc_disable(struct fm *fm_dev);
+
+int fm_rtc_get_cnt(struct fm *fm_dev, uint64_t *ts);
+
+int fm_rtc_set_cnt(struct fm *fm_dev, uint64_t ts);
+
+int fm_rtc_get_drift(struct fm *fm_dev, uint32_t *drift);
+
+int fm_rtc_set_drift(struct fm *fm_dev, uint32_t drift);
+
+int fm_rtc_set_alarm(struct fm *fm_dev, uint32_t id,
+		uint64_t time);
+
+int fm_rtc_set_fiper(struct fm *fm_dev, uint32_t id,
+		uint64_t fiper);
 
 /** @} */ /* end of FM_LnxKern_ctrl_grp group */
 /** @} */ /* end of FM_LnxKern_grp group */

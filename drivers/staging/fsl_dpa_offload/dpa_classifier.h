@@ -206,6 +206,9 @@ struct dpa_cls_table {
 	/* (Initial) parameters of the DPA Classifier table. */
 	struct dpa_cls_tbl_params		params;
 
+	/* Table miss action. */
+	struct dpa_cls_tbl_action		miss_action;
+
 	/* Access control object for this table to avoid race conditions. */
 	struct mutex				access;
 };
@@ -673,6 +676,12 @@ int dpa_classif_import_static_hm(void *hm, int next_hmd, int *hmd);
  * with a specified header manipulation descriptor
  */
 void *dpa_classif_get_static_hm_handle(int hmd);
+
+/*
+ * Provides details about the miss action configured on a classification
+ * table.
+ */
+int dpa_classif_get_miss_action(int td, struct dpa_cls_tbl_action *miss_action);
 
 /*
  * Locks a header manipulation chain (marks as "used"). The header manipulation

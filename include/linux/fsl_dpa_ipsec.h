@@ -335,7 +335,14 @@ struct dpa_ipsec_sa_params {
 				 * to outer header and vice versa	      */
 	uint8_t sa_wqid;	/* Work queue Id for all the queues in this SA*/
 	uint8_t sa_bpid;	/* Buffer Pool ID to be used with this SA     */
+	uint16_t sa_bufsize;	/* Buffer Pool buffer size		      */
 	bool	enable_stats;	/* Enable counting packets and bytes processed*/
+	/*
+	 * Enable extended statistics per SA, beside counting IPSec processed
+	 * packets the dpa offload will also count the input packets that
+	 * require IPSec processing.
+	 */
+	bool  enable_extended_stats;
 	struct dpa_ipsec_sa_crypto_params crypto_params;/* IPSec crypto params*/
 	enum dpa_ipsec_direction sa_dir;  /* SA direction: Outbound/Inbound   */
 	union {
@@ -485,14 +492,38 @@ int dpa_ipsec_sa_get_policies(int sa_id,
 /* This function will remove all policies associated with the specified SA */
 int dpa_ipsec_sa_flush_policies(int sa_id);
 
-/* DPA-IPSec Statistics */
+/* DPA-IPSec SA Statistics */
 struct dpa_ipsec_sa_stats {
-	uint32_t packets_count;
-	uint32_t bytes_count;
+	uint32_t packets_count; /* Number of IPSec processed packets */
+	uint32_t bytes_count;   /* Number of IPSec processed bytes   */
+	/*
+	 * Number of packets which required IPSec processing
+	 * for inbound SA: number of packets received
+	 * for outbound SA: number of packets sent
+	 */
+	uint32_t input_packets;
+};
+
+/* DPA-IPSec Global Statistics */
+struct dpa_ipsec_stats {
+	/* Packets that missed inbound SA lookup */
+	uint32_t inbound_miss_pkts;
+
+	/* Bytes that missed inbound SA lookup */
+	uint32_t inbound_miss_bytes;
+
+	/* Packets that missed outbound policy lookup */
+	uint32_t outbound_miss_pkts;
+
+	/* Bytes that missed outbound policy lookup */
+	uint32_t outbound_miss_bytes;
 };
 
 /* This function will populate sa_stats with SEC statistics for SA with sa_id */
 int dpa_ipsec_sa_get_stats(int sa_id, struct dpa_ipsec_sa_stats *sa_stats);
+
+/* Return IPSec global statistics in the "stats" data structure */
+int dpa_ipsec_get_stats(struct dpa_ipsec_stats *stats);
 
 enum dpa_ipsec_sa_modify_type {
 	DPA_IPSEC_SA_MODIFY_ARS = 0, /* Set the anti replay window size	      */
@@ -502,15 +533,84 @@ enum dpa_ipsec_sa_modify_type {
 };
 
 struct dpa_ipsec_sa_modify_prm {
+
+	/* Use to select a modify operation */
 	enum dpa_ipsec_sa_modify_type type;
+
 	union {
+		/* Anti replay window size */
 		enum dpa_ipsec_arw arw;
-		uint32_t seq;
-		uint64_t ext_seq;
+
+		/*
+		 * 32 bit or extended sequence number depending on how the
+		 * SA was created by dpa_ipsec_create_sa
+		 * Only the least significant word is used for 32 bit SEQ
+		 */
+		uint64_t seq_num;
+
+		/* New cryptographic parameters for this SA */
 		struct dpa_ipsec_sa_crypto_params crypto_params;
 	};
 };
 
+/*
+ * Modify an SA asynchronous
+ *
+ * SEC will dequeue a frame with RDJ, run it and after this create an
+ * output frame with status of user error. The frame will have always the
+ * length of 5 bytes, first one representing the operation code that has
+ * finished and the next 4 will determine the SA id on which the operation took
+ * place.
+ *
+ * Returned error code:
+ *	0 if successful;
+ *	-EBUSY if can't acquire lock for this SA
+ *	-EINVAL if input parameters are wrong
+ *	-ENXIO if failed to DMA map Replacement Job Descriptor or SHD
+ *	-ETXTBSY if failed to enqueue to SEC the FD with RJD
+ *	-EALREADY if ARS is already set to the required value
+ *
+ */
 int dpa_ipsec_sa_modify(int sa_id, struct dpa_ipsec_sa_modify_prm *modify_prm);
+
+/*
+ * Request the sequence number of an SA asynchronous
+ *
+ * SEC will dequeue a frame with RJD, run it and after this create an
+ * output frame with status of user error. The frame will have always the
+ * length of 5 bytes, first one representing the operation code that has
+ * finished and the next 4 will determine the SA id on which the operation took
+ * place.
+ *
+ *
+ * Returned error code:
+ *	0 if successful;
+ *	-EBUSY if can't acquire lock for this SA
+ *	-ENXIO if failed to DMA map Replacement Job Descriptor
+ *	-ETXTBSY if failed to enqueue to SEC the FD with RJD
+ */
+int dpa_ipsec_sa_request_seq_number(int sa_id);
+
+int dpa_ipsec_sa_get_seq_number(int sa_id, uint64_t *seq);
+
+/*
+ * The dpa_ipsec_sa_modify and dpa_ipsec_sa_get_seq_number are asynchronous
+ * operations.
+ *
+ * When finished the frame exiting the SEC will have the status
+ * of user error and inside the frame (total length 5 bytes) the first byte will
+ * be the code of the operation that has finished followed by the SA id in the
+ * next 4 bytes.
+ *
+ * Use this enumeration to know what asynchronous operation has finished and on
+ * what SA.
+ */
+enum dpa_ipsec_sa_operation_code {
+	DPA_IPSEC_SA_MODIFY_ARS_DONE = 0,
+	DPA_IPSEC_SA_MODIFY_SEQ_NUM_DONE,
+	DPA_IPSEC_SA_MODIFY_EXT_SEQ_NUM_DONE,
+	DPA_IPSEC_SA_MODIFY_CRYPTO_DONE,
+	DPA_IPSEC_SA_GET_SEQ_NUM_DONE
+};
 
 #endif	/* __FSL_DPA_IPSEC_H */

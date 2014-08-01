@@ -68,8 +68,7 @@ struct dpa_stats {
 	  */
 	struct workqueue_struct *async_req_workqueue;
 	struct mutex lock; /* Lock for this dpa_stats instance */
-	 /* Counters that are scheduled for a retrieve operation */
-	bool sched_cnt_ids[DPA_STATS_MAX_NUM_OF_COUNTERS];
+	bool *sched_cnt_ids; /* Counters scheduled for a retrieve operation */
 	struct mutex sched_cnt_lock; /* Lock for array of scheduled counters */
 };
 
@@ -78,6 +77,7 @@ struct dpa_stats_req_cb {
 	struct work_struct async_req_work; /* Asynchronous request work */
 	struct dpa_stats_cnt_request_params config;
 				/* Parameters provided to the request */
+	int *cnts_ids; /* Copy of user-provided array of counter IDs */
 	uint32_t id; /* Request id */
 	int index; /* Request index in the 'used_req_ids'*/
 	void *request_area;
@@ -93,48 +93,65 @@ struct stats_info {
 	  * Array of statistics offsets relative to
 	  * corresponding statistics area
 	  */
-	unsigned int stats_off[MAX_NUM_OF_STATS];
+	int *stats_off;
 	unsigned int stats_num; /* Number of statistics to retrieve */
-	uint64_t stats[MAX_NUM_OF_MEMBERS][MAX_NUM_OF_STATS];
-				/* Array to store statistics values */
-	uint64_t last_stats[MAX_NUM_OF_MEMBERS][MAX_NUM_OF_STATS];
-				/* Array to store previous statistics values */
+	uint64_t *stats; /* Array to store statistics values */
+	uint64_t *last_stats; /* Array to store previous statistics values */
 	bool reset; /* Reset counter's statistics */
 };
 
 /* DPA Stats General Counter control block */
 struct dpa_stats_cnt_gen_cb {
 	/* Array of objects for which to retrieve statistics */
-	void *objs[MAX_NUM_OF_MEMBERS];
+	void **objs;
+};
+
+/*
+ * DPA Stats allocated lookup key descriptor. This is used in the context of
+ * lookup keys being preallocated for the classification type counters. In this
+ * case, the pointers to key data or key mask will always exist, hence there
+ * is no more way to tell whether the key data or mask are valid except by using
+ * a set of individual indicators like "valid_mask" and "valid_key".
+ */
+struct dpa_stats_allocated_lookup_key {
+	/* The key data (preallocated key & mask). */
+	struct dpa_offload_lookup_key data;
+
+	/* Indicates whether the mask is present or not. */
+	bool valid_mask;
+
+	/* Indicates whether the key data is present or not. */
+	bool valid_key;
 };
 
 /* DPA Stats Classifier Table key descriptor */
 struct dpa_stats_lookup_key {
 	void *cc_node;  /* Handle of Cc Node the lookup key belongs to */
-	struct dpa_offload_lookup_key key; /* Key descriptor */
+	struct dpa_stats_allocated_lookup_key key; /* Key descriptor */
 	bool valid; /* Lookup key is valid */
 	void *frag; /* Fragmentation handle corresponding to this key */
+	bool miss_key; /* Provide statistics for miss entry */
 };
 
 /* DPA Stats Classif Table control block */
 struct dpa_stats_cnt_classif_tbl_cb {
 	int td; /* Table descriptor */
 	enum dpa_cls_tbl_type type; /* The type of the DPA Classifier table */
-	struct dpa_stats_lookup_key keys[MAX_NUM_OF_MEMBERS]; /* Array of
+	struct dpa_stats_lookup_key *keys; /* Array of
 			 key descriptors for which to provide statistics */
 };
 
 /* DPA Stats Classif Node control block */
 struct dpa_stats_cnt_classif_cb {
 	void *cc_node;  /* Handle of Cc Node the lookup keys belong to */
-	struct dpa_offload_lookup_key keys[MAX_NUM_OF_MEMBERS];
+	struct dpa_stats_allocated_lookup_key *keys;
 		 /* Array of key descriptors for which to provide statistics */
 };
 
 /* DPA Stats IPSec Counter control block */
 struct dpa_stats_cnt_ipsec_cb {
-	int sa_id[MAX_NUM_OF_MEMBERS]; /* Array of Security Association ids */
-	bool valid[MAX_NUM_OF_MEMBERS]; /* Security Association id is valid */
+	int *sa_id; /* Array of Security Association ids */
+	bool *valid; /* Security Association id is valid */
 };
 
 typedef int get_cnt_stats(struct dpa_stats_req_cb *req_cb,

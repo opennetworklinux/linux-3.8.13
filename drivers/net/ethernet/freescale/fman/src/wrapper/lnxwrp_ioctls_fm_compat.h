@@ -52,7 +52,7 @@
 /* mapping kernel pointers w/ UserSpace id's { */
 /* Because compat_ptr(ptr_to_compat(X)) != X, this way we cannot exchange pointers
    back and forth (US - KS). compat_ptr is a cast and pointers are broken. */
-#define COMPAT_PTR2ID_ARRAY_MAX (256+1) /* first location is not used */
+#define COMPAT_PTR2ID_ARRAY_MAX (512+1) /* first location is not used */
 #define COMPAT_PTR2ID_WATERMARK 0xface0000
 #define COMPAT_PTR2ID_WM_MASK   0xffff0000
 
@@ -521,6 +521,12 @@ typedef struct ioc_compat_fm_ctrl_mon_counters_params_t {
     compat_uptr_t p_mon;
 } ioc_compat_fm_ctrl_mon_counters_params_t;
 
+typedef struct ioc_compat_fm_pcd_cc_tbl_get_miss_params_t {
+    compat_uptr_t                   id;
+    ioc_fm_pcd_cc_key_statistics_t  miss_statistics;
+} ioc_compat_fm_pcd_cc_tbl_get_miss_params_t;
+
+
 /* } pcd compat structures */
 
 void compat_obj_delete(
@@ -566,6 +572,11 @@ void compat_copy_fm_pcd_cc_grp(
 void compat_copy_fm_pcd_cc_tree(
         ioc_compat_fm_pcd_cc_tree_params_t *compat_param,
         ioc_fm_pcd_cc_tree_params_t *param,
+        uint8_t compat);
+
+void compat_copy_fm_pcd_cc_tbl_get_miss(
+        ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *compat_param,
+        ioc_fm_pcd_cc_tbl_get_miss_params_t *param,
         uint8_t compat);
 
 void compat_fm_pcd_prs_sw(

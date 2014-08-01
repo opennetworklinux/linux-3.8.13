@@ -40,8 +40,6 @@
 #include <linux/device.h>
 #include <linux/phy.h>
 
-#include "dpaa_eth-common.h"
-
 #include "lnxwrp_fm_ext.h"
 
 #include "mac.h"
@@ -54,8 +52,7 @@
 	| SUPPORTED_Autoneg \
 	| SUPPORTED_MII)
 
-static const char phy_str[][11] =
-{
+static const char phy_str[][11] = {
 	[PHY_INTERFACE_MODE_MII]	= "mii",
 	[PHY_INTERFACE_MODE_GMII]	= "gmii",
 	[PHY_INTERFACE_MODE_SGMII]	= "sgmii",
@@ -80,8 +77,7 @@ static phy_interface_t __pure __attribute__((nonnull)) str2phy(const char *str)
 	return PHY_INTERFACE_MODE_MII;
 }
 
-static const uint16_t phy2speed[] =
-{
+static const uint16_t phy2speed[] = {
 	[PHY_INTERFACE_MODE_MII]	= SPEED_100,
 	[PHY_INTERFACE_MODE_GMII]	= SPEED_1000,
 	[PHY_INTERFACE_MODE_SGMII]	= SPEED_1000,
@@ -96,7 +92,8 @@ static const uint16_t phy2speed[] =
 };
 
 static struct mac_device * __cold
-alloc_macdev(struct device *dev, size_t sizeof_priv, void (*setup)(struct mac_device *mac_dev))
+alloc_macdev(struct device *dev, size_t sizeof_priv,
+		void (*setup)(struct mac_device *mac_dev))
 {
 	struct mac_device	*mac_dev;
 
@@ -116,7 +113,7 @@ static int __cold free_macdev(struct mac_device *mac_dev)
 {
 	dev_set_drvdata(mac_dev->dev, NULL);
 
-	return mac_dev->uninit(mac_dev);
+	return mac_dev->uninit(mac_dev->get_mac_handle(mac_dev));
 }
 
 static const struct of_device_id mac_match[] = {
@@ -145,16 +142,18 @@ static int __cold mac_probe(struct platform_device *_of_dev)
 	const char		*char_prop;
 	const phandle		*phandle_prop;
 	const uint32_t		*uint32_prop;
-        const struct of_device_id *match;
+	const struct of_device_id *match;
 
 	dev = &_of_dev->dev;
 	mac_node = dev->of_node;
 
-        match = of_match_device(mac_match, dev);
-        if (!match)
-                return -EINVAL;
+	match = of_match_device(mac_match, dev);
+	if (!match)
+		return -EINVAL;
 
-	for (i = 0; i < ARRAY_SIZE(mac_match) - 1 && match != mac_match + i; i++);
+	for (i = 0; i < ARRAY_SIZE(mac_match) - 1 && match != mac_match + i;
+			i++)
+		;
 	BUG_ON(i >= ARRAY_SIZE(mac_match) - 1);
 
 	mac_dev = alloc_macdev(dev, mac_sizeof_priv[i], mac_setup[i]);
@@ -197,7 +196,7 @@ static int __cold mac_probe(struct platform_device *_of_dev)
 		goto _return_of_node_put;
 	}
 
-    mac_dev->fm = (void *)fm_get_handle(mac_dev->fm_dev);
+	mac_dev->fm = (void *)fm_get_handle(mac_dev->fm_dev);
 	of_node_put(dev_node);
 
 	/* Get the address of the memory mapped registers */
@@ -219,15 +218,15 @@ static int __cold mac_probe(struct platform_device *_of_dev)
 	}
 
 	mac_dev->vaddr = devm_ioremap(dev, mac_dev->res->start,
-				      mac_dev->res->end + 1 - mac_dev->res->start);
+				      mac_dev->res->end + 1
+				      - mac_dev->res->start);
 	if (unlikely(mac_dev->vaddr == NULL)) {
 		dev_err(dev, "devm_ioremap() failed\n");
 		_errno = -EIO;
 		goto _return_dev_set_drvdata;
 	}
 
-	/*
-	 * XXX: Warning, future versions of Linux will most likely not even
+	/* XXX: Warning, future versions of Linux will most likely not even
 	 * call the driver code to allow us to override the TBIPA value,
 	 * we'll need to address this when we move to newer kernel rev
 	 */
@@ -353,7 +352,7 @@ static int __cold mac_probe(struct platform_device *_of_dev)
 			goto _return_dev_set_drvdata;
 		}
 
-		sprintf(mac_dev->fixed_bus_id, PHY_ID_FMT, "0", phy_id[0]);
+		sprintf(mac_dev->fixed_bus_id, PHY_ID_FMT, "fixed-0", phy_id[0]);
 	}
 
 	_errno = mac_dev->init(mac_dev);
@@ -418,8 +417,7 @@ static int __init __cold mac_load(void)
 
 	_errno = platform_driver_register(&mac_driver);
 	if (unlikely(_errno < 0)) {
-		pr_err(KBUILD_MODNAME ": %s:%hu:%s(): " \
-			"platform_driver_register() = %d\n",
+		pr_err(KBUILD_MODNAME ": %s:%hu:%s(): platform_driver_register() = %d\n",
 			   KBUILD_BASENAME".c", __LINE__, __func__, _errno);
 		goto _return;
 	}

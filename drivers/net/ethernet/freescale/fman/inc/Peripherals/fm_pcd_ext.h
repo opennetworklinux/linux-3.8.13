@@ -47,7 +47,6 @@
 
 
 /**************************************************************************//**
-
  @Group         FM_grp Frame Manager API
 
  @Description   Frame Manager Application Programming Interface
@@ -99,16 +98,6 @@
 #define FM_PCD_SW_PRS_SIZE                          0x00000800          /**< Total size of SW parser area */
 #define FM_PCD_PRS_SW_OFFSET                        0x00000040          /**< Size of illegal addresses at the beginning
                                                                              of the SW parser area */
-#if (DPAA_VERSION >= 11)
-#define FM_PCD_PRS_SW_PATCHES_SIZE                  0x00000240          /**< Number of bytes saved for patches */
-#else
-#define FM_PCD_PRS_SW_PATCHES_SIZE                  0x00000200          /**< Number of bytes saved for patches */
-#endif /* (DPAA_VERSION >= 11) */
-
-#define FM_PCD_PRS_SW_TAIL_SIZE                     4                   /**< Number of bytes that must be cleared at
-                                                                             the end of the SW parser area */
-#define FM_SW_PRS_MAX_IMAGE_SIZE                    (FM_PCD_SW_PRS_SIZE-FM_PCD_PRS_SW_OFFSET-FM_PCD_PRS_SW_TAIL_SIZE-FM_PCD_PRS_SW_PATCHES_SIZE)
-                                                                        /**< Maximum size of SW parser code */
 
 #define FM_PCD_MAX_MANIP_INSRT_TEMPLATE_SIZE        128                 /**< Maximum size of insertion template for
                                                                              insert manipulation */
@@ -1068,7 +1057,9 @@ typedef enum e_FmPcdPlcrRateMode {
 *//***************************************************************************/
 typedef enum e_FmPcdDoneAction {
     e_FM_PCD_ENQ_FRAME = 0,        /**< Enqueue frame */
-    e_FM_PCD_DROP_FRAME            /**< Drop frame */
+    e_FM_PCD_DROP_FRAME            /**< Mark this frame as error frame and continue
+                                        to error flow; 'FM_PORT_FRM_ERR_CLS_DISCARD'
+                                        flag will be set for this frame. */
 } e_FmPcdDoneAction;
 
 /**************************************************************************//**
@@ -2080,8 +2071,7 @@ typedef struct t_FmPcdPlcrProfileParams {
 /**************************************************************************//**
  @Description   Parameters for selecting a location for requested manipulation
 *//***************************************************************************/
-typedef struct t_FmManipHdrInfo
-{
+typedef struct t_FmManipHdrInfo {
     e_NetHeaderType                     hdr;            /**< Header selection */
     e_FmPcdHdrIndex                     hdrIndex;       /**< Relevant only for MPLS, VLAN and tunneled IP. Otherwise should be cleared. */
     bool                                byField;        /**< TRUE if the location of manipulation is according to some field in the specific header*/
@@ -2547,6 +2537,7 @@ typedef struct t_FmPcdManipReassemParams {
     } u;
 } t_FmPcdManipReassemParams;
 
+
 /**************************************************************************//**
  @Description   Parameters for defining a manipulation node
 *//***************************************************************************/
@@ -2575,7 +2566,7 @@ typedef struct t_FmPcdManipParams {
 *//***************************************************************************/
 typedef struct t_FmPcdManipReassemIpStats {
     /* common counters for both IPv4 and IPv6 */
-    uint32_t        timeout;                    /**< Counts the number of TimeOut occurrences */
+    uint32_t        timeout;                    /**< Counts the number of timeout occurrences */
     uint32_t        rfdPoolBusy;                /**< Counts the number of failed attempts to allocate
                                                      a Reassembly Frame Descriptor */
     uint32_t        internalBufferBusy;         /**< Counts the number of times an internal buffer busy occurred */
@@ -2942,7 +2933,12 @@ t_Error FM_PCD_MatchTableDelete(t_Handle h_CcNode);
 
  @Return        E_OK on success; Error code otherwise.
 
- @Cautions      Allowed only following FM_PCD_MatchTableSet().
+ @Cautions      Allowed only following FM_PCD_MatchTableSet();
+                Not relevant in the case the node is of type 'INDEXED_LOOKUP'.
+                When configuring nextEngine = e_FM_PCD_CC, note that
+                p_FmPcdCcNextEngineParams->ccParams.h_CcNode must be different
+                from the currently changed table.
+ 
 *//***************************************************************************/
 t_Error FM_PCD_MatchTableModifyMissNextEngine(t_Handle                  h_CcNode,
                                               t_FmPcdCcNextEngineParams *p_FmPcdCcNextEngineParams);
@@ -3000,6 +2996,10 @@ t_Error FM_PCD_MatchTableAddKey(t_Handle            h_CcNode,
  @Return        E_OK on success; Error code otherwise.
 
  @Cautions      Allowed only following FM_PCD_MatchTableSet().
+                When configuring nextEngine = e_FM_PCD_CC, note that
+                p_FmPcdCcNextEngineParams->ccParams.h_CcNode must be different
+                from the currently changed table.
+ 
 *//***************************************************************************/
 t_Error FM_PCD_MatchTableModifyNextEngine(t_Handle                  h_CcNode,
                                           uint16_t                  keyIndex,
@@ -3021,6 +3021,9 @@ t_Error FM_PCD_MatchTableModifyNextEngine(t_Handle                  h_CcNode,
 
  @Cautions      Allowed only following FM_PCD_MatchTableSet() was called for this
                 node and the nodes that lead to it.
+                When configuring nextEngine = e_FM_PCD_CC, note that
+                p_FmPcdCcNextEngineParams->ccParams.h_CcNode must be different
+                from the currently changed table.
 *//***************************************************************************/
 t_Error FM_PCD_MatchTableModifyKeyAndNextEngine(t_Handle            h_CcNode,
                                                 uint16_t            keyIndex,
@@ -3090,6 +3093,9 @@ t_Error FM_PCD_MatchTableFindNRemoveKey(t_Handle h_CcNode,
  @Return        E_OK on success; Error code otherwise.
 
  @Cautions      Allowed only following FM_PCD_MatchTableSet().
+                When configuring nextEngine = e_FM_PCD_CC, note that
+                p_FmPcdCcNextEngineParams->ccParams.h_CcNode must be different
+                from the currently changed table.
 *//***************************************************************************/
 t_Error FM_PCD_MatchTableFindNModifyNextEngine(t_Handle                  h_CcNode,
                                                uint8_t                   keySize,
@@ -3116,6 +3122,9 @@ t_Error FM_PCD_MatchTableFindNModifyNextEngine(t_Handle                  h_CcNod
 
  @Cautions      Allowed only following FM_PCD_MatchTableSet() was called for this
                 node and the nodes that lead to it.
+                When configuring nextEngine = e_FM_PCD_CC, note that
+                p_FmPcdCcNextEngineParams->ccParams.h_CcNode must be different
+                from the currently changed table.
 *//***************************************************************************/
 t_Error FM_PCD_MatchTableFindNModifyKeyAndNextEngine(t_Handle            h_CcNode,
                                                      uint8_t             keySize,
@@ -3193,6 +3202,29 @@ uint32_t FM_PCD_MatchTableGetKeyCounter(t_Handle h_CcNode, uint16_t keyIndex);
 t_Error FM_PCD_MatchTableGetKeyStatistics(t_Handle                  h_CcNode,
                                           uint16_t                  keyIndex,
                                           t_FmPcdCcKeyStatistics    *p_KeyStatistics);
+
+/**************************************************************************//**
+ @Function      FM_PCD_MatchTableGetMissStatistics
+
+ @Description   This routine may be used to get statistics counters of miss entry
+                in a CC Node.
+
+                If 'e_FM_PCD_CC_STATS_MODE_FRAME' and
+                'e_FM_PCD_CC_STATS_MODE_BYTE_AND_FRAME' were set for this node,
+                these counters reflect how many frames were not matched to any
+                existing key and therefore passed through the miss entry; The
+                total frames count will be returned in the counter of the
+                first range (as only one frame length range was defined).
+
+ @Param[in]     h_CcNode            A handle to the node
+ @Param[out]    p_MissStatistics    Statistics counters for 'miss'
+
+ @Return        The statistics for 'miss'.
+
+ @Cautions      Allowed only following FM_PCD_MatchTableSet().
+*//***************************************************************************/
+t_Error FM_PCD_MatchTableGetMissStatistics(t_Handle                  h_CcNode,
+                                           t_FmPcdCcKeyStatistics    *p_MissStatistics);
 
 /**************************************************************************//**
  @Function      FM_PCD_MatchTableFindNGetKeyStatistics
@@ -3375,6 +3407,9 @@ t_Error FM_PCD_HashTableRemoveKey(t_Handle h_HashTbl,
  @Return        E_OK on success; Error code otherwise.
 
  @Cautions      Allowed only following FM_PCD_HashTableSet().
+                When configuring nextEngine = e_FM_PCD_CC, note that
+                p_FmPcdCcNextEngineParams->ccParams.h_CcNode must be different
+                from the currently changed table.
 *//***************************************************************************/
 t_Error FM_PCD_HashTableModifyNextEngine(t_Handle                  h_HashTbl,
                                          uint8_t                   keySize,
@@ -3393,6 +3428,9 @@ t_Error FM_PCD_HashTableModifyNextEngine(t_Handle                  h_HashTbl,
  @Return        E_OK on success; Error code otherwise.
 
  @Cautions      Allowed only following FM_PCD_HashTableSet().
+                When configuring nextEngine = e_FM_PCD_CC, note that
+                p_FmPcdCcNextEngineParams->ccParams.h_CcNode must be different
+                from the currently changed table.
 *//***************************************************************************/
 t_Error FM_PCD_HashTableModifyMissNextEngine(t_Handle                  h_HashTbl,
                                              t_FmPcdCcNextEngineParams *p_FmPcdCcNextEngineParams);
@@ -3444,6 +3482,27 @@ t_Error FM_PCD_HashTableFindNGetKeyStatistics(t_Handle                 h_HashTbl
                                               uint8_t                  keySize,
                                               uint8_t                  *p_Key,
                                               t_FmPcdCcKeyStatistics   *p_KeyStatistics);
+
+/**************************************************************************//**
+ @Function      FM_PCD_HashTableGetMissStatistics
+
+ @Description   This routine may be used to get statistics counters of 'miss'
+                entry of the a hash table.
+
+                If 'e_FM_PCD_CC_STATS_MODE_FRAME' and
+                'e_FM_PCD_CC_STATS_MODE_BYTE_AND_FRAME' were set for this node,
+                these counters reflect how many frames were not matched to any
+                existing key and therefore passed through the miss entry;
+
+ @Param[in]     h_HashTbl           A handle to a hash table
+ @Param[out]    p_MissStatistics    Statistics counters for 'miss'
+
+ @Return        The statistics for 'miss'.
+
+ @Cautions      Allowed only following FM_PCD_HashTableSet().
+*//***************************************************************************/
+t_Error FM_PCD_HashTableGetMissStatistics(t_Handle                 h_HashTbl,
+                                          t_FmPcdCcKeyStatistics   *p_MissStatistics);
 
 /**************************************************************************//**
  @Function      FM_PCD_ManipNodeSet

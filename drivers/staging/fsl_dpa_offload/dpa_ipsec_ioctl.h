@@ -119,6 +119,7 @@ struct ioc_compat_sa_params {
 	uint8_t hdr_upd_flags;
 	uint8_t sa_wqid;
 	uint8_t sa_bpid;
+	uint16_t sa_bufsize;
 	bool enable_stats;
 	struct ioc_compat_sa_crypto_params crypto_params;
 	enum dpa_ipsec_direction sa_dir;
@@ -210,6 +211,11 @@ struct ioc_dpa_ipsec_sa_modify_prm {
 	struct dpa_ipsec_sa_modify_prm modify_prm;
 };
 
+struct ioc_dpa_ipsec_sa_get_seq_num {
+	int sa_id;	/* security association id */
+	uint64_t seq;	/* where to write the SEQ number */
+};
+
 #ifdef CONFIG_COMPAT
 struct compat_dpa_ipsec_sa_modify_prm {
 	enum dpa_ipsec_sa_modify_type type;
@@ -298,5 +304,14 @@ struct ioc_compat_dpa_ipsec_sa_modify_prm {
 	_IOW(DPA_IPSEC_IOC_MAGIC, 12, \
 	     struct ioc_compat_dpa_ipsec_sa_modify_prm)
 #endif
+
+#define DPA_IPSEC_IOC_GET_STATS \
+	_IOR(DPA_IPSEC_IOC_MAGIC, 13, struct dpa_ipsec_stats)
+
+#define DPA_IPSEC_IOC_SA_REQUEST_SEQ_NUMBER \
+	_IOW(DPA_IPSEC_IOC_MAGIC, 14, int)
+
+#define DPA_IPSEC_IOC_SA_GET_SEQ_NUMBER \
+	_IOWR(DPA_IPSEC_IOC_MAGIC, 15, struct ioc_dpa_ipsec_sa_get_seq_num)
 
 #endif	/* __DPA_IPSEC_IOCTL_H */

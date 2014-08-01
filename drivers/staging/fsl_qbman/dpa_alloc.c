@@ -112,6 +112,11 @@ void bman_seed_bpid_range(u32 bpid, u32 count)
 }
 EXPORT_SYMBOL(bman_seed_bpid_range);
 
+int bman_reserve_bpid_range(u32 bpid, u32 count)
+{
+	return dpa_alloc_reserve(&bpalloc, bpid, count);
+}
+EXPORT_SYMBOL(bman_reserve_bpid_range);
 
 
 /* FQID allocator front-end */
@@ -190,9 +195,7 @@ static int qpool_cleanup(u32 qp)
 void qman_release_pool_range(u32 qp, u32 count)
 {
 	u32 total_invalid = release_id_range(&qpalloc, qp,
-					     count, NULL);
-	/* Temporarly disable QMan Pool recovery due to a frequent
-	   hang in qpool_cleanup() */
+					     count, qpool_cleanup);
 	if (total_invalid) {
 		/* Pool channels are almost always used individually */
 		if (count == 1)
@@ -212,6 +215,12 @@ void qman_seed_pool_range(u32 poolid, u32 count)
 
 }
 EXPORT_SYMBOL(qman_seed_pool_range);
+
+int qman_reserve_pool_range(u32 poolid, u32 count)
+{
+	return dpa_alloc_reserve(&qpalloc, poolid, count);
+}
+EXPORT_SYMBOL(qman_reserve_pool_range);
 
 
 /* CGR ID allocator front-end */

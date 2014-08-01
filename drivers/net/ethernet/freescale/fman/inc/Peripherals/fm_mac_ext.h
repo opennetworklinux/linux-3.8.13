@@ -210,7 +210,11 @@ typedef struct t_FmMacStatistics {
 typedef struct t_FmMacParams {
     uintptr_t                   baseAddr;           /**< Base of memory mapped FM MAC registers */
     t_EnetAddr                  addr;               /**< MAC address of device; First octet is sent first */
-    uint8_t                     macId;              /**< MAC ID <dTSEC 0-3> <10G-MAC 0>      */
+    uint8_t                     macId;              /**< MAC ID;
+                                                         numbering of dTSEC and 1G-mEMAC:
+                                                            0 - FM_MAX_NUM_OF_1G_MACS;
+                                                         numbering of 10G-MAC (TGEC) and 10G-mEMAC:
+                                                            0 - FM_MAX_NUM_OF_10G_MACS */
     e_EnetMode                  enetMode;           /**< Ethernet operation mode (MAC-PHY interface and speed);
                                                          Note that the speed should indicate the maximum rate that
                                                          this MAC should support rather than the actual speed;

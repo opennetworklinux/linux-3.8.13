@@ -29,10 +29,6 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CONFIG_SMP
-#include <linux/smp.h>	/* get_hard_smp_processor_id() */
-#endif
-
 #include <asm/cacheflush.h>
 #include "bman_private.h"
 

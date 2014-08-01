@@ -55,6 +55,9 @@ static int xfrm_output_one(struct sk_buff *skb, int err)
 		}
 
 #ifdef CONFIG_AS_FASTPATH
+		if (!x->asf_sa_cookie && asf_cb_fns.ipsec_enc_hook)
+			asf_cb_fns.ipsec_enc_hook(NULL, x, NULL, skb->skb_iif);
+
 		if (x->asf_sa_cookie && asf_cb_fns.ipsec_encrypt_n_send) {
 			err = -EINPROGRESS;
 			if (!asf_cb_fns.ipsec_encrypt_n_send(skb, x))

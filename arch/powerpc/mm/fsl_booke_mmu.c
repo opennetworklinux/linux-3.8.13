@@ -198,6 +198,15 @@ unsigned long map_mem_in_cams(unsigned long ram, int max_cam_idx)
 	get_paca()->tlb_per_core.esel_max =
 		mfspr(SPRN_TLB1CFG) & TLBnCFG_N_ENTRY;
 	get_paca()->tlb_per_core.esel_first = i;
+
+	get_paca()->tlb_per_core.lrat_next = 0;
+	if (((mfspr(SPRN_MMUCFG) & MMUCFG_MAVN) == MMUCFG_MAVN_V2) &&
+	    (mfspr(SPRN_MMUCFG) & MMUCFG_LRAT)) {
+		get_paca()->tlb_per_core.lrat_max =
+			mfspr(SPRN_LRATCFG) & LRATCFG_NENTRY;
+	} else {
+		get_paca()->tlb_per_core.lrat_max = 0;
+	}
 #endif
 
 	return amount_mapped;
@@ -248,5 +257,46 @@ void setup_initial_memory_limit(phys_addr_t first_memblock_base,
 
 	/* 64M mapped initially according to head_fsl_booke.S */
 	memblock_set_current_limit(min_t(u64, limit, 0x04000000));
+}
+#endif
+
+#if defined(CONFIG_PPC64)
+void book3e_tlb_lock(void)
+{
+	struct paca_struct *paca = get_paca();
+	struct tlb_per_core *percore;
+	unsigned long tmp;
+
+	if (!(paca->tlb_per_core_ptr & 1))
+		return;
+
+	percore = (struct tlb_per_core *)(paca->tlb_per_core_ptr & ~1UL);
+
+	asm volatile("1: lbarx %0, 0, %1;"
+		     "cmpdi %0, 0;"
+		     "bne 2f;"
+		     "li %0, 1;"
+		     "stbcx. %0, 0, %1;"
+		     "bne 1b;"
+		     "b 3f;"
+		     "2: lbzx %0, 0, %1;"
+		     "cmpdi %0, 0;"
+		     "bne 2b;"
+		     "b 1b;"
+		     "3:" : "=&r" (tmp) : "r" (&percore->lock) : "memory");
+}
+
+void book3e_tlb_unlock(void)
+{
+	struct paca_struct *paca = get_paca();
+	struct tlb_per_core *percore;
+
+	if (!(paca->tlb_per_core_ptr & 1))
+		return;
+
+	percore = (struct tlb_per_core *)(paca->tlb_per_core_ptr & ~1UL);
+
+	isync();
+	percore->lock = 0;
 }
 #endif

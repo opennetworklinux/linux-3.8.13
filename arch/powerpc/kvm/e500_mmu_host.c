@@ -30,6 +30,7 @@
 #include <linux/vmalloc.h>
 #include <linux/hugetlb.h>
 #include <asm/kvm_ppc.h>
+#include <linux/list.h>
 
 #include "e500.h"
 #include "trace.h"
@@ -106,6 +107,133 @@ static inline void __write_host_tlbe(struct kvm_book3e_206_tlb_entry *stlbe,
 	                              stlbe->mas2, stlbe->mas7_3);
 }
 
+#ifdef CONFIG_KVM_BOOKE_HV
+#ifdef CONFIG_64BIT
+static inline int lrat_next(void)
+{
+	int this, next;
+
+	this = local_paca->tlb_per_core.lrat_next;
+	next = (this + 1) % local_paca->tlb_per_core.lrat_max;
+	local_paca->tlb_per_core.lrat_next = next;
+
+	return this;
+}
+
+static inline int lrat_size(void)
+{
+	return local_paca->tlb_per_core.lrat_max;
+}
+#else
+/* LRAT is only supported in 64-bit kernel for now */
+static inline int lrat_next(void)
+{
+	BUG();
+}
+
+static inline int lrat_size(void)
+{
+	return 0;
+}
+#endif
+
+void write_host_lrate(int tsize, gfn_t gfn, unsigned long pfn, uint32_t *lpid,
+		      int valid, int lrat_entry)
+{
+	struct kvm_book3e_206_tlb_entry stlbe;
+	int esel = lrat_entry;
+	unsigned long flags;
+
+	stlbe.mas1 = (valid ? MAS1_VALID : 0) | MAS1_TSIZE(tsize);
+	stlbe.mas2 = ((u64)gfn << PAGE_SHIFT);
+	stlbe.mas7_3 = ((u64)pfn << PAGE_SHIFT);
+	stlbe.mas8 = 0;
+
+	local_irq_save(flags);
+	book3e_tlb_lock();
+
+	if (esel == -1)
+		esel = lrat_next();
+	__write_host_tlbe(&stlbe, MAS0_ATSEL | MAS0_ESEL(esel), lpid);
+
+	book3e_tlb_unlock();
+	local_irq_restore(flags);
+}
+
+void kvmppc_lrat_map(struct kvm_vcpu *vcpu, gfn_t gfn)
+{
+	struct kvm_memory_slot *slot;
+	unsigned long pfn;
+	unsigned long hva;
+	struct vm_area_struct *vma;
+	unsigned long psize;
+	int tsize;
+	unsigned long tsize_pages;
+	uint32_t *lpid = &vcpu->arch.lpid;
+
+	slot = gfn_to_memslot(vcpu->kvm, gfn);
+	if (!slot) {
+		pr_err_ratelimited("%s: couldn't find memslot for gfn %lx!\n",
+				   __func__, (long)gfn);
+		return;
+	}
+
+	hva = slot->userspace_addr;
+
+	down_read(&current->mm->mmap_sem);
+	vma = find_vma(current->mm, hva);
+	if (vma && (hva >= vma->vm_start)) {
+		psize = vma_kernel_pagesize(vma);
+	} else {
+		pr_err_ratelimited("%s: couldn't find virtual memory address"
+				   " for gfn %lx!\n", __func__, (long)gfn);
+		return;
+	}
+	up_read(&current->mm->mmap_sem);
+
+	pfn = gfn_to_pfn_memslot(slot, gfn);
+	if (is_error_noslot_pfn(pfn)) {
+		pr_err_ratelimited("%s: couldn't get real page for gfn %lx!\n",
+				   __func__, (long)gfn);
+		return;
+	}
+
+	tsize = __ilog2(psize) - 10;
+	tsize_pages = 1 << (tsize + 10 - PAGE_SHIFT);
+	gfn &= ~(tsize_pages - 1);
+	pfn &= ~(tsize_pages - 1);
+
+	write_host_lrate(tsize, gfn, pfn, lpid, 1, -1);
+	kvm_release_pfn_clean(pfn);
+}
+
+void kvmppc_lrat_invalidate(struct kvm_vcpu *vcpu)
+{
+	uint32_t mas0, mas1 = 0;
+	int esel;
+	unsigned long flags;
+
+	local_irq_save(flags);
+	book3e_tlb_lock();
+
+	/* LRAT does not have a dedicated instruction for invalidation */
+	for (esel = 0; esel < lrat_size(); esel++) {
+		mas0 = MAS0_ATSEL | MAS0_ESEL(esel);
+		mtspr(SPRN_MAS0, mas0);
+		asm volatile("isync; tlbre" : : : "memory");
+		mas1 = mfspr(SPRN_MAS1) & ~MAS1_VALID;
+		mtspr(SPRN_MAS1, mas1);
+		asm volatile("isync; tlbwe" : : : "memory");
+	}
+	/* Must clear mas8 for other host tlbwe's */
+	mtspr(SPRN_MAS8, 0);
+	isync();
+
+	book3e_tlb_unlock();
+	local_irq_restore(flags);
+}
+#endif
+
 /*
  * Acquire a mas0 with victim hint, as if we just took a TLB miss.
  *
@@ -118,11 +246,15 @@ static u32 get_host_mas0(unsigned long eaddr)
 {
 	unsigned long flags;
 	u32 mas0;
+	u32 mas4;
 
 	local_irq_save(flags);
 	mtspr(SPRN_MAS6, 0);
+	mas4 = mfspr(SPRN_MAS4);
+	mtspr(SPRN_MAS4, mas4 & ~MAS4_TLBSEL_MASK);
 	asm volatile("tlbsx 0, %0" : : "b" (eaddr & ~CONFIG_PAGE_OFFSET));
 	mas0 = mfspr(SPRN_MAS0);
+	mtspr(SPRN_MAS4, mas4);
 	local_irq_restore(flags);
 
 	return mas0;
@@ -322,7 +454,8 @@ static void kvmppc_e500_setup_stlbe(
 	BUG_ON(!(ref->flags & E500_TLB_VALID));
 
 	/* Force IPROT=0 for all guest mappings. */
-	stlbe->mas1 = MAS1_TSIZE(tsize) | get_tlb_sts(gtlbe) | MAS1_VALID;
+	stlbe->mas1 = MAS1_TSIZE(tsize) | get_tlb_sts(gtlbe) | MAS1_VALID |
+		      (get_tlb_ind(vcpu, gtlbe) << MAS1_IND_SHIFT);
 	stlbe->mas2 = (gvaddr & MAS2_EPN) |
 		      e500_shadow_mas2_attrib(gtlbe->mas2, pr);
 	stlbe->mas7_3 = ((u64)pfn << PAGE_SHIFT) |
@@ -341,6 +474,7 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 	unsigned long hva;
 	int pfnmap = 0;
 	int tsize = BOOK3E_PAGESZ_4K;
+	int ind;
 
 	/*
 	 * Translate guest physical to true physical, acquiring
@@ -352,6 +486,15 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 	 */
 	slot = gfn_to_memslot(vcpu_e500->vcpu.kvm, gfn);
 	hva = gfn_to_hva_memslot(slot, gfn);
+
+	/*
+	 * An IND entry refer a Page Table which have a different size
+	 * then the translation size.
+	 * 	page size bytes = (tsize bytes / 4KB) * 8 bytes
+	 * so we have
+	 * 	psize = tsize - BOOK3E_PAGESZ_4K - 7;
+	 */
+	ind = get_tlb_ind(&vcpu_e500->vcpu, gtlbe);
 
 	if (tlbsel == 1) {
 		struct vm_area_struct *vma;
@@ -388,12 +531,17 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 
 			tsize = (gtlbe->mas1 & MAS1_TSIZE_MASK) >>
 				MAS1_TSIZE_SHIFT;
+			if (ind)
+				tsize -= BOOK3E_PAGESZ_4K + 7;
 
 			/*
 			 * e500 doesn't implement the lowest tsize bit,
 			 * or 1K pages.
 			 */
-			tsize = max(BOOK3E_PAGESZ_4K, tsize & ~1);
+			if (!has_feature(&vcpu_e500->vcpu, VCPU_FTR_MMU_V2))
+				tsize &= ~1;
+
+			tsize = max(BOOK3E_PAGESZ_4K, tsize);
 
 			/*
 			 * Now find the largest tsize (up to what the guest
@@ -427,6 +575,8 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 
 			tsize = (gtlbe->mas1 & MAS1_TSIZE_MASK) >>
 				MAS1_TSIZE_SHIFT;
+			if (ind)
+				tsize -= BOOK3E_PAGESZ_4K + 7;
 
 			/*
 			 * Take the largest page size that satisfies both host
@@ -438,7 +588,10 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 			 * e500 doesn't implement the lowest tsize bit,
 			 * or 1K pages.
 			 */
-			tsize = max(BOOK3E_PAGESZ_4K, tsize & ~1);
+			if (!has_feature(&vcpu_e500->vcpu, VCPU_FTR_MMU_V2))
+				tsize &= ~1;
+
+			tsize = max(BOOK3E_PAGESZ_4K, tsize);
 		}
 
 		up_read(&current->mm->mmap_sem);
@@ -459,6 +612,10 @@ static inline int kvmppc_e500_shadow_map(struct kvmppc_vcpu_e500 *vcpu_e500,
 	}
 
 	kvmppc_e500_ref_setup(ref, gtlbe, pfn);
+
+	/* Restore translation size for indirect entries */
+	if (ind)
+		tsize += BOOK3E_PAGESZ_4K + 7;
 
 	kvmppc_e500_setup_stlbe(&vcpu_e500->vcpu, gtlbe, tsize,
 				ref, gvaddr, stlbe);

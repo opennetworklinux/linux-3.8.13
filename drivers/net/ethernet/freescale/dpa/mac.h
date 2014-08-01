@@ -71,29 +71,31 @@ struct mac_device {
 	u32	rx_pause;
 	u32	tx_pause;
 
-	int (*init_phy)(struct net_device *net_dev);
+	struct fm_mac_dev *(*get_mac_handle)(struct mac_device *mac_dev);
+	int (*init_phy)(struct net_device *net_dev, struct mac_device *mac_dev);
 	int (*init)(struct mac_device *mac_dev);
 	int (*start)(struct mac_device *mac_dev);
 	int (*stop)(struct mac_device *mac_dev);
-	int (*change_promisc)(struct mac_device *mac_dev);
-	int (*change_addr)(struct mac_device *mac_dev, uint8_t *addr);
-	int (*set_multi)(struct net_device *net_dev);
-	int (*uninit)(struct mac_device *mac_dev);
-	int (*ptp_enable)(struct mac_device *mac_dev);
-	int (*ptp_disable)(struct mac_device *mac_dev);
-	void *(*get_mac_handle)(struct mac_device *mac_dev);
-	int (*set_rx_pause)(struct mac_device *mac_dev, bool en);
-	int (*set_tx_pause)(struct mac_device *mac_dev, bool en);
-	int (*fm_rtc_enable)(struct net_device *net_dev);
-	int (*fm_rtc_disable)(struct net_device *net_dev);
-	int (*fm_rtc_get_cnt)(struct net_device *net_dev, uint64_t *ts);
-	int (*fm_rtc_set_cnt)(struct net_device *net_dev, uint64_t ts);
-	int (*fm_rtc_get_drift)(struct net_device *net_dev, uint32_t *drift);
-	int (*fm_rtc_set_drift)(struct net_device *net_dev, uint32_t drift);
-	int (*fm_rtc_set_alarm)(struct net_device *net_dev, uint32_t id,
-			uint64_t time);
-	int (*fm_rtc_set_fiper)(struct net_device *net_dev, uint32_t id,
-			uint64_t fiper);
+	int (*set_promisc)(struct fm_mac_dev *fm_mac_dev, bool enable);
+	int (*change_addr)(struct fm_mac_dev *fm_mac_dev, uint8_t *addr);
+	int (*set_multi)(struct net_device *net_dev,
+			 struct mac_device *mac_dev);
+	int (*uninit)(struct fm_mac_dev *fm_mac_dev);
+	int (*ptp_enable)(struct fm_mac_dev *fm_mac_dev);
+	int (*ptp_disable)(struct fm_mac_dev *fm_mac_dev);
+	int (*set_rx_pause)(struct fm_mac_dev *fm_mac_dev, bool en);
+	int (*set_tx_pause)(struct fm_mac_dev *fm_mac_dev, bool en);
+	int (*fm_rtc_enable)(struct fm *fm_dev);
+	int (*fm_rtc_disable)(struct fm *fm_dev);
+	int (*fm_rtc_get_cnt)(struct fm *fm_dev, uint64_t *ts);
+	int (*fm_rtc_set_cnt)(struct fm *fm_dev, uint64_t ts);
+	int (*fm_rtc_get_drift)(struct fm *fm_dev, uint32_t *drift);
+	int (*fm_rtc_set_drift)(struct fm *fm_dev, uint32_t drift);
+	int (*fm_rtc_set_alarm)(struct fm *fm_dev, uint32_t id, uint64_t time);
+	int (*fm_rtc_set_fiper)(struct fm *fm_dev, uint32_t id,
+				uint64_t fiper);
+	int (*dump_mac_regs)(struct mac_device *h_mac, char *buf, int nn);
+
 };
 
 struct mac_address {
@@ -101,10 +103,14 @@ struct mac_address {
 	struct list_head list;
 };
 
+#define get_fm_handle(net_dev) \
+	(((struct dpa_priv_s *)netdev_priv(net_dev))->mac_dev->fm_dev)
+
 #define for_each_port_device(i, port_dev)	\
 	for (i = 0; i < ARRAY_SIZE(port_dev); i++)
 
-static inline void * __attribute((nonnull)) macdev_priv(const struct mac_device *mac_dev)
+static inline __attribute((nonnull)) void *macdev_priv(
+		const struct mac_device *mac_dev)
 {
 	return (void *)mac_dev + sizeof(*mac_dev);
 }
@@ -112,10 +118,5 @@ static inline void * __attribute((nonnull)) macdev_priv(const struct mac_device 
 extern const char	*mac_driver_description;
 extern const size_t	 mac_sizeof_priv[];
 extern void (*const mac_setup[])(struct mac_device *mac_dev);
-
-#define TX_PAUSE_PRIO_DEFAULT 0xff
-#define TX_PAUSE_TIME_ENABLE 0xf000
-#define TX_PAUSE_TIME_DISABLE 0
-#define TX_PAUSE_THRESH_DEFAULT 0
 
 #endif	/* __MAC_H */

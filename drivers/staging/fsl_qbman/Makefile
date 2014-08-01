@@ -1,5 +1,6 @@
 # Common
 obj-$(CONFIG_FSL_DPA)		+= dpa_alloc.o
+obj-$(CONFIG_HAS_FSL_QBMAN)		+= qbman_driver.o
 
 # Bman
 obj-$(CONFIG_FSL_BMAN)		+= bman_high.o

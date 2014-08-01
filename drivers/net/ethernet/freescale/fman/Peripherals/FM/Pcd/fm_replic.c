@@ -454,6 +454,7 @@ static t_Error RemoveMember(t_FmPcdFrmReplicGroup   *p_ReplicGroup,
 
     p_FmPcd         = p_ReplicGroup->h_FmPcd;
     ASSERT_COND(p_FmPcd);
+    UNUSED(p_FmPcd);
 
     p_CurrentMember = GetMemberByIndex(p_ReplicGroup, memberIndex);
     ASSERT_COND(p_CurrentMember);

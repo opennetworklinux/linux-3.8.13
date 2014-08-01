@@ -29,10 +29,6 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef CONFIG_SMP
-#include <linux/smp.h>	/* get_hard_smp_processor_id() */
-#endif
-
 #include <asm/cacheflush.h>
 #include "qman_private.h"
 
@@ -421,21 +417,6 @@ static void qm_set_wq_scheduling(struct qman *qm, enum qm_wq_class wq_class,
 			u8 cs_elev, u8 csw2, u8 csw3, u8 csw4, u8 csw5,
 			u8 csw6, u8 csw7)
 {
-#ifdef CONFIG_FSL_QMAN_BUG_AND_FEATURE_REV1
-#define csw(x) \
-do { \
-	if (++x == 8) \
-		x = 7; \
-} while (0)
-	if (qman_ip_rev == QMAN_REV10) {
-		csw(csw2);
-		csw(csw3);
-		csw(csw4);
-		csw(csw5);
-		csw(csw6);
-		csw(csw7);
-	}
-#endif
 	qm_out(WQ_CS_CFG(wq_class), ((cs_elev & 0xff) << 24) |
 		((csw2 & 0x7) << 20) | ((csw3 & 0x7) << 16) |
 		((csw4 & 0x7) << 12) | ((csw5 & 0x7) << 8) |
@@ -444,11 +425,6 @@ do { \
 
 static void qm_set_hid(struct qman *qm)
 {
-#ifdef CONFIG_FSL_QMAN_BUG_AND_FEATURE_REV1
-	if (qman_ip_rev == QMAN_REV10)
-		qm_out(HID_CFG, 3);
-	else
-#endif
 	qm_out(HID_CFG, 0);
 }
 
@@ -637,9 +613,11 @@ static int __init fsl_qman_init(struct device_node *node)
 	qm_get_version(qm, &id, &major, &minor);
 	pr_info("Qman ver:%04x,%02x,%02x\n", id, major, minor);
 	if (!qman_ip_rev) {
-		if ((major == 1) && (minor == 0))
-			qman_ip_rev = QMAN_REV10;
-		else if ((major == 1) && (minor == 1))
+		if ((major == 1) && (minor == 0)) {
+			pr_err("QMAN rev1.0 on P4080 rev1 is not supported!\n");
+			iounmap(regs);
+			return -ENODEV;
+		} else if ((major == 1) && (minor == 1))
 			qman_ip_rev = QMAN_REV11;
 		else if	((major == 1) && (minor == 2))
 			qman_ip_rev = QMAN_REV12;
@@ -1177,12 +1155,10 @@ static int __devinit of_fsl_qman_probe(struct platform_device *ofdev)
 	ret = sysfs_create_group(&ofdev->dev.kobj, &qman_dev_attr_grp);
 	if (ret)
 		goto done;
-	if (qman_ip_rev != QMAN_REV10) {
-		ret = sysfs_add_file_to_group(&ofdev->dev.kobj,
-			&dev_attr_sfdr_in_use.attr, qman_dev_attr_grp.name);
-		if (ret)
-			goto del_group_0;
-	}
+	ret = sysfs_add_file_to_group(&ofdev->dev.kobj,
+		&dev_attr_sfdr_in_use.attr, qman_dev_attr_grp.name);
+	if (ret)
+		goto del_group_0;
 	ret = sysfs_create_group(&ofdev->dev.kobj, &qman_dev_ecr_grp);
 	if (ret)
 		goto del_group_0;

@@ -113,6 +113,7 @@ struct paca_struct {
 	struct tlb_per_core {
 		/* For software way selection, as on Freescale TLB1 */
 		u8 esel_next, esel_max, esel_first;
+		u8 lrat_next, lrat_max;
 
 		/* Per-core spinlock for e6500 TLB handlers (no tlbsrx.) */
 		u8 lock;

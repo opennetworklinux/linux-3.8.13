@@ -246,8 +246,7 @@ struct dpa_cls_tbl_enq_action_desc {
 
 	/*
 	 * Descriptor of the header manipulation chain to use with this
-	 * entry. Use a negative value if no header manipulation should be
-	 * performed for this entry.
+	 * entry.
 	 */
 	int					hmd;
 
@@ -267,6 +266,12 @@ struct dpa_cls_tbl_next_table_desc {
 	 * classification with
 	 */
 	int		next_td;
+
+	/*
+	 * Descriptor of the header manipulation chain to use before sending
+	 * the frames to the next table.
+	 */
+	int		hmd;
 };
 
 struct dpa_cls_tbl_mcast_group_desc {
@@ -340,7 +345,10 @@ struct dpa_cls_tbl_entry_mod_params {
 struct dpa_cls_tbl_entry_stats {
 
 	/* The total number of packets that have hit the entry */
-	uint64_t		total_pkts;
+	uint32_t	pkts;
+
+	/* The total number of bytes that have hit the entry */
+	uint32_t	bytes;
 };
 
 
@@ -1500,12 +1508,6 @@ struct dpa_cls_mcast_group_params {
 	unsigned int prefilled_members;
 
 	/*
-	 * External group handle given as input parameter for an import
-	 * operation
-	 */
-	void		*group;
-
-	/*
 	 * External distribution handle. When provided, replicated frames
 	 * are not enqueued to members' frame queues. They are sent to this
 	 * distribution.
@@ -1518,12 +1520,21 @@ struct dpa_cls_mcast_group_params {
 	void		*classification;
 };
 
+/* Multicast group external resource */
+struct dpa_cls_mcast_group_resources {
+	/*
+	 * Multicast group handle used when importing an external group node
+	 */
+	void	*group_node;
+};
+
 /*
  * Creates a multicast group with one member
  */
 int dpa_classif_mcast_create_group(
 		const struct dpa_cls_mcast_group_params *group_params,
-		int *grpd);
+		int *grpd,
+		const struct dpa_cls_mcast_group_resources *res);
 
 /*
  * Adds a new member to a multicast group

@@ -379,6 +379,7 @@ int fsl_rio_setup(struct platform_device *dev)
 	u32 i;
 	static int tmp;
 	struct device_node *rmu_np[MAX_MSG_UNIT_NUM] = {NULL};
+	u32 svr = mfspr(SPRN_SVR);
 
 	if (!dev->dev.of_node) {
 		dev_err(&dev->dev, "Device OF-Node is NULL");
@@ -393,7 +394,7 @@ int fsl_rio_setup(struct platform_device *dev)
 	}
 
 	/* Fix erratum NMG_SRIO135 */
-	if (fsl_svr_is(SVR_8548) || fsl_svr_is(SVR_8548_E)) {
+	if (SVR_SOC_VER(svr) == SVR_8548) {
 		rc = fixup_erratum_srio135(&dev->dev);
 		if (rc) {
 			dev_err(&dev->dev,

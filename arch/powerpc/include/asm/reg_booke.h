@@ -52,6 +52,8 @@
 
 /* Special Purpose Registers (SPRNs)*/
 #define SPRN_DECAR	0x036	/* Decrementer Auto Reload Register */
+#define SPRN_LPER	0x038	/* Logical Page Exception Register */
+#define SPRN_LPERU	0x039	/* Logical Page Exception Register Upper */
 #define SPRN_IVPR	0x03F	/* Interrupt Vector Prefix Register */
 #define SPRN_USPRG0	0x100	/* User Special Purpose Register General 0 */
 #define SPRN_SPRG3R	0x103	/* Special Purpose Register General 3 Read */
@@ -73,6 +75,7 @@
 #define SPRN_DVC2	0x13F	/* Data Value Compare Register 2 */
 #define SPRN_LPID	0x152	/* Logical Partition ID */
 #define SPRN_MAS8	0x155	/* MMU Assist Register 8 */
+#define SPRN_LRATCFG	0x156	/* LRAT Configuration Register */
 #define SPRN_TLB0PS	0x158	/* TLB 0 Page Size Register */
 #define SPRN_TLB1PS	0x159	/* TLB 1 Page Size Register */
 #define SPRN_MAS5_MAS6	0x15c	/* MMU Assist Register 5 || 6 */
@@ -110,6 +113,7 @@
 #define SPRN_IVOR39	0x1B1	/* Interrupt Vector Offset Register 39 */
 #define SPRN_IVOR40	0x1B2	/* Interrupt Vector Offset Register 40 */
 #define SPRN_IVOR41	0x1B3	/* Interrupt Vector Offset Register 41 */
+#define SPRN_IVOR42	0x1B4	/* Interrupt Vector Offset Register 42 */
 #define SPRN_GIVOR2	0x1B8	/* Guest IVOR2 */
 #define SPRN_GIVOR3	0x1B9	/* Guest IVOR3 */
 #define SPRN_GIVOR4	0x1BA	/* Guest IVOR4 */
@@ -179,6 +183,7 @@
 #define SPRN_L2CSR1	0x3FA	/* L2 Data Cache Control and Status Register 1 */
 #define SPRN_DCCR	0x3FA	/* Data Cache Cacheability Register */
 #define SPRN_ICCR	0x3FB	/* Instruction Cache Cacheability Register */
+#define SPRN_PWRMGTCR0	0x3FB	/* Power management control register 0 */
 #define SPRN_SVR	0x3FF	/* System Version Register */
 
 /*
@@ -224,6 +229,14 @@
 /* Bit definitions for CCR1. */
 #define	CCR1_DPC	0x00000100 /* Disable L1 I-Cache/D-Cache parity checking */
 #define	CCR1_TCS	0x00000080 /* Timer Clock Select */
+
+/* Bit definitions for PWRMGTCR0. */
+#define PWRMGTCR0_PW20_WAIT		(1 << 14) /* PW20 state enable bit */
+#define PWRMGTCR0_PW20_ENT_SHIFT	8
+#define PWRMGTCR0_PW20_ENT		0x3F00
+#define PWRMGTCR0_AV_IDLE_PD_EN		(1 << 22) /* Altivec idle enable */
+#define PWRMGTCR0_AV_IDLE_CNT_SHIFT	16
+#define PWRMGTCR0_AV_IDLE_CNT		0x3F0000
 
 /* Bit definitions for the MCSR. */
 #define MCSR_MCS	0x80000000 /* Machine Check Summary */
@@ -356,6 +369,9 @@
 #define ESR_ILK		0x00100000	/* Instr. Cache Locking */
 #define ESR_PUO		0x00040000	/* Unimplemented Operation exception */
 #define ESR_BO		0x00020000	/* Byte Ordering */
+#define ESR_DATA	0x00000400	/* Page Table Data Access */
+#define ESR_TLBI	0x00000200	/* Page Table TLB Ineligible */
+#define ESR_PT		0x00000100	/* Page Table Translation */
 #define ESR_SPV		0x00000080	/* Signal Processing operation */
 
 /* Bit definitions related to the DBCR0. */
@@ -652,6 +668,14 @@
 #define EPC_ELPID_SHIFT	16
 #define EPC_EPID	0x00003fff
 #define EPC_EPID_SHIFT	0
+
+/* Bit definitions for LPER */
+#define LPER_ALPN		0x000FFFFFFFFFF000ULL
+#define LPER_ALPN_SHIFT		12
+#define LPER_WIMGE		0x00000F80
+#define LPER_WIMGE_SHIFT	7
+#define LPER_LPS		0x0000000F
+#define LPER_LPS_SHIFT		0
 
 /*
  * The IBM-403 is an even more odd special case, as it is much

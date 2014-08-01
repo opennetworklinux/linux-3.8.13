@@ -467,9 +467,13 @@ t_Error FM_RTC_SetAlarm(t_Handle h_FmRtc, t_FmRtcAlarmParams *p_FmRtcAlarmParams
     }
 
     if (p_FmRtcAlarmParams->alarmTime < p_Rtc->clockPeriodNanoSec)
-        RETURN_ERROR(MAJOR, E_INVALID_SELECTION, ("Alarm time must be equal or larger than RTC period - %d nanoseconds", p_Rtc->clockPeriodNanoSec));
+        RETURN_ERROR(MAJOR, E_INVALID_SELECTION,
+                     ("Alarm time must be equal or larger than RTC period - %d nanoseconds",
+                      p_Rtc->clockPeriodNanoSec));
     if (p_FmRtcAlarmParams->alarmTime % (uint64_t)p_Rtc->clockPeriodNanoSec)
-        RETURN_ERROR(MAJOR, E_INVALID_SELECTION, ("Alarm time must be a multiple of RTC period - %d nanoseconds", p_Rtc->clockPeriodNanoSec));
+        RETURN_ERROR(MAJOR, E_INVALID_SELECTION,
+                     ("Alarm time must be a multiple of RTC period - %d nanoseconds",
+                      p_Rtc->clockPeriodNanoSec));
     tmpAlarm = p_FmRtcAlarmParams->alarmTime/(uint64_t)p_Rtc->clockPeriodNanoSec;
 
     if (p_FmRtcAlarmParams->f_AlarmCallback)
@@ -501,12 +505,18 @@ t_Error FM_RTC_SetPeriodicPulse(t_Handle h_FmRtc, t_FmRtcPeriodicPulseParams *p_
     if (fman_rtc_is_enabled(p_Rtc->p_MemMap))
         RETURN_ERROR(MAJOR, E_INVALID_SELECTION, ("Can't set Periodic pulse when RTC is enabled."));
     if (p_FmRtcPeriodicPulseParams->periodicPulsePeriod < p_Rtc->clockPeriodNanoSec)
-        RETURN_ERROR(MAJOR, E_INVALID_SELECTION, ("Periodic pulse must be equal or larger than RTC period - %d nanoseconds", p_Rtc->clockPeriodNanoSec));
+        RETURN_ERROR(MAJOR, E_INVALID_SELECTION,
+                     ("Periodic pulse must be equal or larger than RTC period - %d nanoseconds",
+                      p_Rtc->clockPeriodNanoSec));
     if (p_FmRtcPeriodicPulseParams->periodicPulsePeriod % (uint64_t)p_Rtc->clockPeriodNanoSec)
-        RETURN_ERROR(MAJOR, E_INVALID_SELECTION, ("Periodic pulse must be a multiple of RTC period - %d nanoseconds", p_Rtc->clockPeriodNanoSec));
+        RETURN_ERROR(MAJOR, E_INVALID_SELECTION,
+                     ("Periodic pulse must be a multiple of RTC period - %d nanoseconds",
+                      p_Rtc->clockPeriodNanoSec));
     tmpFiper = p_FmRtcPeriodicPulseParams->periodicPulsePeriod/(uint64_t)p_Rtc->clockPeriodNanoSec;
     if (tmpFiper & 0xffffffff00000000LL)
-        RETURN_ERROR(MAJOR, E_INVALID_SELECTION, ("Periodic pulse/RTC Period must be smaller than 4294967296", p_Rtc->clockPeriodNanoSec));
+        RETURN_ERROR(MAJOR, E_INVALID_SELECTION,
+                     ("Periodic pulse/RTC Period must be smaller than 4294967296",
+                      p_Rtc->clockPeriodNanoSec));
 
     if (p_FmRtcPeriodicPulseParams->f_PeriodicPulseCallback)
     {

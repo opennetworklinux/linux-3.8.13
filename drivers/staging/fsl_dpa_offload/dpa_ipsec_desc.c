@@ -80,7 +80,7 @@ int get_sec_info(struct dpa_ipsec *dpa_ipsec)
 		dpa_ipsec->sec_ver = SEC_DEF_VER;
 		sec_node = of_find_compatible_node(NULL, NULL, "fsl,sec-v4.0");
 		if (!sec_node) {
-			pr_err("Can't find device node for SEC! Check device tree!\n");
+			log_err("Can't find device node for SEC! Check device tree!\n");
 			return -ENODEV;
 		}
 	}
@@ -109,13 +109,13 @@ static struct device *get_jrdev(struct dpa_ipsec *dpa_ipsec)
 
 	sec_jr_node = of_find_matching_node(NULL, &sec_jr_match[0]);
 	if (!sec_jr_node) {
-		pr_err("Couln't find the device_node SEC job-ring, check the device tree\n");
+		log_err("Couln't find the device_node SEC job-ring, check the device tree\n");
 		return NULL;
 	}
 
 	sec_of_jr_dev = of_find_device_by_node(sec_jr_node);
 	if (!sec_of_jr_dev) {
-		pr_err("SEC job-ring of_device null\n");
+		log_err("SEC job-ring of_device null\n");
 		return NULL;
 	}
 
@@ -220,7 +220,7 @@ static inline int get_cipher_params(enum dpa_ipsec_cipher_alg cipher_alg,
 		*iv_length = 0;
 		*icv_length = 0;
 		*max_pad_length = 0;
-		pr_err("Unsupported cipher suite %d\n", cipher_alg);
+		log_err("Unsupported cipher suite %d\n", cipher_alg);
 		return -EINVAL;
 	}
 
@@ -870,7 +870,7 @@ void built_decap_extra_material(struct dpa_ipsec_sa *sa,
 int build_extended_encap_shared_descriptor(struct dpa_ipsec_sa *sa,
 				     dma_addr_t auth_key_dma,
 				     dma_addr_t crypto_key_dma,
-				     uint8_t bytes_to_copy,
+				     uint32_t bytes_to_copy,
 				     int sec_era)
 {
 	uint32_t *desc, *no_sg_jump, *extra_cmds;
@@ -905,7 +905,7 @@ int build_extended_encap_shared_descriptor(struct dpa_ipsec_sa *sa,
 
 	ret = built_encap_extra_material(sa, auth_key_dma, crypto_key_dma, 64);
 	if (ret < 0) {
-		pr_err("Failed to create extra CAAM commands\n");
+		log_err("Failed to create extra CAAM commands\n");
 		return -EAGAIN;
 	}
 
@@ -915,7 +915,7 @@ int build_extended_encap_shared_descriptor(struct dpa_ipsec_sa *sa,
 	/* get the jr device  */
 	jrdev = get_jrdev(sa->dpa_ipsec);
 	if (!jrdev) {
-		pr_err("Failed to get the job ring device, check the dts\n");
+		log_err("Failed to get the job ring device, check the dts\n");
 		return -EINVAL;
 	}
 
@@ -923,7 +923,7 @@ int build_extended_encap_shared_descriptor(struct dpa_ipsec_sa *sa,
 					extra_cmds_len * sizeof(uint32_t),
 					DMA_TO_DEVICE);
 	if (!dma_extra_cmds) {
-		pr_err("Could not DMA map extra CAAM commands\n");
+		log_err("Could not DMA map extra CAAM commands\n");
 		return -ENXIO;
 	}
 
@@ -1141,7 +1141,7 @@ int build_extended_decap_shared_descriptor(struct dpa_ipsec_sa *sa,
 	/* get the jr device  */
 	jrdev = get_jrdev(sa->dpa_ipsec);
 	if (!jrdev) {
-		pr_err("Failed to get the job ring device, check the dts\n");
+		log_err("Failed to get the job ring device, check the dts\n");
 		return -EINVAL;
 	}
 
@@ -1149,7 +1149,7 @@ int build_extended_decap_shared_descriptor(struct dpa_ipsec_sa *sa,
 					extra_cmds_len * sizeof(uint32_t),
 					DMA_TO_DEVICE);
 	if (!dma_extra_cmds) {
-		pr_err("Could not DMA map extra CAAM commands\n");
+		log_err("Could not DMA map extra CAAM commands\n");
 		return -ENXIO;
 	}
 
@@ -1391,7 +1391,7 @@ int create_sec_descriptor(struct dpa_ipsec_sa *sa)
 	/* get the jr device  */
 	jrdev = get_jrdev(sa->dpa_ipsec);
 	if (!jrdev) {
-		pr_err("Failed to get the job ring device, check the dts\n");
+		log_err("Failed to get the job ring device, check the dts\n");
 		return -EINVAL;
 	}
 
@@ -1405,7 +1405,7 @@ int create_sec_descriptor(struct dpa_ipsec_sa *sa)
 					      sa->auth_data.auth_key_len,
 					      DMA_TO_DEVICE);
 	if (!auth_key_dma) {
-		pr_err("Could not DMA map authentication key\n");
+		log_err("Could not DMA map authentication key\n");
 		return -EINVAL;
 	}
 
@@ -1413,7 +1413,7 @@ int create_sec_descriptor(struct dpa_ipsec_sa *sa)
 					sa->cipher_data.cipher_key_len,
 					DMA_TO_DEVICE);
 	if (!crypto_key_dma) {
-		pr_err("Could not DMA map cipher key\n");
+		log_err("Could not DMA map cipher key\n");
 		return -EINVAL;
 	}
 
@@ -1433,7 +1433,7 @@ int create_sec_descriptor(struct dpa_ipsec_sa *sa)
 		sa->sec_desc_extended = true;
 		goto build_extended_shared_desc;
 	default:
-		pr_err("Failed to create SEC descriptor for SA %d\n", sa->id);
+		log_err("Failed to create SEC descriptor for SA %d\n", sa->id);
 		return -EFAULT;
 	}
 
@@ -1448,7 +1448,7 @@ build_extended_shared_desc:
 				crypto_key_dma, sa->l2_hdr_size,
 				sa->dpa_ipsec->sec_era);
 	if (ret < 0) {
-		pr_err("Failed to create SEC descriptor for SA %d\n", sa->id);
+		log_err("Failed to create SEC descriptor for SA %d\n", sa->id);
 		return -EFAULT;
 	}
 
@@ -1457,7 +1457,7 @@ done_shared_desc:
 	/* setup preheader */
 	sec_desc->preheader.hi.field.idlen = desc_len((u32 *) sec_desc->desc);
 	sec_desc->preheader.lo.field.pool_id = sa->sa_bpid;
-	sec_desc->preheader.lo.field.pool_buffer_size = 0;
+	sec_desc->preheader.lo.field.pool_buffer_size = sa->sa_bufsize;
 	sec_desc->preheader.lo.field.offset =
 		(sa->sa_dir == DPA_IPSEC_INBOUND) ?
 			sa->dpa_ipsec->config.post_sec_in_params.data_off :
@@ -1472,17 +1472,17 @@ done_shared_desc:
 
 /*
  * Create descriptor for updating the anti replay window size
- * [21] B0951A17       jobhdr: shrsz=21 shr share=serial reo len=23
- * [22] 00000000               sharedesc->@0x02abb5008
- * [23] 2ABB5008
+ * [21] B0951A1D       jobhdr: shrsz=21 shr share=serial reo len=29
+ * [22] 00000000               sharedesc->@0x029a9a608
+ * [23] 29A9A608
  * [24] 79340008         move: descbuf+0[00] -> math0, len=8 wait
  * [25] A82CC108         math: (0 - 1)->math1 len=8
  * [26] AC214108         math: (math1 - imm1)->math1 len=8 ifb
  * [27] 000000C0               imm1=192
  * [28] A8501008         math: (math0 & math1)->math0 len=8
  * [29] 1640180A           ld: deco-descbuf len=10 offs=24
- * [30] 00000000               ptr->@0x02abb5434
- * [31] 2ABB5434
+ * [30] 00000000               ptr->@0x02965ca34
+ * [31] 2965CA34
  * [32] A1001001         jump: jsl1 all-match[calm] offset=1 local->[33]
  * [33] A00000F7         jump: all-match[] always-jump offset=-9 local->[24]
  * [34] AC404008         math: (math0 | imm1)->math0 len=8 ifb
@@ -1490,13 +1490,23 @@ done_shared_desc:
  * [36] 79430008         move: math0 -> descbuf+0[00], len=8 wait
  * [37] 79631804         move: math2 -> descbuf+24[06], len=4 wait
  * [38] 56420107          str: deco-shrdesc+1 len=7
- * [39] A8034304         math: (math3 + imm1)->math3 len=4
- * [40] 00000000               imm1=0
- * [41] 78720008         move: math3+0 -> ofifo, len=8
- * [42] 68300008	 seqfifostr: msgdata len=8
- * [43] A1C01002         jump: jsl1 all-match[calm] halt-user status=2
+ * [39] 16401806           ld: deco-descbuf len=6 offs=24
+ * [40] 00000000               ptr->@0x02965ca5c
+ * [41] 2965CA5C
+ * [42] A1001001         jump: jsl1 all-match[calm] offset=1 local->[43]
+ * [43] A00000F7         jump: all-match[] always-jump offset=-9 local->[34]
+ * [44] 16860800           ld: deco-ctrl len=0 offs=8 imm -auto-nfifo-entries
+ * [45] 2E17000A    seqfifold: both msgdata-last2-last1-flush1 len=10
+ * [46] 16860400           ld: deco-ctrl len=0 offs=4 imm +auto-nfifo-entries
+ * [47] 7882000A         move: ififo->deco-alnblk -> ofifo, len=10
+ * [48] 6830000A   seqfifostr: msgdata len=10
+ * [49] A1C01002         jump: jsl1 all-match[calm] halt-user status=2
+ *
+ * The msg_len represent the length of the message written in the output frame
+ * in order to differentiate between modify operations
  */
-int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw)
+int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw,
+			       u32 msg_len)
 {
 	uint32_t *desc, *rjobd, off;
 	uint8_t options;
@@ -1507,7 +1517,8 @@ int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw)
 	/* Check input parameters */
 	BUG_ON(!sa);
 	if (sa->sa_dir != DPA_IPSEC_INBOUND) {
-		pr_err("ARS update not supported for outbound SA %d\n", sa->id);
+		log_err("ARS update not supported for outbound SA %d\n",
+			sa->id);
 		return -EINVAL;
 	}
 
@@ -1516,7 +1527,7 @@ int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw)
 	options = (uint8_t)(*(desc + 1) & 0x000000FF);
 	c_arw = options >> 6;
 	if (c_arw == arw) {
-		pr_err("SA %d has already set this ARS %d\n", sa->id, arw);
+		log_err("SA %d has already set this ARS %d\n", sa->id, arw);
 		return -EALREADY;
 	}
 
@@ -1525,7 +1536,7 @@ int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw)
 				    desc_len(sa->sec_desc->desc) * sizeof(u32),
 				    DMA_BIDIRECTIONAL);
 	if (!dma_shdesc) {
-		pr_err("Failed DMA map shared descriptor for SA %d\n", sa->id);
+		log_err("Failed DMA map shared descriptor for SA %d\n", sa->id);
 		return -ENXIO;
 	}
 
@@ -1592,7 +1603,7 @@ int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw)
 				       PDBOPTS_ESP_ARS64);
 		break;
 	default:
-		pr_err("Invalid ARS\n");
+		log_err("Invalid ARS\n");
 		BUG();
 	}
 
@@ -1633,13 +1644,34 @@ int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw)
 		     LDST_CLASS_DECO | (1 << LDST_OFFSET_SHIFT) |
 		     LDST_SRCDST_WORD_DESCBUF_SHARED);
 
-	append_math_add_imm_u32(rjobd, REG3, REG3, IMM, sa->id);
+	append_load(rjobd,
+		    virt_to_phys((void *)(rjobd + 3 + 5 + 3 + 1 + 1 + 10)), 6,
+		    LDST_CLASS_DECO | LDST_SRCDST_WORD_DESCBUF |
+		    ((desc_len(sa->sec_desc->desc) + 3) << LDST_OFFSET_SHIFT));
 
-	/* move: ififo->deco-alnblk -> ofifo, len=4 */
-	append_move(rjobd, MOVE_SRC_MATH3 | MOVE_DEST_OUTFIFO | 8);
+	/* wait for completion of the previous operation */
+	append_jump(rjobd, JUMP_COND_CALM | (1 << JUMP_OFFSET_SHIFT));
+
+	/* jump back to remaining descriptor i.e jump back 9 words */
+	off = (-9) & 0x000000FF;
+	append_jump(rjobd, (off << JUMP_OFFSET_SHIFT));
+
+	/* ld: deco-deco-ctrl len=0 offs=8 imm -auto-nfifo-entries */
+	append_cmd(rjobd, CMD_LOAD | DISABLE_AUTO_INFO_FIFO);
+
+	/* seqfifold: both msgdata-last2-last1-flush1 len=4 */
+	append_seq_fifo_load(rjobd, msg_len, FIFOLD_TYPE_MSG |
+			     FIFOLD_CLASS_BOTH | FIFOLD_TYPE_LAST1 |
+			     FIFOLD_TYPE_LAST2 | FIFOLD_TYPE_FLUSH1);
+
+	/* ld: deco-deco-ctrl len=0 offs=4 imm +auto-nfifo-entries */
+	append_cmd(rjobd, CMD_LOAD | ENABLE_AUTO_INFO_FIFO);
+
+	/* message "Modify anti replay window for SA n" */
+	append_move(rjobd, MOVE_SRC_INFIFO | MOVE_DEST_OUTFIFO | msg_len);
 
 	/* seqfifostr: msgdata len=4 */
-	append_seq_fifo_store(rjobd, FIFOST_TYPE_MESSAGE_DATA, 8);
+	append_seq_fifo_store(rjobd, FIFOST_TYPE_MESSAGE_DATA, msg_len);
 
 	/*
 	 * Exit replacement job descriptor, halt with user error
@@ -1652,6 +1684,248 @@ int build_rjob_desc_ars_update(struct dpa_ipsec_sa *sa, enum dpa_ipsec_arw arw)
 
 	dma_unmap_single(sa->dpa_ipsec->jrdev, dma_shdesc,
 			 desc_len(sa->sec_desc->desc) * sizeof(u32),
+			 DMA_BIDIRECTIONAL);
+
+	return 0;
+}
+
+/*
+ * The SEQ number value will be placed at the address specified by SEQ pointer
+ */
+int build_rjob_desc_seq_read(struct dpa_ipsec_sa *sa, u32 msg_len)
+{
+	uint32_t *rjobd, off_b = 0, off;
+	dma_addr_t dma_shdesc, out_addr;
+
+	/* Check input parameters */
+	BUG_ON(!sa);
+	BUG_ON(!sa->sec_desc);
+
+	/* Get DMA address for this SA shared descriptor */
+	dma_shdesc = dma_map_single(sa->dpa_ipsec->jrdev, sa->sec_desc->desc,
+				    desc_len(sa->sec_desc->desc) * sizeof(u32),
+				    DMA_BIDIRECTIONAL);
+	if (!dma_shdesc) {
+		log_err("Failed DMA map shared descriptor for SA %d\n", sa->id);
+		return -ENXIO;
+	}
+
+	/* Get DMA address for this SA shared descriptor */
+	out_addr = dma_map_single(sa->dpa_ipsec->jrdev, &sa->r_seq_num,
+				  sizeof(sa->r_seq_num), DMA_BIDIRECTIONAL);
+	if (!out_addr) {
+		log_err("Failed DMA map output address for SA %d\n", sa->id);
+		dma_unmap_single(sa->dpa_ipsec->jrdev, dma_shdesc,
+				 desc_len(sa->sec_desc->desc) * sizeof(u32),
+				 DMA_BIDIRECTIONAL);
+		return -ENXIO;
+	}
+
+	/* Create replacement job descriptor for SEQ/ESEQ Number update */
+	BUG_ON(!sa->rjob_desc);
+	rjobd = sa->rjob_desc;
+
+	init_job_desc(rjobd, HDR_SHARE_SERIAL | HDR_SHARED | HDR_REVERSE |
+		      (desc_len(sa->sec_desc->desc) << HDR_START_IDX_SHIFT));
+
+	/* Set DMA address of the shared descriptor */
+	append_ptr(rjobd, dma_shdesc);
+
+	/* Retrieve SEQ number from PDB in MATH 0 - offset is in bytes */
+	off_b = sa_is_inbound(sa) ?
+		offsetof(struct ipsec_decap_pdb, seq_num_ext_hi) + sizeof(u32) :
+		offsetof(struct ipsec_encap_pdb, seq_num_ext_hi) + sizeof(u32);
+
+	append_move(rjobd, MOVE_SRC_DESCBUF | MOVE_DEST_MATH0 | MOVE_WAITCOMP |
+		    (off_b << MOVE_OFFSET_SHIFT) | sizeof(u64));
+
+	/* Store SEQ number - length is in bytes */
+	append_store(rjobd, out_addr, sizeof(sa->r_seq_num),
+		     LDST_CLASS_DECO | LDST_SRCDST_WORD_DECO_MATH0);
+
+	/* wait for completion of previous operation */
+	append_jump(rjobd, JUMP_COND_CALM | (1 << JUMP_OFFSET_SHIFT));
+
+	/*
+	 * Overwrite RJD immediately after the SHD pointer i.e shared descriptor
+	 * length plus 1 plus another 3 words
+	 * Offset and length are expressed in words
+	 * 3w - RJD header + SHD pointer
+	 * 5w - five instructions for doing some part of SEQ number modification
+	 * 3w - load instruction + pointer
+	 * 1w - jump calm
+	 * 1w - jump back to the remaining descriptor
+	 */
+	append_load(rjobd, virt_to_phys((void *)(rjobd + 3 + 5 + 3 + 1 + 1)),
+		    6, LDST_CLASS_DECO | LDST_SRCDST_WORD_DESCBUF |
+		    ((desc_len(sa->sec_desc->desc) + 3) << LDST_OFFSET_SHIFT));
+
+	/* wait for completion of previous operation */
+	append_jump(rjobd, JUMP_COND_CALM | (1 << JUMP_OFFSET_SHIFT));
+
+	/* jump back to remaining descriptor i.e jump back 9 words */
+	off = (-9) & 0x000000FF;
+	append_jump(rjobd, (off << JUMP_OFFSET_SHIFT));
+
+	/*
+	 * The following instructions are used to copy the completion
+	 * message into the output frame
+	 */
+
+	/* ld: deco-deco-ctrl len=0 offs=8 imm -auto-nfifo-entries */
+	append_cmd(rjobd, CMD_LOAD | DISABLE_AUTO_INFO_FIFO);
+
+	/* seqfifold: both msgdata-last2-last1-flush1 len=4 */
+	append_seq_fifo_load(rjobd, msg_len, FIFOLD_TYPE_MSG |
+			     FIFOLD_CLASS_BOTH | FIFOLD_TYPE_LAST1 |
+			     FIFOLD_TYPE_LAST2 | FIFOLD_TYPE_FLUSH1);
+
+	/* ld: deco-deco-ctrl len=0 offs=4 imm +auto-nfifo-entries */
+	append_cmd(rjobd, CMD_LOAD | ENABLE_AUTO_INFO_FIFO);
+
+	/* copy completion message */
+	append_move(rjobd, MOVE_SRC_INFIFO | MOVE_DEST_OUTFIFO | msg_len);
+
+	/* seqfifostr: msgdata len=4 */
+	append_seq_fifo_store(rjobd, FIFOST_TYPE_MESSAGE_DATA, msg_len);
+
+	/*
+	 * Exit replacement job descriptor, halt with user error
+	 * FD status will be a special user error, generated only on request by
+	 * a descriptor command
+	 */
+	append_cmd(rjobd, 0xA1C01002);
+
+	dma_unmap_single(sa->dpa_ipsec->jrdev, dma_shdesc,
+			 desc_len(sa->sec_desc->desc) * sizeof(u32),
+			 DMA_BIDIRECTIONAL);
+
+	dma_unmap_single(sa->dpa_ipsec->jrdev, out_addr,
+			 sizeof(sa->r_seq_num),
+			 DMA_BIDIRECTIONAL);
+
+	return 0;
+}
+
+/*
+ * The SEQ number value will be read from the SA structure and written to PDB of
+ * the shared descriptor corresponding to this SA
+ */
+int build_rjob_desc_seq_write(struct dpa_ipsec_sa *sa, u32 msg_len)
+{
+	uint32_t *rjobd, off_b, off = 0;
+	dma_addr_t dma_shdesc, in_addr;
+
+	/* Check input parameters */
+	BUG_ON(!sa);
+	BUG_ON(!sa->sec_desc);
+
+	/* Get DMA address for this SA shared descriptor */
+	dma_shdesc = dma_map_single(sa->dpa_ipsec->jrdev, sa->sec_desc->desc,
+				    desc_len(sa->sec_desc->desc) * sizeof(u32),
+				    DMA_BIDIRECTIONAL);
+	if (!dma_shdesc) {
+		log_err("Failed DMA map shared descriptor for SA %d\n", sa->id);
+		return -ENXIO;
+	}
+
+	in_addr = dma_map_single(sa->dpa_ipsec->jrdev, &sa->w_seq_num,
+				 sizeof(sa->w_seq_num), DMA_BIDIRECTIONAL);
+	if (!in_addr) {
+		log_err("Failed DMA map output address for SA %d\n", sa->id);
+		dma_unmap_single(sa->dpa_ipsec->jrdev, dma_shdesc,
+				 desc_len(sa->sec_desc->desc) * sizeof(u32),
+				 DMA_BIDIRECTIONAL);
+		return -ENXIO;
+	}
+
+	/* Create replacement job descriptor for SEQ/ESEQ Number update */
+	BUG_ON(!sa->rjob_desc);
+	rjobd = sa->rjob_desc;
+
+	init_job_desc(rjobd, HDR_SHARE_SERIAL | HDR_SHARED | HDR_REVERSE |
+		      (desc_len(sa->sec_desc->desc) << HDR_START_IDX_SHIFT));
+
+	/* Set DMA address of the shared descriptor */
+	append_ptr(rjobd, dma_shdesc);
+
+	/* Copy from SA SEQ to descriptor - offset & length is in words */
+	off_b = sa_is_inbound(sa) ?
+		offsetof(struct ipsec_decap_pdb, seq_num_ext_hi) + sizeof(u32) :
+		offsetof(struct ipsec_encap_pdb, seq_num_ext_hi) + sizeof(u32);
+
+	append_load(rjobd, in_addr, sizeof(sa->w_seq_num) / sizeof(u32),
+		    LDST_CLASS_DECO | LDST_SRCDST_WORD_DESCBUF |
+		    (off_b / sizeof(u32)) << LDST_OFFSET_SHIFT);
+
+	/* wait for completion of previous operation */
+	append_jump(rjobd, JUMP_COND_CALM | (1 << JUMP_OFFSET_SHIFT));
+
+	/*
+	 * Update shared descriptor in memory - only PDB
+	 * special case - offset and length are in words
+	 */
+	append_store(rjobd, 0, sizeof(sa->w_seq_num) / sizeof(u32),
+		     LDST_CLASS_DECO |
+		     (off_b / sizeof(u32) << LDST_OFFSET_SHIFT) |
+		     LDST_SRCDST_WORD_DESCBUF_SHARED);
+
+	/*
+	 * Overwrite RJD immediately after the SHD pointer i.e shared descriptor
+	 * length plus 1 plus another 3 words
+	 * Offset and length are expressed in words
+	 * 3w - RJD header + SHD pointer
+	 * 5w - five instructions for doing some part of SEQ number modification
+	 * 3w - load instruction + pointer
+	 * 1w - jump calm
+	 * 1w - jump back to the remaining descriptor
+	 */
+	append_load(rjobd, virt_to_phys((void *)(rjobd + 3 + 5 + 3 + 1 + 1)),
+		    6, LDST_CLASS_DECO | LDST_SRCDST_WORD_DESCBUF |
+		    ((desc_len(sa->sec_desc->desc) + 3) << LDST_OFFSET_SHIFT));
+
+	/* wait for completion o previous operation */
+	append_jump(rjobd, JUMP_COND_CALM | (1 << JUMP_OFFSET_SHIFT));
+
+	/* jump back to remaining descriptor i.e jump back 9 words */
+	off = (-9) & 0x000000FF;
+	append_jump(rjobd, (off << JUMP_OFFSET_SHIFT));
+
+	/*
+	 * The following instructions are used to copy the completion
+	 * message into the output frame
+	 */
+
+	/* ld: deco-deco-ctrl len=0 offs=8 imm -auto-nfifo-entries */
+	append_cmd(rjobd, CMD_LOAD | DISABLE_AUTO_INFO_FIFO);
+
+	/* seqfifold: both msgdata-last2-last1-flush1 len=4 */
+	append_seq_fifo_load(rjobd, msg_len, FIFOLD_TYPE_MSG |
+			     FIFOLD_CLASS_BOTH | FIFOLD_TYPE_LAST1 |
+			     FIFOLD_TYPE_LAST2 | FIFOLD_TYPE_FLUSH1);
+
+	/* ld: deco-deco-ctrl len=0 offs=4 imm +auto-nfifo-entries */
+	append_cmd(rjobd, CMD_LOAD | ENABLE_AUTO_INFO_FIFO);
+
+	/* copy completion message */
+	append_move(rjobd, MOVE_SRC_INFIFO | MOVE_DEST_OUTFIFO | msg_len);
+
+	/* seqfifostr: msgdata len=4 */
+	append_seq_fifo_store(rjobd, FIFOST_TYPE_MESSAGE_DATA, msg_len);
+
+	/*
+	 * Exit replacement job descriptor, halt with user error
+	 * FD status will be a special user error, generated only on request by
+	 * a descriptor command (not by any other error)
+	 */
+	append_cmd(rjobd, 0xA1C01002);
+
+	dma_unmap_single(sa->dpa_ipsec->jrdev, dma_shdesc,
+			 desc_len(sa->sec_desc->desc) * sizeof(u32),
+			 DMA_BIDIRECTIONAL);
+
+	dma_unmap_single(sa->dpa_ipsec->jrdev, in_addr,
+			 sizeof(sa->w_seq_num),
 			 DMA_BIDIRECTIONAL);
 
 	return 0;
@@ -1701,7 +1975,7 @@ int get_split_key_info(struct auth_params *auth_param, u32 *hmac_alg)
 		auth_param->split_key_len = 0;
 		break;
 	default:
-		pr_err("Unsupported authentication algorithm\n");
+		log_err("Unsupported authentication algorithm\n");
 		return -EINVAL;
 	}
 
@@ -1732,13 +2006,13 @@ int generate_split_key(struct auth_params *auth_param)
 
 	jrdev = get_jrdev(sa->dpa_ipsec);
 	if (!jrdev) {
-		pr_err("Could not get job ring device, please check dts\n");
+		log_err("Could not get job ring device, please check dts\n");
 		return -ENODEV;
 	}
 
 	desc = kmalloc(CAAM_CMD_SZ * 6 + CAAM_PTR_SZ * 2, GFP_KERNEL | GFP_DMA);
 	if (!desc) {
-		pr_err("Allocate memory failed for split key desc\n");
+		log_err("Allocate memory failed for split key desc\n");
 		return -ENOMEM;
 	}
 
@@ -1792,7 +2066,7 @@ int generate_split_key(struct auth_params *auth_param)
 	}
 
 	if (timeout == 0)
-		pr_err("Timeout waiting for job ring to complete\n");
+		log_err("Timeout waiting for job ring to complete\n");
 
 	dma_unmap_single(jrdev, dma_addr_out, auth_param->split_key_pad_len,
 			 DMA_FROM_DEVICE);

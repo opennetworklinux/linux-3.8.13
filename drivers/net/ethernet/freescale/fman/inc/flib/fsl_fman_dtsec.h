@@ -41,8 +41,8 @@
  *
  * To prepare dTSEC block for transfer use the following call sequence:
  *
- * - fman_dtsec_defconfig() - This step is optional and yet recommended. Its use is
- * to obtain the default dTSEC configuration parameters.
+ * - fman_dtsec_defconfig() - This step is optional and yet recommended. Its
+ * use is to obtain the default dTSEC configuration parameters.
  *
  * - Change dtsec configuration in &dtsec_cfg. This structure will be used
  * to customize the dTSEC behavior.
@@ -63,12 +63,12 @@
 /**
  * DOC: dTSEC Graceful stop
  *
- * To temporary stop dTSEC activity use fman_dtsec_stop_tx() and fman_dtsec_stop_rx().
- * Note that these functions request dTSEC graceful stop but return before this
- * stop is complete.  To query for graceful stop completion use
- * fman_dtsec_get_event() and check DTSEC_IEVENT_GTSC and DTSEC_IEVENT_GRSC bits.
- * Alternatively the dTSEC interrupt mask can be set to enable graceful stop
- * interrupts.
+ * To temporary stop dTSEC activity use fman_dtsec_stop_tx() and
+ * fman_dtsec_stop_rx(). Note that these functions request dTSEC graceful stop
+ * but return before this stop is complete.  To query for graceful stop
+ * completion use fman_dtsec_get_event() and check DTSEC_IEVENT_GTSC and
+ * DTSEC_IEVENT_GRSC bits. Alternatively the dTSEC interrupt mask can be set to
+ * enable graceful stop interrupts.
  *
  * To resume operation after graceful stop use fman_dtsec_start_tx() and
  * fman_dtsec_start_rx().
@@ -96,8 +96,8 @@
  * To poll for event status use the fman_dtsec_get_event() function.
  * To configure the interrupt mask use fman_dtsec_enable_interrupt() and
  * fman_dtsec_disable_interrupt() functions.
- * After servicing a dTSEC interrupt use fman_dtsec_ack_event to reset the serviced
- * event bit.
+ * After servicing a dTSEC interrupt use fman_dtsec_ack_event to reset the
+ * serviced event bit.
  *
  * The following events may be signaled by dTSEC hardware:
  *
@@ -185,7 +185,7 @@
 #define DTSEC_IMASK_TDPEEN	0x00000002
 #define DTSEC_IMASK_RDPEEN	0x00000001
 
-#define EVENTS_MASK					\
+#define DTSEC_EVENTS_MASK					\
 	((uint32_t)(DTSEC_IMASK_BREN    | \
 				DTSEC_IMASK_RXCEN   | \
 				DTSEC_IMASK_BTEN    | \
@@ -614,6 +614,17 @@ enum dtsec_stat_counters {
 	E_DTSEC_STAT_TDRP
 };
 
+enum dtsec_stat_level {
+	/* No statistics */
+	E_MAC_STAT_NONE = 0,
+	/* Only RMON MIB group 1 (ether stats). Optimized for performance */
+	E_MAC_STAT_MIB_GRP1,
+	/* Only error counters are available. Optimized for performance */
+	E_MAC_STAT_PARTIAL,
+	/* All counters available. Not optimized for performance */
+	E_MAC_STAT_FULL
+};
+
 
 /**
  * struct dtsec_cfg - dTSEC configuration
@@ -679,8 +690,8 @@ enum dtsec_stat_counters {
  *			precedes the layer 2 header.
  *
  * This structure contains basic dTSEC configuration and must be passed to
- * fman_dtsec_init() function.  A default set of configuration values can be obtained
- * by calling fman_dtsec_defconfig().
+ * fman_dtsec_init() function.  A default set of configuration values can be
+ * obtained by calling fman_dtsec_defconfig().
  */
 struct dtsec_cfg {
 	bool		halfdup_on;
@@ -795,8 +806,9 @@ uint32_t fman_dtsec_get_revision(struct dtsec_regs *regs);
  * @macaddr:    MAC address array
  *
  * This function sets MAC station address.  To enable unicast reception call
- * this after fman_dtsec_init().  While promiscuous mode is disabled dTSEC will match
- * the destination address of received unicast frames against this address.
+ * this after fman_dtsec_init().  While promiscuous mode is disabled dTSEC will
+ * match the destination address of received unicast frames against this
+ * address.
  */
 void fman_dtsec_set_mac_address(struct dtsec_regs *regs, uint8_t *macaddr);
 
@@ -815,8 +827,8 @@ void fman_dtsec_get_mac_address(struct dtsec_regs *regs, uint8_t *macaddr);
  * Use this function to enable/disable dTSEC L2 address filtering.  If the
  * address filtering is disabled all unicast packets are accepted.
  * To set dTSEC in promiscuous mode call both fman_dtsec_set_uc_promisc() and
- * fman_dtsec_set_mc_promisc() to disable filtering for both unicast and multicast
- * addresses.
+ * fman_dtsec_set_mc_promisc() to disable filtering for both unicast and
+ * multicast addresses.
  */
 void fman_dtsec_set_uc_promisc(struct dtsec_regs *regs, bool enable);
 
@@ -828,8 +840,8 @@ void fman_dtsec_set_uc_promisc(struct dtsec_regs *regs, bool enable);
  * @full_dx:	True for full-duplex, false for half-duplex.
  *
  * This function configures the MAC to function and the desired rates.  Use it
- * to configure dTSEC after fman_dtsec_init() and whenever the link speed changes
- * (for instance following PHY auto-negociation).
+ * to configure dTSEC after fman_dtsec_init() and whenever the link speed
+ * changes (for instance following PHY auto-negociation).
  *
  * Returns: 0 if successful, an error code otherwise.
  */
@@ -983,6 +995,18 @@ void fman_dtsec_set_ts(struct dtsec_regs *regs, bool en);
 void fman_dtsec_set_bucket(struct dtsec_regs *regs, int bucket, bool enable);
 
 /**
+ * dtsec_set_hash_table() - insert a crc code into thr filter table
+ * @regs:	Pointer to dTSEC register block
+ * @crc:	crc to insert
+ * @mcast:	true is this is a multicast address
+ * @ghtx:	true if we are in ghtx mode
+ *
+ * This function inserts a crc code into the filter table.
+ */
+void fman_dtsec_set_hash_table(struct dtsec_regs *regs, uint32_t crc,
+	bool mcast, bool ghtx);
+
+/**
  * fman_dtsec_reset_filter_table() - Resets the address filtering table
  * @regs:	Pointer to dTSEC register block
  * @mcast:	Reset multicast entries
@@ -995,7 +1019,8 @@ void fman_dtsec_set_bucket(struct dtsec_regs *regs, int bucket, bool enable);
  * This does not affect the primary nor the 15 additional addresses configured
  * using dtsec_set_address() or dtsec_set_match_address().
  */
-void fman_dtsec_reset_filter_table(struct dtsec_regs *regs, bool mcast, bool ucast);
+void fman_dtsec_reset_filter_table(struct dtsec_regs *regs, bool mcast,
+	bool ucast);
 
 /**
  * fman_dtsec_set_mc_promisc() - Set multicast promiscous mode
@@ -1020,7 +1045,8 @@ void fman_dtsec_set_mc_promisc(struct dtsec_regs *regs, bool enable);
  *
  * Returns: error if invalid @level value given.
  */
-int fman_dtsec_set_stat_level(struct dtsec_regs *regs, enum mac_stat_level level);
+int fman_dtsec_set_stat_level(struct dtsec_regs *regs,
+	enum dtsec_stat_level level);
 
 /**
  * fman_dtsec_reset_stat() - Completely resets all dTSEC HW counters

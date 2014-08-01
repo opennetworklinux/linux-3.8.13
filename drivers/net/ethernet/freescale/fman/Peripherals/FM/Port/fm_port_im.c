@@ -59,7 +59,7 @@ static void ImException(t_Handle h_FmPort, uint32_t event)
 {
     t_FmPort *p_FmPort = (t_FmPort*)h_FmPort;
 
-    ASSERT_COND(((event & IM_EV_RX) && FmIsMaster(p_FmPort->h_Fm)) ||
+    ASSERT_COND(((event & (IM_EV_RX | IM_EV_BSY)) && FmIsMaster(p_FmPort->h_Fm)) ||
                 !FmIsMaster(p_FmPort->h_Fm));
 
     if (event & IM_EV_RX)

@@ -41,16 +41,16 @@
 #include "lnxwrp_sysfs.h"
 
 uint8_t fm_find_statistic_counter_by_name(const char *attr_name,
-					  const struct SysfsStats_t *sysfs_stats,
-					  uint8_t *offset)
+				const struct sysfs_stats_t *sysfs_stats,
+				uint8_t *offset)
 {
 	int i = 0;
 
-	while (sysfs_stats[i].statisticName != NULL) {
-		if (strcmp(sysfs_stats[i].statisticName, attr_name) == 0) {
+	while (sysfs_stats[i].stat_name != NULL) {
+		if (strcmp(sysfs_stats[i].stat_name, attr_name) == 0) {
 			if (offset != NULL)
 				*offset = i;
-			return sysfs_stats[i].statisticCounter;
+			return sysfs_stats[i].stat_counter;
 		}
 
 		i++;

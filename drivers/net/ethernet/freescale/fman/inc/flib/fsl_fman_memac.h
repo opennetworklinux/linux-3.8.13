@@ -84,7 +84,7 @@
 #define HASH_TABLE_SIZE		64 /* Hash tbl size */
 
 /* Transmit Inter-Packet Gap Length Register (TX_IPG_LENGTH) */
-#define TX_IPG_LENGTH_MASK	0x0000003F
+#define MEMAC_TX_IPG_LENGTH_MASK	0x0000003F
 
 /* Statistics Configuration Register (STATN_CONFIG) */
 #define STATS_CFG_CLR		0x00000004 /* 29 Reset all counters */
@@ -168,7 +168,10 @@ struct memac_regs {
 	uint32_t command_config;	/* 0x008 Ctrl and cfg */
 	struct mac_addr mac_addr0;	/* 0x00C-0x010 MAC_ADDR_0...1 */
 	uint32_t maxfrm;		/* 0x014 Max frame length */
-	uint32_t res0018[5];
+	uint32_t res0018[1];
+	uint32_t rx_fifo_sections;	/* Receive FIFO configuration reg */
+	uint32_t tx_fifo_sections;	/* Transmit FIFO configuration reg */
+	uint32_t res0024[2];
 	uint32_t hashtable_ctrl;	/* 0x02C Hash table control */
 	uint32_t res0030[4];
 	uint32_t ievent;		/* 0x040 Interrupt event */
@@ -361,21 +364,25 @@ uint64_t fman_memac_get_counter(struct memac_regs *regs,
 	enum memac_counters reg_name);
 
 void fman_memac_set_tx_pause_frames(struct memac_regs *regs,
-	uint8_t priority,
-	uint16_t pauseTime,
-	uint16_t threshTime);
+	uint8_t priority, uint16_t pauseTime, uint16_t threshTime);
 
 uint16_t fman_memac_get_max_frame_len(struct memac_regs *regs);
 
-void fman_memac_set_exception(struct memac_regs *regs, uint32_t val, bool enable);
+void fman_memac_set_exception(struct memac_regs *regs, uint32_t val,
+	bool enable);
 
 void fman_memac_reset_stat(struct memac_regs *regs);
 
 void fman_memac_reset(struct memac_regs *regs);
 
+void fman_memac_reset_filter_table(struct memac_regs *regs);
+
+void fman_memac_set_hash_table_entry(struct memac_regs *regs, uint32_t crc);
+
 void fman_memac_set_hash_table(struct memac_regs *regs, uint32_t val);
 
-void fman_memac_set_rx_ignore_pause_frames(struct memac_regs  *regs,bool enable);
+void fman_memac_set_rx_ignore_pause_frames(struct memac_regs *regs,
+	bool enable);
 
 uint32_t fman_memac_get_event(struct memac_regs *regs, uint32_t ev_mask);
 
@@ -384,8 +391,8 @@ void fman_memac_ack_event(struct memac_regs *regs, uint32_t ev_mask);
 uint32_t fman_memac_get_interrupt_mask(struct memac_regs *regs);
 
 void fman_memac_adjust_link(struct memac_regs *regs,
-        enum enet_interface iface_mode,
-        enum enet_speed speed, bool full_dx);
+	enum enet_interface iface_mode,
+	enum enet_speed speed, bool full_dx);
 
 
 

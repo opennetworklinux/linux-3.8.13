@@ -38,7 +38,7 @@
 
 
 /* Transmit Inter-Packet Gap Length Register (TX_IPG_LENGTH) */
-#define TX_IPG_LENGTH_MASK	0x000003ff
+#define TGEC_TX_IPG_LENGTH_MASK	0x000003ff
 
 enum tgec_counters {
 	E_TGEC_COUNTER_R64,
@@ -105,15 +105,15 @@ enum tgec_counters {
 #define TGEC_IMASK_RX_CRC_ER		0x00000002
 #define TGEC_IMASK_RX_ALIGN_ER		0x00000001
 
-#define EVENTS_MASK							\
-	((uint32_t)(TGEC_IMASK_MDIO_SCAN_EVENT	| \
+#define TGEC_EVENTS_MASK					\
+	((uint32_t)(TGEC_IMASK_MDIO_SCAN_EVENT			| \
 				TGEC_IMASK_MDIO_CMD_CMPL	| \
 				TGEC_IMASK_REM_FAULT		| \
 				TGEC_IMASK_LOC_FAULT		| \
 				TGEC_IMASK_TX_ECC_ER		| \
 				TGEC_IMASK_TX_FIFO_UNFL		| \
 				TGEC_IMASK_TX_FIFO_OVFL		| \
-				TGEC_IMASK_TX_ER			| \
+				TGEC_IMASK_TX_ER		| \
 				TGEC_IMASK_RX_FIFO_OVFL		| \
 				TGEC_IMASK_RX_ECC_ER		| \
 				TGEC_IMASK_RX_JAB_FRM		| \
@@ -328,8 +328,8 @@ struct tgec_regs {
  *            (increasing bandwidth).
  *
  * This structure contains basic TGEC configuration and must be passed to
- * fman_tgec_init() function.  A default set of configuration values can be obtained
- * by calling fman_tgec_defconfig().
+ * fman_tgec_init() function.  A default set of configuration values can be
+ * obtained by calling fman_tgec_defconfig().
  */
 struct tgec_cfg {
 	bool		rx_error_discard;
@@ -391,7 +391,8 @@ void fman_tgec_reset_stat(struct tgec_regs *regs);
  *
  * Returns:    Required counter value
  */
-uint64_t fman_tgec_get_counter(struct tgec_regs *regs, enum tgec_counters reg_name);
+uint64_t fman_tgec_get_counter(struct tgec_regs *regs,
+	enum tgec_counters reg_name);
 
 /**
  * fman_tgec_set_hash_table() - Sets the Hashtable Control Register
@@ -453,6 +454,11 @@ void fman_tgec_enable_interrupt(struct tgec_regs *regs, uint32_t ev_mask);
 
 void fman_tgec_disable_interrupt(struct tgec_regs *regs, uint32_t ev_mask);
 
+void fman_tgec_reset_filter_table(struct tgec_regs *regs);
+
+void fman_tgec_set_hash_table_entry(struct tgec_regs *regs, uint32_t crc);
+
+
 /**
  * fman_tgec_get_max_frame_len() - Returns the maximum frame length value
  * @regs:    Pointer to TGEC register block
@@ -460,12 +466,14 @@ void fman_tgec_disable_interrupt(struct tgec_regs *regs, uint32_t ev_mask);
 uint16_t fman_tgec_get_max_frame_len(struct tgec_regs *regs);
 
 /**
- * fman_tgec_set_erratum_tx_fifo_corruption_10gmac_a007() - Initialize the main tgec configuration parameters
+ * fman_tgec_set_erratum_tx_fifo_corruption_10gmac_a007() - Initialize the
+ * main tgec configuration parameters
  * @regs:    Pointer to TGEC register block
  *
  * TODO
  */
-void fman_tgec_set_erratum_tx_fifo_corruption_10gmac_a007(struct tgec_regs *regs);
+void fman_tgec_set_erratum_tx_fifo_corruption_10gmac_a007(struct tgec_regs
+	*regs);
 
 
 #endif /* __FSL_FMAN_TGEC_H */

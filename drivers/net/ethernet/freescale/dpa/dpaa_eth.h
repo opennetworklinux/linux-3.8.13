@@ -45,8 +45,6 @@
 
 #include <linux/fsl_qman.h>	/* struct qman_fq */
 
-#include "dpaa_eth-common.h"
-
 #include "lnxwrp_fsl_fman.h"
 #include "fm_ext.h"
 #include "fm_port_ext.h" /* FM_PORT_FRM_ERR_* */
@@ -57,141 +55,136 @@
 #endif /* CONFIG_FSL_DPAA_ETH_DEBUGFS */
 #include "dpaa_eth_trace.h"
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
-#define dpa_get_rx_extra_headroom() fm_get_rx_extra_headroom()
-#else
+extern int dpa_rx_extra_headroom;
+extern int dpa_max_frm;
+
 #define dpa_get_rx_extra_headroom() dpa_rx_extra_headroom
-#endif
 #define dpa_get_max_frm() dpa_max_frm
 
-/*
- * Currently we have the same max_frm on all interfaces, so these macros
+/* Currently we have the same max_frm on all interfaces, so these macros
  * don't get a net_device argument. This will change in the future.
  */
 #define dpa_get_min_mtu()	64
 #define dpa_get_max_mtu()	\
 	(dpa_get_max_frm() - (VLAN_ETH_HLEN + ETH_FCS_LEN))
 
+#define __hot
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
-/* We may want this value configurable. Must be <= PAGE_SIZE minus a reserved
- * area where skb shared info can reside
- * A lower value may help with recycling rates, at least on forwarding.
- */
-#define DPA_SKB_TAILROOM	SKB_DATA_ALIGN(sizeof(struct skb_shared_info))
-#define dpa_bp_size(buffer_layout)	(PAGE_SIZE - DPA_SKB_TAILROOM)
+/* Simple enum of FQ types - used for array indexing */
+enum port_type {RX, TX};
+
+/* TODO: This structure should be renamed & moved to the FMD wrapper */
+struct dpa_buffer_layout_s {
+	uint16_t	priv_data_size;
+	bool		parse_results;
+	bool		time_stamp;
+	bool		hash_results;
+	uint8_t		manip_extra_space;
+	uint16_t	data_align;
+};
+
+#ifdef CONFIG_FSL_DPAA_ETH_DEBUG
+#define DPA_BUG_ON(cond)	BUG_ON(cond)
 #else
-
-/* Default buffer size is based on L2 MAX_FRM value, minus the FCS which
- * is stripped down by hardware.
- */
-#define dpa_bp_size(buffer_layout) \
-	dpa_get_buffer_size(buffer_layout, (dpa_get_max_frm() - ETH_FCS_LEN))
+#define DPA_BUG_ON(cond)
 #endif
 
-
+#define DPA_TX_PRIV_DATA_SIZE	16
+#define DPA_PARSE_RESULTS_SIZE sizeof(fm_prs_result_t)
+#define DPA_TIME_STAMP_SIZE 8
+#define DPA_HASH_RESULTS_SIZE 8
 #define DPA_RX_PRIV_DATA_SIZE   (DPA_TX_PRIV_DATA_SIZE + \
 					dpa_get_rx_extra_headroom())
-/* number of Tx queues to FMan */
-#define DPAA_ETH_TX_QUEUES	NR_CPUS
-#define DPAA_ETH_RX_QUEUES	128
+
+#define DPA_SGT_MAX_ENTRIES 16 /* maximum number of entries in SG Table */
+
+
+#define FM_FD_STAT_RX_ERRORS						\
+	(FM_PORT_FRM_ERR_DMA | FM_PORT_FRM_ERR_PHYSICAL	| \
+	 FM_PORT_FRM_ERR_SIZE | FM_PORT_FRM_ERR_CLS_DISCARD | \
+	 FM_PORT_FRM_ERR_EXTRACTION | FM_PORT_FRM_ERR_NO_SCHEME	| \
+	 FM_PORT_FRM_ERR_ILL_PLCR | FM_PORT_FRM_ERR_PRS_TIMEOUT	| \
+	 FM_PORT_FRM_ERR_PRS_ILL_INSTRUCT | FM_PORT_FRM_ERR_PRS_HDR_ERR)
+
+#define FM_FD_STAT_TX_ERRORS \
+	(FM_PORT_FRM_ERR_UNSUPPORTED_FORMAT | \
+	 FM_PORT_FRM_ERR_LENGTH | FM_PORT_FRM_ERR_DMA)
+
+#ifndef CONFIG_FSL_DPAA_ETH_JUMBO_FRAME
+/* The raw buffer size must be cacheline aligned.
+ * Normally we use 2K buffers.
+ */
+#define DPA_BP_RAW_SIZE		2048
+#else
+/* For jumbo frame optimizations, use buffers large enough to accomodate
+ * 9.6K frames, FD maximum offset, skb sh_info overhead and some extra
+ * space to account for further alignments.
+ */
+#define DPA_MAX_FRM_SIZE	9600
+#define DPA_BP_RAW_SIZE \
+	((DPA_MAX_FRM_SIZE + DPA_MAX_FD_OFFSET + \
+	  sizeof(struct skb_shared_info) + 128) & ~(SMP_CACHE_BYTES - 1))
+#endif
+
+/* This is what FMan is ever allowed to use.
+ * FMan-DMA requires 16-byte alignment for Rx buffers, but SKB_DATA_ALIGN is
+ * even stronger (SMP_CACHE_BYTES-aligned), so we just get away with that,
+ * via SKB_WITH_OVERHEAD(). We can't rely on netdev_alloc_frag() giving us
+ * half-page-aligned buffers (can we?), so we reserve some more space
+ * for start-of-buffer alignment.
+ */
+#define dpa_bp_size(buffer_layout)	(SKB_WITH_OVERHEAD(DPA_BP_RAW_SIZE) - \
+						SMP_CACHE_BYTES)
+/* We must ensure that skb_shinfo is always cacheline-aligned. */
+#define DPA_SKB_SIZE(size)	((size) & ~(SMP_CACHE_BYTES - 1))
+
+/* Maximum size of a buffer for which recycling is allowed.
+ * We need an upper limit such that forwarded skbs that get reallocated on Tx
+ * aren't allowed to grow unboundedly. On the other hand, we need to make sure
+ * that skbs allocated by us will not fail to be recycled due to their size.
+ *
+ * For a requested size, the kernel allocator provides the next power of two
+ * sized block, which the stack will use as is, regardless of the actual size
+ * it required; since we must acommodate at most 9.6K buffers (L2 maximum
+ * supported frame size), set the recycling upper limit to 16K.
+ */
+#define DPA_RECYCLE_MAX_SIZE	16384
 
 #if defined(CONFIG_FSL_DPAA_FMAN_UNIT_TESTS)
 /*TODO: temporary for fman pcd testing */
 #define FMAN_PCD_TESTS_MAX_NUM_RANGES	20
 #endif
 
-/* return codes for the dpaa-eth hooks */
-enum dpaa_eth_hook_result {
-	/* fd/skb was retained by the hook.
-	 *
-	 * On the Rx path, this means the Ethernet driver will _not_
-	 * deliver the skb to the stack. Instead, the hook implementation
-	 * is expected to properly dispose of the skb.
-	 *
-	 * On the Tx path, the Ethernet driver's dpa_tx() function will
-	 * immediately return NETDEV_TX_OK. The hook implementation is expected
-	 * to free the skb. *DO*NOT* release it to BMan, or enqueue it to FMan,
-	 * unless you know exactly what you're doing!
-	 *
-	 * On the confirmation/error paths, the Ethernet driver will _not_
-	 * perform any fd cleanup, nor update the interface statistics.
-	 */
-	DPAA_ETH_STOLEN,
-	/*
-	 * fd/skb was returned to the Ethernet driver for regular processing.
-	 * The hook is not allowed to, for instance, reallocate the skb (as if
-	 * by linearizing, copying, cloning or reallocating the headroom).
-	 */
-	DPAA_ETH_CONTINUE
-};
+#define DPAA_ETH_PCD_FQ_BASE(device_addr) \
+	(((device_addr) & 0x1fffff) >> 6)
 
-typedef enum dpaa_eth_hook_result (*dpaa_eth_ingress_hook_t)(
-		struct sk_buff *skb, struct net_device *net_dev, u32 fqid);
-typedef enum dpaa_eth_hook_result (*dpaa_eth_egress_hook_t)(
-		struct sk_buff *skb, struct net_device *net_dev);
-typedef enum dpaa_eth_hook_result (*dpaa_eth_confirm_hook_t)(
-		struct net_device *net_dev, const struct qm_fd *fd, u32 fqid);
-
-/*
- * Various hooks used for unit-testing and/or fastpath optimizations.
- * Currently only one set of such hooks is supported.
- */
-struct dpaa_eth_hooks_s {
-	/*
-	 * Invoked on the Tx private path, immediately after receiving the skb
-	 * from the stack.
-	 */
-	dpaa_eth_egress_hook_t	tx;
-
-	/*
-	 * Invoked on the Rx private path, right before passing the skb
-	 * up the stack. At that point, the packet's protocol id has already
-	 * been set. The skb's data pointer is now at the L3 header, and
-	 * skb->mac_header points to the L2 header. skb->len has been adjusted
-	 * to be the length of L3+payload (i.e., the length of the
-	 * original frame minus the L2 header len).
-	 * For more details on what the skb looks like, see eth_type_trans().
-	 */
-	dpaa_eth_ingress_hook_t	rx_default;
-
-	/* Driver hook for the Rx error private path. */
-	dpaa_eth_confirm_hook_t	rx_error;
-	/* Driver hook for the Tx confirmation private path. */
-	dpaa_eth_confirm_hook_t	tx_confirm;
-	/* Driver hook for the Tx error private path. */
-	dpaa_eth_confirm_hook_t	tx_error;
-};
-
-void fsl_dpaa_eth_set_hooks(struct dpaa_eth_hooks_s *hooks);
-
-#define DPA_SGT_MAX_ENTRIES 16 /* maximum number of entries in SG Table */
-
-/*
- * Largest value that the FQD's OAL field can hold.
+/* Largest value that the FQD's OAL field can hold.
  * This is DPAA-1.x specific.
  * TODO: This rather belongs in fsl_qman.h
  */
 #define FSL_QMAN_MAX_OAL	127
 
-/*
- * Values for the L3R field of the FM Parse Results
+/* Maximum offset value for a contig or sg FD (represented on 9 bits) */
+#define DPA_MAX_FD_OFFSET	((1 << 9) - 1)
+
+/* Default alignment for start of data in an Rx FD */
+#define DPA_FD_DATA_ALIGNMENT  16
+
+/* Values for the L3R field of the FM Parse Results
  */
 /* L3 Type field: First IP Present IPv4 */
 #define FM_L3_PARSE_RESULT_IPV4	0x8000
 /* L3 Type field: First IP Present IPv6 */
 #define FM_L3_PARSE_RESULT_IPV6	0x4000
 
-/*
- * Values for the L4R field of the FM Parse Results
+/* Values for the L4R field of the FM Parse Results
  * See $8.8.4.7.20 - L4 HXS - L4 Results from DPAA-Rev2 Reference Manual.
  */
 /* L4 Type field: UDP */
 #define FM_L4_PARSE_RESULT_UDP	0x40
 /* L4 Type field: TCP */
 #define FM_L4_PARSE_RESULT_TCP	0x20
-/*
- * This includes L4 checksum errors, but also other errors that the Hard Parser
+/* This includes L4 checksum errors, but also other errors that the Hard Parser
  * can detect, such as invalid combinations of TCP control flags, or bad UDP
  * lengths.
  */
@@ -199,48 +192,56 @@ void fsl_dpaa_eth_set_hooks(struct dpaa_eth_hooks_s *hooks);
 /* Check if the hardware parser has run */
 #define FM_L4_HXS_RUN		0xE0
 
-/*
- * FD status field indicating whether the FM Parser has attempted to validate
+/* FD status field indicating whether the FM Parser has attempted to validate
  * the L4 csum of the frame.
  * Note that having this bit set doesn't necessarily imply that the checksum
  * is valid. One would have to check the parse results to find that out.
  */
 #define FM_FD_STAT_L4CV		0x00000004
 
-#define FM_FD_STAT_ERRORS						\
-	(FM_PORT_FRM_ERR_DMA | FM_PORT_FRM_ERR_PHYSICAL	| \
-	 FM_PORT_FRM_ERR_SIZE | FM_PORT_FRM_ERR_CLS_DISCARD | \
-	 FM_PORT_FRM_ERR_EXTRACTION | FM_PORT_FRM_ERR_NO_SCHEME	| \
-	 FM_PORT_FRM_ERR_ILL_PLCR | FM_PORT_FRM_ERR_PRS_TIMEOUT	| \
-	 FM_PORT_FRM_ERR_PRS_ILL_INSTRUCT | FM_PORT_FRM_ERR_PRS_HDR_ERR)
 
 #define FM_FD_STAT_ERR_PHYSICAL	FM_PORT_FRM_ERR_PHYSICAL
 
-/*
- * Check if the FMan Hardware Parser has run for L4 protocols.
+/* Check if the FMan Hardware Parser has run for L4 protocols.
  *
- * @parse_result_ptr must be of type (t_FmPrsResult *).
+ * @parse_result_ptr must be of type (fm_prs_result_t *).
  */
 #define fm_l4_hxs_has_run(parse_result_ptr) \
 	((parse_result_ptr)->l4r & FM_L4_HXS_RUN)
-/*
- * Iff the FMan Hardware Parser has run for L4 protocols, check error status.
+/* Iff the FMan Hardware Parser has run for L4 protocols, check error status.
  *
- * @parse_result_ptr must be of type (t_FmPrsResult *).
+ * @parse_result_ptr must be of type (fm_prs_result_t *).
  */
 #define fm_l4_hxs_error(parse_result_ptr) \
 	((parse_result_ptr)->l4r & FM_L4_PARSE_ERROR)
-/*
- * Check if the parsed frame was found to be a TCP segment.
+/* Check if the parsed frame was found to be a TCP segment.
  *
- * @parse_result_ptr must be of type (t_FmPrsResult *).
+ * @parse_result_ptr must be of type (fm_prs_result_t *).
  */
 #define fm_l4_frame_is_tcp(parse_result_ptr) \
 	((parse_result_ptr)->l4r & FM_L4_PARSE_RESULT_TCP)
 
+/* number of Tx queues to FMan */
+#define DPAA_ETH_TX_QUEUES	NR_CPUS
+#define DPAA_ETH_RX_QUEUES	128
+
 struct pcd_range {
 	uint32_t			 base;
 	uint32_t			 count;
+};
+
+/* More detailed FQ types - used for fine-grained WQ assignments */
+enum dpa_fq_type {
+	FQ_TYPE_RX_DEFAULT = 1, /* Rx Default FQs */
+	FQ_TYPE_RX_ERROR,       /* Rx Error FQs */
+	FQ_TYPE_RX_PCD,         /* User-defined PCDs */
+	FQ_TYPE_TX,             /* "Real" Tx FQs */
+	FQ_TYPE_TX_CONFIRM,     /* Tx default Conf FQ (actually an Rx FQ) */
+	FQ_TYPE_TX_CONF_MQ,     /* Tx conf FQs (one for each Tx FQ) */
+	FQ_TYPE_TX_ERROR,       /* Tx Error FQs (these are actually Rx FQs) */
+#ifdef CONFIG_FSL_DPAA_TX_RECYCLE
+	FQ_TYPE_TX_RECYCLE,	/* Tx FQs for recycleable frames only */
+#endif
 };
 
 struct dpa_fq {
@@ -255,40 +256,54 @@ struct dpa_fq {
 	enum dpa_fq_type fq_type;
 };
 
+typedef struct dpa_fq_cbs_t {
+	struct qman_fq rx_defq;
+	struct qman_fq tx_defq;
+	struct qman_fq rx_errq;
+	struct qman_fq tx_errq;
+	struct qman_fq egress_ern;
+} dpa_fq_cbs_t;
+
+struct fqid_cell {
+	uint32_t start;
+	uint32_t count;
+};
+
 struct dpa_bp {
 	struct bman_pool		*pool;
 	uint8_t				bpid;
 	struct device			*dev;
 	union {
-		/*
-		 * The buffer pools used for the private ports are initialized
+		/* The buffer pools used for the private ports are initialized
 		 * with target_count buffers for each CPU; at runtime the
 		 * number of buffers per CPU is constantly brought back to this
 		 * level
 		 */
 		int target_count;
-		/*
-		 * The configured value for the number of buffers in the pool,
+		/* The configured value for the number of buffers in the pool,
 		 * used for shared port buffer pools
 		 */
 		int config_count;
 	};
 	size_t				size;
 	bool				seed_pool;
-	/*
-	 * physical address of the contiguous memory used by the pool to store
+	/* physical address of the contiguous memory used by the pool to store
 	 * the buffers
 	 */
 	dma_addr_t			paddr;
-	/*
-	 * virtual address of the contiguous memory used by the pool to store
+	/* virtual address of the contiguous memory used by the pool to store
 	 * the buffers
 	 */
 	void				*vaddr;
-	int kernel_pool;
 	/* current number of buffers in the bpool alloted to this CPU */
 	int *percpu_count;
 	atomic_t refs;
+	/* some bpools need to be seeded before use by this cb */
+	int (*seed_cb)(struct dpa_bp *);
+	/* some bpools need to be emptied before freeing; this cb is used
+	 * for freeing of individual buffers taken from the pool
+	 */
+	void (*free_buf_cb)(void *addr);
 };
 
 struct dpa_rx_errors {
@@ -311,16 +326,14 @@ struct dpa_ern_cnt {
 	u64 orp_zero;		/* ORP disabled */
 };
 
+struct dpa_napi_portal {
+	struct napi_struct napi;
+	struct qman_portal *p;
+};
+
 struct dpa_percpu_priv_s {
 	struct net_device *net_dev;
-	/*
-	 * Pointer to the percpu_count of the shared buffer pool
-	 * used for the private ports; this assumes there is only
-	 * one bpool used
-	 */
-	int *dpa_bp_count;
-	struct dpa_bp *dpa_bp;
-	struct napi_struct napi;
+	struct dpa_napi_portal *np;
 	u64 in_interrupt;
 	u64 tx_returned;
 	u64 tx_confirm;
@@ -334,12 +347,10 @@ struct dpa_percpu_priv_s {
 struct dpa_priv_s {
 	struct dpa_percpu_priv_s	*percpu_priv;
 	struct dpa_bp *dpa_bp;
-	/*
-	 * Store here the needed Tx headroom for convenience and speed
+	/* Store here the needed Tx headroom for convenience and speed
 	 * (even though it can be computed based on the fields of buf_layout)
 	 */
 	uint16_t tx_headroom;
-	int shared;
 	struct net_device *net_dev;
 	struct mac_device	*mac_dev;
 	struct qman_fq		*egress_fqs[DPAA_ETH_TX_QUEUES];
@@ -384,6 +395,9 @@ struct dpa_priv_s {
 		 */
 		u32 cgr_congested_count;
 	} cgr_data;
+	/* Use a per-port CGR for ingress traffic. */
+	bool use_ingress_cgr;
+	struct qman_cgr ingress_cgr;
 
 #ifdef CONFIG_FSL_DPAA_TS
 	bool ts_tx_en; /* Tx timestamping enabled */
@@ -391,41 +405,41 @@ struct dpa_priv_s {
 #endif /* CONFIG_FSL_DPAA_TS */
 
 	struct dpa_buffer_layout_s *buf_layout;
-	u8 macless_idx;
+	uint16_t rx_headroom;
+	char if_type[30];
+
+	void *peer;
 };
 
-extern const struct ethtool_ops dpa_ethtool_ops;
+struct fm_port_fqs {
+	struct dpa_fq *tx_defq;
+	struct dpa_fq *tx_errq;
+	struct dpa_fq *rx_defq;
+	struct dpa_fq *rx_errq;
+};
 
-void __attribute__((nonnull))
-dpa_fd_release(const struct net_device *net_dev, const struct qm_fd *fd);
-
-void dpa_make_private_pool(struct dpa_bp *dpa_bp);
-
-struct dpa_bp *dpa_bpid2pool(int bpid);
-
+/* functions with different implementation for SG and non-SG: */
+int dpa_bp_priv_seed(struct dpa_bp *dpa_bp);
+int dpaa_eth_refill_bpools(struct dpa_bp *dpa_bp, int *count_ptr);
 void __hot _dpa_rx(struct net_device *net_dev,
+		struct qman_portal *portal,
 		const struct dpa_priv_s *priv,
 		struct dpa_percpu_priv_s *percpu_priv,
 		const struct qm_fd *fd,
-		u32 fqid);
-
+		u32 fqid,
+		int *count_ptr);
 int __hot dpa_tx(struct sk_buff *skb, struct net_device *net_dev);
-
 struct sk_buff *_dpa_cleanup_tx_fd(const struct dpa_priv_s *priv,
 				   const struct qm_fd *fd);
-
-void __hot _dpa_process_parse_results(const t_FmPrsResult *parse_results,
+void __hot _dpa_process_parse_results(const fm_prs_result_t *parse_results,
 				      const struct qm_fd *fd,
 				      struct sk_buff *skb,
 				      int *use_gro);
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
-void dpa_bp_add_8_pages(const struct dpa_bp *dpa_bp, int cpu_id);
-int _dpa_bp_add_8_pages(const struct dpa_bp *dpa_bp);
-#endif
+void dpa_bp_add_8_bufs(const struct dpa_bp *dpa_bp, int cpu_id);
+int _dpa_bp_add_8_bufs(const struct dpa_bp *dpa_bp);
 
-/*
- * Turn on HW checksum computation for this outgoing frame.
+/* Turn on HW checksum computation for this outgoing frame.
  * If the current protocol is not something we support in this regard
  * (or if the stack has already computed the SW checksum), we do nothing.
  *
@@ -438,18 +452,25 @@ int _dpa_bp_add_8_pages(const struct dpa_bp *dpa_bp);
 int dpa_enable_tx_csum(struct dpa_priv_s *priv,
 	struct sk_buff *skb, struct qm_fd *fd, char *parse_results);
 
-static inline int dpaa_eth_napi_schedule(struct dpa_percpu_priv_s *percpu_priv)
+static inline int dpaa_eth_napi_schedule(struct dpa_percpu_priv_s *percpu_priv,
+			struct qman_portal *portal)
 {
-	/*
-	 * In case of threaded ISR for RT enable kernel,
+	/* In case of threaded ISR for RT enable kernel,
 	 * in_irq() does not return appropriate value, so use
 	 * in_serving_softirq to distinguish softirq or irq context.
 	 */
 	if (unlikely(in_irq() || !in_serving_softirq())) {
 		/* Disable QMan IRQ and invoke NAPI */
-		int ret = qman_irqsource_remove(QM_PIRQ_DQRI);
+		int ret = qman_p_irqsource_remove(portal, QM_PIRQ_DQRI);
 		if (likely(!ret)) {
-			napi_schedule(&percpu_priv->napi);
+			const struct qman_portal_config *pc =
+					qman_p_get_portal_config(portal);
+			struct dpa_napi_portal *np =
+					&percpu_priv->np[pc->index];
+
+			np->p = portal;
+			napi_schedule(&np->napi);
+			percpu_priv->in_interrupt++;
 			return 1;
 		}
 	}
@@ -507,10 +528,12 @@ static inline uint16_t dpa_get_buffer_size(struct dpa_buffer_layout_s *bl,
 	return dpa_get_headroom(bl) + data_size;
 }
 
-void fm_mac_dump_regs(struct mac_device *mac_dev);
+int fm_mac_dump_regs(struct mac_device *h_dev, char *buf, int n);
 
 void dpaa_eth_sysfs_remove(struct device *dev);
 void dpaa_eth_sysfs_init(struct device *dev);
+
+void dpa_private_napi_del(struct net_device *net_dev);
 
 /* Equivalent to a memset(0), but works faster */
 static inline void clear_fd(struct qm_fd *fd)
@@ -529,7 +552,8 @@ static inline int __hot dpa_xmit(struct dpa_priv_s *priv,
 
 #ifdef CONFIG_FSL_DPAA_TX_RECYCLE
 	/* Choose egress fq based on whether we want
-	 * to recycle the frame or not */
+	 * to recycle the frame or not
+	 */
 	if (fd->cmd & FM_FD_CMD_FCO)
 		egress_fq = priv->recycle_fqs[queue];
 	else
@@ -562,8 +586,7 @@ static inline int __hot dpa_xmit(struct dpa_priv_s *priv,
 
 #if defined CONFIG_FSL_DPAA_ETH_WQ_LEGACY
 #define DPA_NUM_WQS 8
-/*
- * Older WQ assignment: statically-defined FQIDs (such as PCDs) are assigned
+/* Older WQ assignment: statically-defined FQIDs (such as PCDs) are assigned
  * round-robin to all WQs available. Dynamically-allocated FQIDs go to WQ7.
  *
  * Not necessarily the best scheme, but worked fine so far, so we might want
@@ -574,8 +597,7 @@ static inline void _dpa_assign_wq(struct dpa_fq *fq)
 	fq->wq = fq->fqid ? fq->fqid % DPA_NUM_WQS : DPA_NUM_WQS - 1;
 }
 #elif defined CONFIG_FSL_DPAA_ETH_WQ_MULTI
-/*
- * Use multiple WQs for FQ assignment:
+/* Use multiple WQs for FQ assignment:
  *	- Tx Confirmation queues go to WQ1.
  *	- Rx Default, Tx and PCD queues go to WQ3 (no differentiation between
  *	  Rx and Tx traffic, or between Rx Default and Rx PCD frames).
@@ -590,6 +612,7 @@ static inline void _dpa_assign_wq(struct dpa_fq *fq)
 {
 	switch (fq->fq_type) {
 	case FQ_TYPE_TX_CONFIRM:
+	case FQ_TYPE_TX_CONF_MQ:
 		fq->wq = 1;
 		break;
 	case FQ_TYPE_RX_DEFAULT:
@@ -624,14 +647,10 @@ static inline void _dpa_assign_wq(struct dpa_fq *fq)
 #define dpa_get_queue_mapping(skb) \
 	skb_get_queue_mapping(skb)
 #endif
-#if defined(CONFIG_FSL_DPAA_1588) || defined(CONFIG_FSL_DPAA_TS)
-u64 dpa_get_timestamp_ns(const struct dpa_priv_s *priv,
-			enum port_type rx_tx, const void *data);
-#endif
-#ifdef CONFIG_FSL_DPAA_TS
-/* Updates the skb shared hw timestamp from the hardware timestamp */
-int dpa_get_ts(const struct dpa_priv_s *priv, enum port_type rx_tx,
-	struct skb_shared_hwtstamps *shhwtstamps, const void *data);
-#endif /* CONFIG_FSL_DPAA_TS */
+
+static inline void _dpa_bp_free_pf(void *addr)
+{
+	put_page(virt_to_head_page(addr));
+}
 
 #endif	/* __DPA_H */

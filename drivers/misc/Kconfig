@@ -248,6 +248,18 @@ config ENCLOSURE_SERVICES
 	  driver (SCSI/ATA) which supports enclosures
 	  or a SCSI enclosure device (SES) to use these services.
 
+config FSL_DCM
+	tristate "Freescale Data Collection Manager (DCM) driver"
+	depends on FSL_SOC
+	help
+	  Inside the FPGA of some Freescale QorIQ (PowerPC) reference boards
+	  is a microcontroller called the General Purpose Processor (GSMA).
+	  Running on the GSMA is the Data Collection Manager (DCM), which is
+	  used to periodically read and tally voltage, current, and temperature
+	  measurements from the on-board sensors.  You can use this feature to
+	  measure power consumption while running tests, without having the
+	  host CPU perform those measurements.
+
 config FSL_USDPAA
 	bool "Freescale USDPAA process driver"
 	depends on FSL_DPA

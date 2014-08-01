@@ -78,7 +78,7 @@
 
 #define IOC_FM_PCD_PRS_NUM_OF_HDRS                      16                  /**< Number of headers supported by HW parser */
 #define IOC_FM_PCD_MAX_NUM_OF_DISTINCTION_UNITS         (32 - IOC_FM_PCD_MAX_NUM_OF_PRIVATE_HDRS)
-                                                                        /**< Number of distinction units is limited by
+                                                                            /**< Number of distinction units is limited by
                                                                              register size (32 bits) minus reserved bits
                                                                              for private headers. */
 #define IOC_FM_PCD_MAX_NUM_OF_INTERCHANGEABLE_HDRS      4                   /**< Maximum number of interchangeable headers
@@ -96,16 +96,6 @@
 #define IOC_FM_PCD_SW_PRS_SIZE                          0x00000800          /**< Total size of SW parser area */
 #define IOC_FM_PCD_PRS_SW_OFFSET                        0x00000040          /**< Size of illegal addresses at the beginning
                                                                              of the SW parser area */
-#if DPAA_VERSION >= 11
-#define IOC_FM_PCD_PRS_SW_PATCHES_SIZE                  0x00000240          /**< Number of bytes saved for patches */
-#else
-#define IOC_FM_PCD_PRS_SW_PATCHES_SIZE                  0x00000200          /**< Number of bytes saved for patches */
-#endif
-
-#define IOC_FM_PCD_PRS_SW_TAIL_SIZE                     4                   /**< Number of bytes that must be cleared at
-                                                                             the end of the SW parser area */
-#define IOC_FM_SW_PRS_MAX_IMAGE_SIZE                    (IOC_FM_PCD_SW_PRS_SIZE-IOC_FM_PCD_PRS_SW_OFFSET-IOC_FM_PCD_PRS_SW_TAIL_SIZE-IOC_FM_PCD_PRS_SW_PATCHES_SIZE)
-                                                                        /**< Maximum size of SW parser code */
 
 #define IOC_FM_PCD_MAX_MANIP_INSRT_TEMPLATE_SIZE        128                 /**< Maximum size of insertion template for
                                                                              insert manipulation */
@@ -2116,6 +2106,80 @@ typedef struct ioc_fm_pcd_frm_replic_member_params_t {
     ioc_fm_pcd_cc_next_engine_params_t next_engine_params;
 } ioc_fm_pcd_frm_replic_member_params_t;
 #endif /* DPAA_VERSION >= 11 */
+
+
+typedef struct ioc_fm_pcd_cc_key_statistics_t {
+    uint32_t    byte_count;      /**< This counter reflects byte count of frames that
+                                     were matched by this key. */
+    uint32_t    frame_count;     /**< This counter reflects count of frames that
+                                     were matched by this key. */
+#if (DPAA_VERSION >= 11)
+    uint32_t    frame_length_range_count[IOC_FM_PCD_CC_STATS_MAX_NUM_OF_FLR];
+                                /**< These counters reflect how many frames matched
+                                     this key in 'RMON' statistics mode:
+                                     Each counter holds the number of frames of a
+                                     specific frames length range, according to the
+                                     ranges provided at initialization. */
+#endif /* (DPAA_VERSION >= 11) */
+} ioc_fm_pcd_cc_key_statistics_t;
+
+
+typedef struct ioc_fm_pcd_cc_tbl_get_miss_params_t {
+    void                            *id;
+    ioc_fm_pcd_cc_key_statistics_t  miss_statistics;
+} ioc_fm_pcd_cc_tbl_get_miss_params_t;
+
+
+/**************************************************************************//**
+ @Function      FM_PCD_MatchTableGetMissStatistics
+
+ @Description   This routine may be used to get statistics counters of miss entry
+                in a CC Node.
+
+                If 'e_FM_PCD_CC_STATS_MODE_FRAME' and
+                'e_FM_PCD_CC_STATS_MODE_BYTE_AND_FRAME' were set for this node,
+                these counters reflect how many frames were not matched to any
+                existing key and therefore passed through the miss entry; The
+                total frames count will be returned in the counter of the
+                first range (as only one frame length range was defined).
+
+ @Param[in]     h_CcNode            A handle to the node
+ @Param[out]    p_MissStatistics    Statistics counters for 'miss'
+
+ @Return        E_OK on success; Error code otherwise.
+
+ @Cautions      Allowed only following FM_PCD_MatchTableSet().
+*//***************************************************************************/
+
+#if defined(CONFIG_COMPAT)
+#define FM_PCD_IOC_MATCH_TABLE_GET_MISS_STAT_COMPAT   _IOWR(FM_IOC_TYPE_BASE, FM_PCD_IOC_NUM(12), ioc_compat_fm_pcd_cc_tbl_get_miss_params_t)
+#endif
+#define FM_PCD_IOC_MATCH_TABLE_GET_MISS_STAT  _IOWR(FM_IOC_TYPE_BASE, FM_PCD_IOC_NUM(12), ioc_fm_pcd_cc_tbl_get_miss_params_t)
+
+/**************************************************************************//**
+ @Function      FM_PCD_HashTableGetMissStatistics
+
+ @Description   This routine may be used to get statistics counters of 'miss'
+                entry of the a hash table.
+
+                If 'e_FM_PCD_CC_STATS_MODE_FRAME' and
+                'e_FM_PCD_CC_STATS_MODE_BYTE_AND_FRAME' were set for this node,
+                these counters reflect how many frames were not matched to any
+                existing key and therefore passed through the miss entry;
+
+ @Param[in]     h_HashTbl           A handle to a hash table
+ @Param[out]    p_MissStatistics    Statistics counters for 'miss'
+
+ @Return        E_OK on success; Error code otherwise.
+
+ @Cautions      Allowed only following FM_PCD_HashTableSet().
+*//***************************************************************************/
+
+#if defined(CONFIG_COMPAT)
+#define FM_PCD_IOC_HASH_TABLE_GET_MISS_STAT_COMPAT   _IOWR(FM_IOC_TYPE_BASE, FM_PCD_IOC_NUM(13), ioc_compat_fm_pcd_cc_tbl_get_miss_params_t)
+#endif
+#define FM_PCD_IOC_HASH_TABLE_GET_MISS_STAT  _IOWR(FM_IOC_TYPE_BASE, FM_PCD_IOC_NUM(13), ioc_fm_pcd_cc_tbl_get_miss_params_t)
+
 
 /**************************************************************************//**
  @Function      FM_PCD_NetEnvCharacteristicsSet

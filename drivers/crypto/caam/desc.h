@@ -2,7 +2,7 @@
  * CAAM descriptor composition header
  * Definitions to support CAAM descriptor instruction generation
  *
- * Copyright 2008-2011 Freescale Semiconductor, Inc.
+ * Copyright 2008-2012 Freescale Semiconductor, Inc.
  */
 
 #ifndef DESC_H
@@ -237,6 +237,7 @@ struct sec4_sg_entry {
 #define LDST_SRCDST_WORD_DESCBUF_SHARED	(0x42 << LDST_SRCDST_SHIFT)
 #define LDST_SRCDST_WORD_DESCBUF_JOB_WE	(0x45 << LDST_SRCDST_SHIFT)
 #define LDST_SRCDST_WORD_DESCBUF_SHARED_WE (0x46 << LDST_SRCDST_SHIFT)
+#define LDST_SRCDST_WORD_INFO_FIFO_SZM	(0x71 << LDST_SRCDST_SHIFT)
 #define LDST_SRCDST_WORD_INFO_FIFO	(0x7a << LDST_SRCDST_SHIFT)
 
 /* Offset in source/destination */
@@ -278,6 +279,28 @@ struct sec4_sg_entry {
 #define LDLEN_SET_OFIFO_OFF_RSVD	(1 << 3)
 #define LDLEN_SET_OFIFO_OFFSET_SHIFT	0
 #define LDLEN_SET_OFIFO_OFFSET_MASK	(3 << LDLEN_SET_OFIFO_OFFSET_SHIFT)
+
+/* CCB Clear Written Register bits */
+#define CLRW_CLR_C1MODE              0x1
+#define CLRW_CLR_C1DATAS             0x4
+#define CLRW_CLR_C1ICV               0x8
+#define CLRW_CLR_C1CTX               0x20
+#define CLRW_CLR_C1KEY               0x40
+#define CLRW_CLR_PK_A                0x1000
+#define CLRW_CLR_PK_B                0x2000
+#define CLRW_CLR_PK_N                0x4000
+#define CLRW_CLR_PK_E                0x8000
+#define CLRW_CLR_C2MODE              0x10000
+#define CLRW_CLR_C2KEYS              0x20000
+#define CLRW_CLR_C2DATAS             0x40000
+#define CLRW_CLR_C2CTX               0x200000
+#define CLRW_CLR_C2KEY               0x400000
+#define CLRW_RESET_CLS2_DONE         0x04000000u /* era 4 */
+#define CLRW_RESET_CLS1_DONE         0x08000000u /* era 4 */
+#define CLRW_RESET_CLS2_CHA          0x10000000u /* era 4 */
+#define CLRW_RESET_CLS1_CHA          0x20000000u /* era 4 */
+#define CLRW_RESET_OFIFO             0x40000000u /* era 3 */
+#define CLRW_RESET_IFIFO_DFIFO       0x80000000u /* era 3 */
 
 /*
  * FIFO_LOAD/FIFO_STORE/SEQ_FIFO_LOAD/SEQ_FIFO_STORE
@@ -438,6 +461,9 @@ struct sec4_sg_entry {
 #define OP_PCLID_PUBLICKEYPAIR	(0x14 << OP_PCLID_SHIFT)
 #define OP_PCLID_DSASIGN	(0x15 << OP_PCLID_SHIFT)
 #define OP_PCLID_DSAVERIFY	(0x16 << OP_PCLID_SHIFT)
+#define OP_PCLID_DH             (0x17 << OP_PCLID_SHIFT)
+#define OP_PCLID_RSAENC_PUBKEY  (0x18 << OP_PCLID_SHIFT)
+#define OP_PCLID_RSADEC_PRVKEY  (0x19 << OP_PCLID_SHIFT)
 
 /* Assuming OP_TYPE = OP_TYPE_DECAP_PROTOCOL/ENCAP_PROTOCOL */
 #define OP_PCLID_IPSEC		(0x01 << OP_PCLID_SHIFT)
@@ -463,6 +489,7 @@ struct sec4_sg_entry {
 #define OP_PCL_IPSEC_DES_IV64			 0x0100
 #define OP_PCL_IPSEC_DES			 0x0200
 #define OP_PCL_IPSEC_3DES			 0x0300
+#define OP_PCL_IPSEC_NULL_ENC			 0x0b00
 #define OP_PCL_IPSEC_AES_CBC			 0x0c00
 #define OP_PCL_IPSEC_AES_CTR			 0x0d00
 #define OP_PCL_IPSEC_AES_XTS			 0x1600
@@ -1155,8 +1182,15 @@ struct sec4_sg_entry {
 
 /* randomizer AAI set */
 #define OP_ALG_AAI_RNG		(0x00 << OP_ALG_AAI_SHIFT)
-#define OP_ALG_AAI_RNG_NOZERO	(0x10 << OP_ALG_AAI_SHIFT)
-#define OP_ALG_AAI_RNG_ODD	(0x20 << OP_ALG_AAI_SHIFT)
+#define OP_ALG_AAI_RNG_NZB	(0x10 << OP_ALG_AAI_SHIFT)
+#define OP_ALG_AAI_RNG_OBP	(0x20 << OP_ALG_AAI_SHIFT)
+
+/* RNG4 AAI set */
+#define OP_ALG_AAI_RNG4_SH_0	(0x00 << OP_ALG_AAI_SHIFT)
+#define OP_ALG_AAI_RNG4_SH_1	(0x01 << OP_ALG_AAI_SHIFT)
+#define OP_ALG_AAI_RNG4_PS	(0x40 << OP_ALG_AAI_SHIFT)
+#define OP_ALG_AAI_RNG4_AI	(0x80 << OP_ALG_AAI_SHIFT)
+#define OP_ALG_AAI_RNG4_SK	(0x100 << OP_ALG_AAI_SHIFT)
 
 /* hmac/smac AAI set */
 #define OP_ALG_AAI_HASH		(0x00 << OP_ALG_AAI_SHIFT)
@@ -1177,12 +1211,6 @@ struct sec4_sg_entry {
 #define OP_ALG_AAI_F9		(0xc8 << OP_ALG_AAI_SHIFT)
 #define OP_ALG_AAI_GSM		(0x10 << OP_ALG_AAI_SHIFT)
 #define OP_ALG_AAI_EDGE		(0x20 << OP_ALG_AAI_SHIFT)
-
-/* RNG4 set */
-#define OP_ALG_RNG4_SHIFT	4
-#define OP_ALG_RNG4_MASK	(0x1f3 << OP_ALG_RNG4_SHIFT)
-
-#define OP_ALG_RNG4_SK		(0x100 << OP_ALG_RNG4_SHIFT)
 
 #define OP_ALG_AS_SHIFT		2
 #define OP_ALG_AS_MASK		(0x3 << OP_ALG_AS_SHIFT)
@@ -1434,6 +1462,8 @@ struct sec4_sg_entry {
 #define MATH_SRC1_REG3		(0x03 << MATH_SRC1_SHIFT)
 #define MATH_SRC1_IMM		(0x04 << MATH_SRC1_SHIFT)
 #define MATH_SRC1_DPOVRD	(0x07 << MATH_SRC0_SHIFT)
+#define MATH_SRC1_VARSEQINLEN	(0x08 << MATH_SRC1_SHIFT)
+#define MATH_SRC1_VARSEQOUTLEN	(0x09 << MATH_SRC1_SHIFT)
 #define MATH_SRC1_INFIFO	(0x0a << MATH_SRC1_SHIFT)
 #define MATH_SRC1_OUTFIFO	(0x0b << MATH_SRC1_SHIFT)
 #define MATH_SRC1_ONE		(0x0c << MATH_SRC1_SHIFT)

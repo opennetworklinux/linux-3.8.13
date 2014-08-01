@@ -130,7 +130,30 @@ static void __cpuinit mpc85xx_give_timebase(void)
 	tb_req = 0;
 
 	mpc85xx_timebase_freeze(1);
+#ifdef CONFIG_PPC64
+	/*
+	 * e5500/e6500 have a workaround for erratum A-006958 in place
+	 * that will reread the timebase until TBL is non-zero.
+	 * That would be a bad thing when the timebase is frozen.
+	 *
+	 * Thus, we read it manually, and instead of checking that
+	 * TBL is non-zero, we ensure that TB does not change.  We don't
+	 * do that for the main mftb implementation, because it requires
+	 * a scratch register
+	 */
+	{
+		u64 prev;
+
+		asm volatile("mftb %0" : "=r" (timebase));
+
+		do {
+			prev = timebase;
+			asm volatile("mftb %0" : "=r" (timebase));
+		} while (prev != timebase);
+	}
+#else
 	timebase = get_tb();
+#endif
 	mb();
 	tb_valid = 1;
 
@@ -212,7 +235,7 @@ void platform_cpu_die(unsigned int cpu)
 		/* enter PH20 status */
 		setbits32(&((struct ccsr_rcpm_v2 *)guts_regs)->pcph20setr,
 				1 << cpu_core_index_of_thread(hw_cpu));
-	} else if (!rcpmv2) {
+	} else if (!rcpmv2 && guts_regs) {
 		rcpm = guts_regs;
 		/* Core Nap Operation */
 		setbits32(&rcpm->cnapcr, 1 << hw_cpu);
@@ -441,10 +464,6 @@ struct smp_ops_t smp_85xx_ops = {
 	.cpu_disable	= generic_cpu_disable,
 	.cpu_die	= generic_cpu_die,
 #endif
-#ifdef CONFIG_KEXEC
-	.give_timebase	= smp_generic_give_timebase,
-	.take_timebase	= smp_generic_take_timebase,
-#endif
 };
 
 #ifdef CONFIG_KEXEC
@@ -586,6 +605,10 @@ void __init mpc85xx_smp_init(void)
 		smp_85xx_ops.message_pass = NULL;
 		smp_85xx_ops.cause_ipi = doorbell_cause_ipi;
 	}
+
+#ifdef CONFIG_HOTPLUG_CPU
+	ppc_md.cpu_die = generic_mach_cpu_die;
+#endif
 
 	np = of_find_matching_node(NULL, mpc85xx_smp_guts_ids);
 	if (np) {

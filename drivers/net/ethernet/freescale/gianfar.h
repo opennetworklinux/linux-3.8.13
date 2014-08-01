@@ -73,6 +73,11 @@ struct ethtool_rx_list {
 /* Number of bytes to align the rx bufs to */
 #define RXBUF_ALIGNMENT 64
 
+#ifdef CONFIG_AS_FASTPATH
+/* Headroom required for IPSec processing in ASF */
+#define EXTRA_HEADROOM 128
+#endif
+
 /* The number of bytes which composes a unit for the purpose of
  * allocating data buffers.  ie-for any given MTU, the data buffer
  * will be the next highest multiple of 512 bytes. */
@@ -1319,6 +1324,8 @@ struct gfar_private {
 	int oldspeed;
 	int oldduplex;
 	int oldlink;
+	bool rx_pause;
+	bool tx_pause;
 
 	struct gfar_irqinfo *irqinfo[MAXGROUPS][GFAR_NUM_IRQS];
 
@@ -1444,6 +1451,7 @@ void gfar_init_sysfs(struct net_device *dev);
 int gfar_set_features(struct net_device *dev, netdev_features_t features);
 extern void gfar_check_rx_parser_mode(struct gfar_private *priv);
 extern void gfar_vlan_mode(struct net_device *dev, netdev_features_t features);
+void gfar_configure_pause(struct gfar_private *priv, bool en);
 
 extern const struct ethtool_ops gfar_ethtool_ops;
 extern struct list_head gfar_recycle_queues;

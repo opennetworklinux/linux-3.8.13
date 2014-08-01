@@ -46,14 +46,18 @@ extern "C" {
 #define QMAN_CHANNEL_POOL1_REV3 0x401
 #define QMAN_CHANNEL_CAAM_REV3 0x840
 #define QMAN_CHANNEL_PME_REV3 0x860
+#define QMAN_CHANNEL_DCE 0x8a0
 extern u16 qm_channel_pool1;
 extern u16 qm_channel_caam;
 extern u16 qm_channel_pme;
+extern u16 qm_channel_dce;
 enum qm_dc_portal {
 	qm_dc_portal_fman0 = 0,
 	qm_dc_portal_fman1 = 1,
 	qm_dc_portal_caam = 2,
-	qm_dc_portal_pme = 3
+	qm_dc_portal_pme = 3,
+	qm_dc_portal_rman = 4,
+	qm_dc_portal_dce = 5
 };
 
 /* Portal processing (interrupt) sources */
@@ -327,8 +331,8 @@ struct qm_mr_entry {
 		} __packed ern;
 		struct {
 			u8 colour:2;	/* See QM_MR_DCERN_COLOUR_* */
-			u8 __reserved1:4;
-			enum qm_dc_portal portal:2;
+			u8 __reserved1:3;
+			enum qm_dc_portal portal:3;
 			u16 __reserved2;
 			u8 rc;		/* Rejection Code */
 			u32 __reserved3:24;
@@ -869,7 +873,7 @@ struct qm_mcc_ceetm_statistics_query_write {
 	u8 ct;
 	u8 __reserved2[13];
 	u64 frm_cnt:40;
-	u16 __reserved3[2];
+	u8 __reserved3[2];
 	u64 byte_cnt:48;
 	u8 __reserved[32];
 } __packed;
@@ -1664,6 +1668,13 @@ const cpumask_t *qman_affine_cpus(void);
 u16 qman_affine_channel(int cpu);
 
 /**
+ * qman_get_affine_portal - return the portal pointer affine to cpu
+ * @cpu: the cpu whose affine portal is the subject of the query
+ *
+ */
+void *qman_get_affine_portal(int cpu);
+
+/**
  * qman_poll_dqrr - process DQRR (fast-path) entries
  * @limit: the maximum number of DQRR entries to process
  *
@@ -2016,6 +2027,23 @@ int qman_volatile_dequeue(struct qman_fq *fq, u32 flags, u32 vdqcr);
  * enqueues "at the source".
  */
 int qman_enqueue(struct qman_fq *fq, const struct qm_fd *fd, u32 flags);
+
+typedef int (*qman_cb_precommit) (void *arg);
+/**
+ * qman_enqueue_precommit - Enqueue a frame to a frame queue and call cb
+ * @fq: the frame queue object to enqueue to
+ * @fd: a descriptor of the frame to be enqueued
+ * @flags: bit-mask of QMAN_ENQUEUE_FLAG_*** options
+ * @cb: user supplied callback function to invoke before writing commit verb.
+ * @cb_arg: callback function argument
+ *
+ * This is similar to qman_enqueue except that it will invoke a user supplied
+ * callback function just before writng the commit verb. This is useful
+ * when the user want to do something *just before* enqueuing the request and
+ * the enqueue can't fail.
+ */
+int qman_enqueue_precommit(struct qman_fq *fq, const struct qm_fd *fd,
+		u32 flags, qman_cb_precommit cb, void *cb_arg);
 
 /**
  * qman_enqueue_orp - Enqueue a frame to a frame queue using an ORP
@@ -2853,6 +2881,34 @@ int qman_ceetm_channel_get_group(struct qm_ceetm_channel *channel,
 			     unsigned int *prio_a,
 			     unsigned int *prio_b);
 
+/**
+ * qman_ceetm_channel_set_group_cr_eligibility
+ * qman_ceetm_channel_set_group_er_eligibility - Set channel group eligibitity
+ * @channel: the given channel object
+ * @group_b: indicates whether there is group B in this channel.
+ * @cre: the commit rate eligibility, 1 for enable, 0 for disable.
+ *
+ * Return zero for success, or -EINVAL if eligiblity setting fails.
+*/
+int qman_ceetm_channel_set_group_cr_eligiblility(struct qm_ceetm_channel
+				*channel, int group_b, int cre);
+int qman_ceetm_channel_set_group_er_eligiblility(struct qm_ceetm_channel
+				*channel, int group_b, int ere);
+
+/**
+ * qman_ceetm_channel_set_cq_cr_eligibility
+ * qman_ceetm_channel_set_cq_er_eligibility - Set channel cq eligibitity
+ * @channel: the given channel object
+ * @idx: is from 0 to 7 (representing CQ0 to CQ7).
+ * @cre: the commit rate eligibility, 1 for enable, 0 for disable.
+ *
+ * Return zero for success, or -EINVAL if eligiblity setting fails.
+*/
+int qman_ceetm_channel_set_cq_cr_eligiblility(struct qm_ceetm_channel *channel,
+					unsigned int idx, int cre);
+int qman_ceetm_channel_set_cq_er_eligiblility(struct qm_ceetm_channel *channel,
+					unsigned int idx, int ere);
+
 	/* --------------------- */
 	/* CEETM :: class queues */
 	/* --------------------- */
@@ -3273,6 +3329,35 @@ int qman_set_wpm(int wpm_enable);
  */
 int qman_get_wpm(int *wpm_enable);
 
+/* The below qman_p_***() variants might be called in a migration situation
+ * (e.g. cpu hotplug). They are used to continue accessing the portal that
+ * execution was affine to prior to migration.
+ * @qman_portal specifies which portal the APIs will use.
+*/
+const struct qman_portal_config *qman_p_get_portal_config(struct qman_portal
+									 *p);
+int qman_p_irqsource_add(struct qman_portal *p, u32 bits);
+int qman_p_irqsource_remove(struct qman_portal *p, u32 bits);
+int qman_p_poll_dqrr(struct qman_portal *p, unsigned int limit);
+u32 qman_p_poll_slow(struct qman_portal *p);
+void qman_p_poll(struct qman_portal *p);
+void qman_p_stop_dequeues(struct qman_portal *p);
+void qman_p_start_dequeues(struct qman_portal *p);
+void qman_p_static_dequeue_add(struct qman_portal *p, u32 pools);
+void qman_p_static_dequeue_del(struct qman_portal *p, u32 pools);
+u32 qman_p_static_dequeue_get(struct qman_portal *p);
+void qman_p_dca(struct qman_portal *p, struct qm_dqrr_entry *dq,
+						int park_request);
+int qman_p_volatile_dequeue(struct qman_portal *p, struct qman_fq *fq,
+				u32 flags __maybe_unused, u32 vdqcr);
+int qman_p_enqueue(struct qman_portal *p, struct qman_fq *fq,
+					const struct qm_fd *fd, u32 flags);
+int qman_p_enqueue_orp(struct qman_portal *p, struct qman_fq *fq,
+				const struct qm_fd *fd, u32 flags,
+				struct qman_fq *orp, u16 orp_seqnum);
+int qman_p_enqueue_precommit(struct qman_portal *p, struct qman_fq *fq,
+				const struct qm_fd *fd, u32 flags,
+				qman_cb_precommit cb, void *cb_arg);
 #ifdef __cplusplus
 }
 #endif

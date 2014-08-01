@@ -275,6 +275,14 @@ t_Handle FmHcConfigAndInit(t_FmHcParams *p_FmHcParams)
         XX_Free(p_FmHc);
         return NULL;
     }
+ 
+    err = FM_PORT_ConfigMaxFrameLength(p_FmHc->h_HcPortDev, sizeof(t_HcFrame));
+    if (err != E_OK)
+    {
+        REPORT_ERROR(MAJOR, err, ("FM HC port init!"));
+        FmHcFree(p_FmHc);
+        return NULL;
+    }
 
     /* final init */
     err = FM_PORT_Init(p_FmHc->h_HcPortDev);

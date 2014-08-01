@@ -141,7 +141,7 @@
                  * On receiving frame at this interface, the ethernet driver will do
                  * kmap_atomic/kunmap_atomic for that frame. */
                ethernet@16 {
-                        compatible = "fsl,b4860-dpa-ethernet", "fsl,dpa-ethernet";
+                        compatible = "fsl,b4860-dpa-ethernet-macless", "fsl,dpa-ethernet-macless";
                         fsl,bman-buffer-pools = <&bp16>;
                         fsl,qman-frame-queues-rx = <4000 8>;
                         fsl,qman-frame-queues-tx = <4008 8>;
