@@ -42,9 +42,11 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/of_platform.h>
+#include <linux/fsl_qman.h>
 
 #include "offline_port.h"
-#include "dpaa_eth-common.h"
+#include "dpaa_eth.h"
+#include "dpaa_eth_common.h"
 
 #define OH_MOD_DESCRIPTION	"FSL FMan Offline Parsing port driver"
 /*
@@ -82,6 +84,65 @@ static struct platform_driver oh_port_driver = {
 	.probe		= oh_port_probe,
 	.remove		= oh_port_remove
 };
+
+/* Creates Frame Queues */
+static uint32_t oh_fq_create(struct qman_fq *fq,
+	uint32_t fq_id, uint16_t channel,
+	uint16_t wq_id)
+{
+	struct qm_mcc_initfq fq_opts;
+	uint32_t create_flags, init_flags;
+	uint32_t ret = 0;
+
+	if (fq == NULL)
+		return 1;
+
+	/* Set flags for FQ create */
+	create_flags = QMAN_FQ_FLAG_LOCKED | QMAN_FQ_FLAG_TO_DCPORTAL;
+
+	/* Create frame queue */
+	ret = qman_create_fq(fq_id, create_flags, fq);
+	if (ret != 0)
+		return 1;
+
+	/* Set flags for FQ init */
+	init_flags = QMAN_INITFQ_FLAG_SCHED;
+
+	/* Set FQ init options. Specify destination WQ ID and channel */
+	fq_opts.we_mask = QM_INITFQ_WE_DESTWQ;
+	fq_opts.fqd.dest.wq = wq_id;
+	fq_opts.fqd.dest.channel = channel;
+
+	/* Initialize frame queue */
+	ret = qman_init_fq(fq, init_flags, &fq_opts);
+	if (ret != 0) {
+		qman_destroy_fq(fq, 0);
+		return 1;
+	}
+
+	return 0;
+}
+
+/* Destroys Frame Queues */
+static void oh_fq_destroy(struct qman_fq *fq)
+{
+	int _errno = 0;
+
+	_errno = qman_retire_fq(fq, NULL);
+	if (unlikely(_errno < 0))
+		pr_err(KBUILD_MODNAME": %s:%hu:%s(): qman_retire_fq(%u)=%d\n",
+			KBUILD_BASENAME".c", __LINE__, __func__,
+			qman_fq_fqid(fq), _errno);
+
+	_errno = qman_oos_fq(fq);
+	if (unlikely(_errno < 0)) {
+		pr_err(KBUILD_MODNAME": %s:%hu:%s(): qman_oos_fq(%u)=%d\n",
+			KBUILD_BASENAME".c", __LINE__, __func__,
+			qman_fq_fqid(fq), _errno);
+	}
+
+	qman_destroy_fq(fq, 0);
+}
 
 /* Allocation code for the OH port's PCD frame queues */
 static int __cold oh_alloc_pcd_fqids(struct device *dev,
@@ -123,17 +184,18 @@ oh_port_probe(struct platform_device *_of_dev)
 {
 	struct device		*dpa_oh_dev;
 	struct device_node	*dpa_oh_node;
-	int			 lenp, _errno = 0, fq_idx, n_size, i;
+	int			 lenp, _errno = 0, fq_idx, n_size, i, ret;
 	const phandle		*oh_port_handle, *bpool_handle;
 	struct platform_device	*oh_of_dev;
 	struct device_node	*oh_node, *bpool_node = NULL, *root_node;
 	struct device		*oh_dev;
-	struct dpa_oh_config_s	*oh_config;
+	struct dpa_oh_config_s	*oh_config = NULL;
 	uint32_t		*oh_all_queues;
+	uint32_t		*oh_tx_queues;
 	uint32_t		 queues_count;
 	uint32_t		 crt_fqid_base;
 	uint32_t		 crt_fq_count;
-	bool			frag_enabled = FALSE;
+	bool			frag_enabled = false;
 	struct fm_port_params	oh_port_tx_params;
 	struct fm_port_pcd_param	oh_port_pcd_params;
 	struct dpa_buffer_layout_s buf_layout;
@@ -142,6 +204,7 @@ oh_port_probe(struct platform_device *_of_dev)
 	const struct of_device_id *match;
 	uint32_t crt_ext_pools_count, ext_pool_size;
 	const unsigned int *port_id;
+	const unsigned int *channel_id;
 	const uint32_t		*bpool_cfg;
 	const uint32_t		*bpid;
 
@@ -197,6 +260,7 @@ oh_port_probe(struct platform_device *_of_dev)
 	}
 
 	BUG_ON(lenp % sizeof(*port_id));
+
 	oh_of_dev = of_find_device_by_node(oh_node);
 	BUG_ON(oh_of_dev == NULL);
 	oh_dev = &oh_of_dev->dev;
@@ -292,6 +356,71 @@ oh_port_probe(struct platform_device *_of_dev)
 	dev_dbg(dpa_oh_dev, "Read Default FQID 0x%x for OH port %s.\n",
 		oh_config->default_fqid, oh_node->full_name);
 
+	/* TX FQID - presence is optional */
+	oh_tx_queues = (uint32_t *)of_get_property(dpa_oh_node,
+		"fsl,qman-frame-queues-tx", &lenp);
+	if (oh_tx_queues == NULL) {
+		dev_dbg(dpa_oh_dev, "No tx queues have been "
+		"defined for OH node %s referenced from node %s\n",
+			oh_node->full_name, dpa_oh_node->full_name);
+		goto config_port;
+	}
+
+	/* Check that queues-tx has only a base and a count defined */
+	BUG_ON(lenp % (2 * sizeof(*oh_tx_queues)));
+	queues_count = lenp / (2 * sizeof(*oh_tx_queues));
+	if (queues_count != 1) {
+		dev_err(dpa_oh_dev, "TX queues must be defined in"
+			"only one <base count> tuple for OH node %s "
+			"referenced from node %s\n",
+			oh_node->full_name, dpa_oh_node->full_name);
+		_errno = -EINVAL;
+		goto return_kfree;
+	}
+
+	/* Read channel id for the queues */
+	channel_id = of_get_property(oh_node, "fsl,qman-channel-id", &lenp);
+	if (channel_id == NULL) {
+		dev_err(dpa_oh_dev, "No channel id found in node %s\n",
+			dpa_oh_node->full_name);
+		_errno = -EINVAL;
+		goto return_kfree;
+	}
+	BUG_ON(lenp % sizeof(*channel_id));
+
+	fq_idx = 0;
+	crt_fqid_base = oh_tx_queues[fq_idx++];
+	crt_fq_count = oh_tx_queues[fq_idx++];
+	oh_config->egress_cnt = crt_fq_count;
+
+	/* Allocate TX queues */
+	dev_dbg(dpa_oh_dev, "Allocating %d queues for TX...\n", crt_fq_count);
+	oh_config->egress_fqs = devm_kzalloc(dpa_oh_dev,
+		crt_fq_count * sizeof(struct qman_fq), GFP_KERNEL);
+	if (oh_config->egress_fqs == NULL) {
+		dev_err(dpa_oh_dev, "Can't allocate private data for "
+			"TX queues for OH node %s referenced from node %s!\n",
+			oh_node->full_name, dpa_oh_node->full_name);
+		_errno = -ENOMEM;
+		goto return_kfree;
+	}
+
+	/* Create TX queues */
+	for (i = 0; i < crt_fq_count; i++) {
+		ret = oh_fq_create(oh_config->egress_fqs + i,
+			crt_fqid_base + i, *channel_id, 3);
+		if (ret != 0) {
+			dev_err(dpa_oh_dev, "Unable to create TX frame "
+				"queue %d for OH node %s referenced "
+				"from node %s!\n",
+				crt_fqid_base + i, oh_node->full_name,
+				dpa_oh_node->full_name);
+			_errno = -EINVAL;
+			goto return_kfree;
+		}
+	}
+
+config_port:
 	/* Get a handle to the fm_port so we can set
 	 * its configuration params */
 	oh_config->oh_port = fm_port_bind(oh_dev);
@@ -368,7 +497,7 @@ oh_port_probe(struct platform_device *_of_dev)
 	    buf_layout.manip_extra_space != FRAG_MANIP_SPACE)
 		goto init_port;
 
-	frag_enabled = TRUE;
+	frag_enabled = true;
 	dev_info(dpa_oh_dev, "IP Fragmentation enabled for OH port %d",
 		     *port_id);
 
@@ -387,7 +516,10 @@ init_port:
 	dev_set_drvdata(dpa_oh_dev, oh_config);
 
 	/* Enable the OH port */
-	fm_port_enable(oh_config->oh_port);
+	_errno = fm_port_enable(oh_config->oh_port);
+	if (_errno)
+		goto return_kfree;
+
 	dev_info(dpa_oh_dev, "OH port %s enabled.\n", oh_node->full_name);
 
 	return 0;
@@ -397,13 +529,15 @@ return_kfree:
 		of_node_put(bpool_node);
 	if (oh_node)
 		of_node_put(oh_node);
+	if (oh_config && oh_config->egress_fqs)
+		devm_kfree(dpa_oh_dev, oh_config->egress_fqs);
 	devm_kfree(dpa_oh_dev, oh_config);
 	return _errno;
 }
 
 static int __cold oh_port_remove(struct platform_device *_of_dev)
 {
-	int _errno = 0;
+	int _errno = 0, i;
 	struct dpa_oh_config_s *oh_config;
 
 	pr_info("Removing OH port...\n");
@@ -416,15 +550,24 @@ static int __cold oh_port_remove(struct platform_device *_of_dev)
 		_errno = -ENODEV;
 		goto return_error;
 	}
+
+	if (oh_config->egress_fqs)
+		for (i = 0; i < oh_config->egress_cnt; i++)
+			oh_fq_destroy(oh_config->egress_fqs + i);
+
 	if (oh_config->oh_port == NULL) {
 		pr_err(KBUILD_MODNAME
 			": %s:%hu:%s(): No fm port in device private data!\n",
 			KBUILD_BASENAME".c", __LINE__, __func__);
 		_errno = -EINVAL;
-		goto return_error;
+		goto free_egress_fqs;
 	}
 
-	fm_port_disable(oh_config->oh_port);
+	_errno = fm_port_disable(oh_config->oh_port);
+
+free_egress_fqs:
+	if (oh_config->egress_fqs)
+		devm_kfree(&_of_dev->dev, oh_config->egress_fqs);
 	devm_kfree(&_of_dev->dev, oh_config);
 	dev_set_drvdata(&_of_dev->dev, NULL);
 
@@ -436,7 +579,7 @@ static int __init __cold oh_port_load(void)
 {
 	int _errno;
 
-	pr_info(KBUILD_MODNAME ": " OH_MOD_DESCRIPTION " (" VERSION ")\n");
+	printk(KERN_INFO KBUILD_MODNAME ": " OH_MOD_DESCRIPTION " (" VERSION ")\n");
 
 	_errno = platform_driver_register(&oh_port_driver);
 	if (_errno < 0) {

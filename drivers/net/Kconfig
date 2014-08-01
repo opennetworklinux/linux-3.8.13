@@ -58,6 +58,17 @@ config AS_FASTPATH
 	  accelerates the throughput for forwarding, firewall, NAT and IPsec
 	  over native Linux stack.
 
+if AS_FASTPATH
+config FSL_DPAA_ETH_MAX_BUF_COUNT
+        int
+        depends on FSL_DPAA_ETH
+        range 64 2048
+        default "256"
+        ---help---
+          The maximum number of buffers to be by default allocated in the DPAA-Ethernet private port's
+          buffer pool. One needn't normally modify this, as it has probably been tuned for performance
+          already. This cannot be lower than DPAA_ETH_REFILL_THRESHOLD.
+endif
 config ASF_IPV6
 	default y
 	bool "IPv6 Support in ASF"

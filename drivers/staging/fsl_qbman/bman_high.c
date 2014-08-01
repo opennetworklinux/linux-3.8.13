@@ -301,14 +301,9 @@ fail_rcr:
 struct bman_portal *bman_create_affine_portal(
 			const struct bm_portal_config *config)
 {
-	struct bman_portal *portal = get_raw_affine_portal();
+	struct bman_portal *portal;
 
-	/*This function is called from the context which is already affine to
-	 *CPU or in other words this in non-migratable to other CPUs. Call
-	 *put_affine_portal() on entry which allows subsequent functions to
-	 *sleep.
-	 */
-	put_affine_portal();
+	portal = &per_cpu(bman_affine_portal, config->public_cfg.cpu);
 	portal = bman_create_portal(portal, config);
 	if (portal) {
 		spin_lock(&affine_mask_lock);
@@ -319,10 +314,12 @@ struct bman_portal *bman_create_affine_portal(
 }
 
 
-struct bman_portal *bman_create_affine_slave(struct bman_portal *redirect)
+struct bman_portal *bman_create_affine_slave(struct bman_portal *redirect,
+								int cpu)
 {
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
-	struct bman_portal *p = get_raw_affine_portal();
+	struct bman_portal *p;
+	p = &per_cpu(bman_affine_portal, cpu);
 	BUG_ON(p->config);
 	BUG_ON(p->is_shared);
 	BUG_ON(!redirect->config->public_cfg.is_shared);
@@ -480,13 +477,11 @@ u32 bman_irqsource_get(void)
 }
 EXPORT_SYMBOL(bman_irqsource_get);
 
-int bman_irqsource_add(__maybe_unused u32 bits)
+int bman_p_irqsource_add(struct bman_portal *p, __maybe_unused u32 bits)
 {
-	struct bman_portal *p = get_raw_affine_portal();
-	int ret = 0;
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
 	if (p->sharing_redirect)
-		ret = -EINVAL;
+		return -EINVAL;
 	else
 #endif
 	{
@@ -496,6 +491,15 @@ int bman_irqsource_add(__maybe_unused u32 bits)
 		bm_isr_enable_write(&p->p, p->irq_sources);
 		PORTAL_IRQ_UNLOCK(p, irqflags);
 	}
+	return 0;
+}
+EXPORT_SYMBOL(bman_p_irqsource_add);
+
+int bman_irqsource_add(__maybe_unused u32 bits)
+{
+	struct bman_portal *p = get_raw_affine_portal();
+	int ret = 0;
+	ret = bman_p_irqsource_add(p, bits);
 	put_affine_portal();
 	return ret;
 }
@@ -844,16 +848,16 @@ int bman_release(struct bman_pool *pool, const struct bm_buffer *bufs, u8 num,
 		return -EINVAL;
 	if (pool->params.flags & BMAN_POOL_FLAG_NO_RELEASE)
 		return -EINVAL;
+#endif
+	/* Without stockpile, this API is a pass-through to the h/w operation */
+	if (!(pool->params.flags & BMAN_POOL_FLAG_STOCKPILE))
+		return __bman_release(pool, bufs, num, flags);
+#ifdef CONFIG_FSL_DPA_CHECKING
 	if (!atomic_dec_and_test(&pool->in_use)) {
 		pr_crit("Parallel attempts to enter bman_released() detected.");
 		panic("only one instance of bman_released/acquired allowed");
 	}
 #endif
-	/* Without stockpile, this API is a pass-through to the h/w operation */
-	if (!(pool->params.flags & BMAN_POOL_FLAG_STOCKPILE)) {
-		ret = __bman_release(pool, bufs, num, flags);
-		goto release_done;
-	}
 	/* This needs some explanation. Adding the given buffers may take the
 	 * stockpile over the threshold, but in fact the stockpile may already
 	 * *be* over the threshold if a previous release-to-hw attempt had
@@ -930,16 +934,16 @@ int bman_acquire(struct bman_pool *pool, struct bm_buffer *bufs, u8 num,
 		return -EINVAL;
 	if (pool->params.flags & BMAN_POOL_FLAG_ONLY_RELEASE)
 		return -EINVAL;
+#endif
+	/* Without stockpile, this API is a pass-through to the h/w operation */
+	if (!(pool->params.flags & BMAN_POOL_FLAG_STOCKPILE))
+		return __bman_acquire(pool, bufs, num);
+#ifdef CONFIG_FSL_DPA_CHECKING
 	if (!atomic_dec_and_test(&pool->in_use)) {
 		pr_crit("Parallel attempts to enter bman_acquire() detected.");
 		panic("only one instance of bman_released/acquired allowed");
 	}
 #endif
-	/* Without stockpile, this API is a pass-through to the h/w operation */
-	if (!(pool->params.flags & BMAN_POOL_FLAG_STOCKPILE)) {
-		ret = __bman_acquire(pool, bufs, num);
-		goto acquire_done;
-	}
 	/* Only need a h/w op if we'll hit the low-water thresh */
 	if (!(flags & BMAN_ACQUIRE_FLAG_STOCKPILE) &&
 			(pool->sp_fill <= (BMAN_STOCKPILE_LOW + num))) {
@@ -1043,3 +1047,9 @@ int bman_shutdown_pool(u32 bpid)
 	return ret;
 }
 EXPORT_SYMBOL(bman_shutdown_pool);
+
+const struct bm_portal_config *bman_get_bm_portal_config(
+						struct bman_portal *portal)
+{
+	return portal->sharing_redirect ? NULL : portal->config;
+}

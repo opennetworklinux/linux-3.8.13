@@ -17,17 +17,22 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
+#include <linux/fsl_devices.h>
 #include <linux/kernel.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
 #include <linux/bootmem.h>
 #include <linux/memblock.h>
 #include <linux/log2.h>
 #include <linux/slab.h>
+#include <linux/suspend.h>
 #include <linux/uaccess.h>
+#include <linux/syscore_ops.h>
 
+#include <asm/fsl_guts.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/pci-bridge.h>
@@ -41,7 +46,7 @@
 
 static int fsl_pcie_bus_fixup, is_mpc83xx_pci;
 
-static void quirk_fsl_pcie_header(struct pci_dev *dev)
+static void quirk_fsl_pcie_early(struct pci_dev *dev)
 {
 	u8 hdr_type;
 
@@ -190,6 +195,7 @@ static void setup_pci_atmu(struct pci_controller *hose)
 	const char *name = hose->dn->full_name;
 	const u64 *reg;
 	int len;
+	u32 svr = mfspr(SPRN_SVR);
 
 	if (of_device_is_compatible(hose->dn, "fsl,bsc9132-pcie")) {
 		/*
@@ -210,11 +216,11 @@ static void setup_pci_atmu(struct pci_controller *hose)
 	 */
 #define OWMSV 0x10
 #define ORMSV 0x08
-	if ((fsl_svr_is(SVR_8543) || fsl_svr_is(SVR_8543_E) ||
-	     fsl_svr_is(SVR_8545) || fsl_svr_is(SVR_8545_E) ||
-	     fsl_svr_is(SVR_8547) || fsl_svr_is(SVR_8547_E) ||
-	     fsl_svr_is(SVR_8548) || fsl_svr_is(SVR_8548_E)) &&
-	     fsl_svr_older_than(2, 1)) {
+	if (((SVR_SOC_VER(svr) == SVR_8543) ||
+			(SVR_SOC_VER(svr) == SVR_8545) ||
+			(SVR_SOC_VER(svr) == SVR_8547) ||
+			(SVR_SOC_VER(svr) == SVR_8548)) &&
+			(SVR_REV(svr) <= 0x20)) {
 		if (of_device_is_compatible(hose->dn, "fsl,mpc8540-pci")) {
 			/* disable OWMSV and ORMSV error capture */
 			setbits32(&pci->pcier.pecdr, OWMSV | ORMSV);
@@ -292,6 +298,13 @@ static void setup_pci_atmu(struct pci_controller *hose)
 	/* setup PCSRBAR/PEXCSRBAR */
 	early_write_config_dword(hose, 0, 0, PCI_BASE_ADDRESS_0, 0xffffffff);
 	early_read_config_dword(hose, 0, 0, PCI_BASE_ADDRESS_0, &pcicsrbar_sz);
+	/*
+	 * Always treat this as memory space (PCI_BASE_ADDRESS_SPACE_MEMORY).
+	 * Ideally we should mask out lower bits based on IO/MEM space (bit-0
+	 * of BAR0) but that seems to broken on some SOCs(T4240-rev2 etc)
+	 * where bit-0 is found to be wrongly set.
+	 */
+	pcicsrbar_sz &= PCI_BASE_ADDRESS_MEM_MASK;
 	pcicsrbar_sz = ~pcicsrbar_sz + 1;
 
 	if (paddr_hi < (0x100000000ull - pcicsrbar_sz) ||
@@ -506,6 +519,7 @@ int __init fsl_add_bridge(struct platform_device *pdev, int is_primary)
 	struct device_node *dev;
 	struct ccsr_pci __iomem *pci;
 	u16 temp;
+	u32 svr = mfspr(SPRN_SVR);
 
 	dev = pdev->dev.of_node;
 
@@ -582,11 +596,11 @@ int __init fsl_add_bridge(struct platform_device *pdev, int is_primary)
 		 */
 #define PCI_BUS_FUNCTION 0x44
 #define PCI_BUS_FUNCTION_MDS 0x400	/* Master disable streaming */
-		if ((fsl_svr_is(SVR_8543) || fsl_svr_is(SVR_8543_E) ||
-		     fsl_svr_is(SVR_8545) || fsl_svr_is(SVR_8545_E) ||
-		     fsl_svr_is(SVR_8547) || fsl_svr_is(SVR_8547_E) ||
-		     fsl_svr_is(SVR_8548) || fsl_svr_is(SVR_8548_E)) &&
-		    !early_find_capability(hose, 0, 0, PCI_CAP_ID_PCIX)) {
+		if (((SVR_SOC_VER(svr) == SVR_8543) ||
+			(SVR_SOC_VER(svr) == SVR_8545) ||
+			(SVR_SOC_VER(svr) == SVR_8547) ||
+			(SVR_SOC_VER(svr) == SVR_8548)) &&
+			!early_find_capability(hose, 0, 0, PCI_CAP_ID_PCIX)) {
 			early_read_config_word(hose, 0, 0,
 						PCI_BUS_FUNCTION, &temp);
 			temp |= PCI_BUS_FUNCTION_MDS;
@@ -624,7 +638,8 @@ no_bridge:
 }
 #endif /* CONFIG_FSL_SOC_BOOKE || CONFIG_PPC_86xx */
 
-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_FREESCALE, PCI_ANY_ID, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_FREESCALE, PCI_ANY_ID,
+			quirk_fsl_pcie_early);
 
 #if defined(CONFIG_PPC_83xx) || defined(CONFIG_PPC_MPC512x)
 struct mpc83xx_pcie_priv {
@@ -929,6 +944,8 @@ u64 fsl_pci_immrbar_base(struct pci_controller *hose)
 
 		pci_bus_read_config_dword(hose->bus,
 			PCI_DEVFN(0, 0), PCI_BASE_ADDRESS_0, &base);
+		/* Always treat this as memory space */
+		base &= PCI_BASE_ADDRESS_MEM_MASK;
 		return base;
 	}
 #endif
@@ -1129,6 +1146,173 @@ void fsl_pci_assign_primary(void)
 	}
 }
 
+#ifdef CONFIG_PM
+static irqreturn_t fsl_pci_pme_handle(int irq, void *dev_id)
+{
+	struct pci_controller *hose = dev_id;
+	struct ccsr_pci __iomem *pci = hose->private_data;
+	u32 dr;
+
+	dr = in_be32(&pci->pex_pme_mes_dr);
+	if (dr)
+		out_be32(&pci->pex_pme_mes_dr, dr);
+	else
+		return IRQ_NONE;
+
+	return IRQ_HANDLED;
+}
+
+static int fsl_pci_pme_probe(struct platform_device *pdev)
+{
+	struct pci_controller *hose;
+	int pme_irq;
+	int res;
+
+	pme_irq = irq_of_parse_and_map(pdev->dev.of_node, 0);
+	if (!pme_irq) {
+		pr_warn("Failed to map PME interrupt.\n");
+
+		return -ENXIO;
+	}
+
+	hose = pci_find_hose_for_OF_device(pdev->dev.of_node);
+
+	res = devm_request_irq(&pdev->dev, pme_irq,
+			fsl_pci_pme_handle,
+			IRQF_DISABLED | IRQF_SHARED,
+			"[PCI] PME", hose);
+	if (res < 0) {
+		pr_warn("Unable to requiest irq %d for PME\n", pme_irq);
+		irq_dispose_mapping(pme_irq);
+
+		return -ENODEV;
+	}
+
+	return 0;
+}
+
+static int pcie_slot_flag;
+
+/* Workaround: p1022ds need reset slot when the system wakeup from deep sleep */
+#ifdef CONFIG_P1022_DS
+extern void p1022ds_reset_pcie_slot(void);
+#endif
+static int reset_pcie_slot(void)
+{
+#ifdef CONFIG_P1022_DS
+	p1022ds_reset_pcie_slot();
+#endif
+
+	return 0;
+}
+
+static void send_pme_turnoff_message(struct pci_controller *hose)
+{
+	struct ccsr_pci __iomem *pci = hose->private_data;
+	u32 value;
+	int i;
+
+	/* Send PME_Turn_Off Message Request */
+	setbits32(&pci->pex_pmcr, PEX_PMCR_PTOMR);
+
+	for (i = 0; i < 100; i++) {
+		value = in_be32(&pci->pex_pme_mes_dr);
+		if (value & (1 << PEX_PME_MES_DR_ENL23_SHIFT)) {
+			out_be32(&pci->pex_pme_mes_dr, value);
+			break;
+		} else {
+			udelay(1000);
+		}
+	}
+}
+
+static void fsl_pci_syscore_do_suspend(struct pci_controller *hose)
+{
+	suspend_state_t pm_state;
+	u32 svr;
+
+	svr = mfspr(SPRN_SVR);
+	pm_state = pm_suspend_state();
+
+	switch (pm_state) {
+	case PM_SUSPEND_STANDBY:
+		if (SVR_SOC_VER(svr) != SVR_T4240 && SVR_REV(svr) != 0x20)
+			break;
+		send_pme_turnoff_message(hose);
+		break;
+	case PM_SUSPEND_MEM:
+		pcie_slot_flag = 0;
+		break;
+	default:
+		break;
+	}
+}
+
+static int fsl_pci_syscore_suspend(void)
+{
+	struct pci_controller *hose, *tmp;
+
+	list_for_each_entry_safe(hose, tmp, &hose_list, list_node)
+		fsl_pci_syscore_do_suspend(hose);
+
+	return 0;
+}
+
+#define PCIE_RESET_SLOT_WAITTIME	100000 /* wait 100 ms */
+static void fsl_pci_syscore_do_resume(struct pci_controller *hose)
+{
+	struct ccsr_pci __iomem *pci = hose->private_data;
+
+	u32 svr, pms;
+	suspend_state_t pm_state;
+
+	svr = mfspr(SPRN_SVR);
+	pm_state = pm_suspend_state();
+
+	switch (pm_state) {
+	case PM_SUSPEND_STANDBY:
+		if (SVR_SOC_VER(svr) != SVR_T4240 && SVR_REV(svr) != 0x20)
+			break;
+		/* Send Exit L2 State Message */
+		setbits32(&pci->pex_pmcr, 0x2);
+
+		/* PME Enable */
+		indirect_read_config(hose->bus, 0, PCI_FSL_PM_CTRL, 4, &pms);
+		pms |= 0x100;
+		indirect_write_config(hose->bus, 0, PCI_FSL_PM_CTRL, 4, pms);
+		break;
+	case PM_SUSPEND_MEM:
+		if (SVR_SOC_VER(svr) != SVR_P1022 || pcie_slot_flag)
+			break;
+
+		/* only reset slot, we can rework the EP device */
+		reset_pcie_slot();
+		pcie_slot_flag = 1;
+
+		spin_event_timeout(!fsl_pcie_check_link(hose),
+				PCIE_RESET_SLOT_WAITTIME, 0);
+		break;
+	default:
+		break;
+	}
+
+	setup_pci_atmu(hose);
+}
+
+static void fsl_pci_syscore_resume(void)
+{
+	struct pci_controller *hose, *tmp;
+
+	list_for_each_entry_safe(hose, tmp, &hose_list, list_node)
+		fsl_pci_syscore_do_resume(hose);
+}
+
+static struct syscore_ops pci_syscore_pm_ops = {
+	.suspend = fsl_pci_syscore_suspend,
+	.resume = fsl_pci_syscore_resume,
+};
+#endif
+
 static int fsl_pci_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -1155,47 +1339,18 @@ static int fsl_pci_probe(struct platform_device *pdev)
 	}
 #endif
 
+#ifdef CONFIG_PM
+	fsl_pci_pme_probe(pdev);
+#endif
+
 	mpc85xx_pci_err_probe(pdev);
 
 	return ret;
 }
 
-#ifdef CONFIG_PM
-static int fsl_pci_resume(struct device *dev)
-{
-	struct pci_controller *hose;
-	struct resource pci_rsrc;
-
-	hose = pci_find_hose_for_OF_device(dev->of_node);
-	if (!hose)
-		return -ENODEV;
-
-	if (of_address_to_resource(dev->of_node, 0, &pci_rsrc)) {
-		dev_err(dev, "Get pci register base failed.");
-		return -ENODEV;
-	}
-
-	setup_pci_atmu(hose);
-
-	return 0;
-}
-
-static const struct dev_pm_ops pci_pm_ops = {
-	.resume = fsl_pci_resume,
-};
-
-#define PCI_PM_OPS (&pci_pm_ops)
-
-#else
-
-#define PCI_PM_OPS NULL
-
-#endif
-
 static struct platform_driver fsl_pci_driver = {
 	.driver = {
 		.name = "fsl-pci",
-		.pm = PCI_PM_OPS,
 		.of_match_table = pci_ids,
 	},
 	.probe = fsl_pci_probe,
@@ -1203,6 +1358,9 @@ static struct platform_driver fsl_pci_driver = {
 
 static int __init fsl_pci_init(void)
 {
+#ifdef CONFIG_PM
+	register_syscore_ops(&pci_syscore_pm_ops);
+#endif
 	return platform_driver_register(&fsl_pci_driver);
 }
 arch_initcall(fsl_pci_init);

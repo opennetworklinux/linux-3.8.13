@@ -136,7 +136,7 @@ typedef uint32_t    fmPortFrameErrSelect_t;                         /**< typedef
 #define FM_PORT_FRM_ERR_IPRE                    (FM_FD_ERR_IPR & ~FM_FD_IPR)        /**< IPR error */
 #define FM_PORT_FRM_ERR_IPR_NCSP                (FM_FD_ERR_IPR_NCSP & ~FM_FD_IPR)   /**< IPR non-consistent-sp */
 
-#define FM_PORT_FRM_ERR_IPFE                    0 /**< Obsolete; will be removed in the future */
+#define FM_PORT_FRM_ERR_IPFE                    0                                   /**< Obsolete; will be removed in the future */
 
 #ifdef FM_CAPWAP_SUPPORT
 #define FM_PORT_FRM_ERR_CRE                     FM_FD_ERR_CRE
@@ -147,7 +147,7 @@ typedef uint32_t    fmPortFrameErrSelect_t;                         /**< typedef
                                                                                      error (SGMII and TBI modes), FIFO parity error. PHY
                                                                                      Sequence error, PHY error control character detected. */
 #define FM_PORT_FRM_ERR_SIZE                    FM_FD_ERR_SIZE                  /**< Frame too long OR Frame size exceeds max_length_frame  */
-#define FM_PORT_FRM_ERR_CLS_DISCARD             FM_FD_ERR_CLS_DISCARD           /**< classification discard */
+#define FM_PORT_FRM_ERR_CLS_DISCARD             FM_FD_ERR_CLS_DISCARD           /**< indicates a classifier "drop" operation */
 #define FM_PORT_FRM_ERR_EXTRACTION              FM_FD_ERR_EXTRACTION            /**< Extract Out of Frame */
 #define FM_PORT_FRM_ERR_NO_SCHEME               FM_FD_ERR_NO_SCHEME             /**< No Scheme Selected */
 #define FM_PORT_FRM_ERR_KEYSIZE_OVERFLOW        FM_FD_ERR_KEYSIZE_OVERFLOW      /**< Keysize Overflow */
@@ -159,7 +159,7 @@ typedef uint32_t    fmPortFrameErrSelect_t;                         /**< typedef
 #define FM_PORT_FRM_ERR_PRS_ILL_INSTRUCT        FM_FD_ERR_PRS_ILL_INSTRUCT      /**< Invalid Soft Parser instruction */
 #define FM_PORT_FRM_ERR_PRS_HDR_ERR             FM_FD_ERR_PRS_HDR_ERR           /**< Header error was identified during parsing */
 #define FM_PORT_FRM_ERR_BLOCK_LIMIT_EXCEEDED    FM_FD_ERR_BLOCK_LIMIT_EXCEEDED  /**< Frame parsed beyind 256 first bytes */
-#define FM_PORT_FRM_ERR_PROCESS_TIMEOUT         0x00000001       /**< FPM Frame Processing Timeout Exceeded */
+#define FM_PORT_FRM_ERR_PROCESS_TIMEOUT         0x00000001                      /**< FPM Frame Processing Timeout Exceeded */
 /* @} */
 
 
@@ -1093,9 +1093,10 @@ t_Error FM_PORT_ConfigTxFifoMinFillLevel(t_Handle h_FmPort, uint32_t minFillLeve
                 pipeline depth parameter in the internal driver data base
 
                 from its default configuration: 1G ports: [DEFAULT_PORT_fifoDeqPipelineDepth_1G],
-                10G port: [DEFAULT_PORT_fifoDeqPipelineDepth_10G]
+                10G port: [DEFAULT_PORT_fifoDeqPipelineDepth_10G],
+                OP port: [DEFAULT_PORT_fifoDeqPipelineDepth_OH]
 
-                May be used for Tx ports only
+                May be used for Tx/OP ports only
 
  @Param[in]     h_FmPort            A handle to a FM Port module.
  @Param[in]     deqPipelineDepth    New value
@@ -1907,13 +1908,7 @@ typedef struct t_FmPortPcdKgParams {
  @Description   struct for defining policer parameters
 *//***************************************************************************/
 typedef struct t_FmPortPcdPlcrParams {
-    t_Handle                h_Profile;          /**< Selected profile handle; Relevant for one of
-                                                     following cases:
-                                                     e_FM_PORT_PCD_SUPPORT_PLCR_ONLY or
-                                                     e_FM_PORT_PCD_SUPPORT_PRS_AND_PLCR were selected,
-                                                     or if any flow uses a KG scheme were policer
-                                                     profile is not generated
-                                                     (bypassPlcrProfileGeneration selected) */
+    t_Handle                h_Profile;          /**< Selected profile handle */
 } t_FmPortPcdPlcrParams;
 
 /**************************************************************************//**
@@ -1926,7 +1921,13 @@ typedef struct t_FmPortPcdParams {
     t_FmPortPcdPrsParams    *p_PrsParams;       /**< Parser parameters for this port */
     t_FmPortPcdCcParams     *p_CcParams;        /**< Coarse classification parameters for this port */
     t_FmPortPcdKgParams     *p_KgParams;        /**< Keygen parameters for this port */
-    t_FmPortPcdPlcrParams   *p_PlcrParams;      /**< Policer parameters for this port */
+    t_FmPortPcdPlcrParams   *p_PlcrParams;      /**< Policer parameters for this port; Relevant for one of
+                                                     following cases:
+                                                     e_FM_PORT_PCD_SUPPORT_PLCR_ONLY or
+                                                     e_FM_PORT_PCD_SUPPORT_PRS_AND_PLCR were selected,
+                                                     or if any flow uses a KG scheme were policer
+                                                     profile is not generated
+                                                     ('bypassPlcrProfileGeneration selected'). */
     t_Handle                h_IpReassemblyManip;/**< IP Reassembly manipulation */
 } t_FmPortPcdParams;
 
@@ -2180,6 +2181,19 @@ t_Error FM_PORT_PcdKgUnbindSchemes (t_Handle h_FmPort, t_FmPcdPortSchemesParams 
 *//***************************************************************************/
 t_Error FM_PORT_PcdPrsModifyStartOffset (t_Handle h_FmPort, t_FmPcdPrsStart *p_FmPcdPrsStart);
 
+/**************************************************************************//**
+ @Function      FM_PORT_GetIPv4OptionsCount
+
+ @Description   TODO
+
+ @Param[in]     h_FmPort            A handle to a FM Port module.
+ @Param[out]    p_Ipv4OptionsCount  will hold the counter value
+
+ @Return        E_OK on success; Error code otherwise.
+
+ @Cautions      Allowed only following FM_PORT_Init()
+*//***************************************************************************/
+t_Error FM_PORT_GetIPv4OptionsCount(t_Handle h_FmPort, uint32_t *p_Ipv4OptionsCount);
 
 /** @} */ /* end of FM_PORT_pcd_runtime_control_grp group */
 /** @} */ /* end of FM_PORT_runtime_control_grp group */

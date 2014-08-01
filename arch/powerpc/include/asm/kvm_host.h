@@ -434,6 +434,7 @@ struct kvm_vcpu_arch {
 	u32 epsc;
 	u32 oldpir;
 	u32 lpid;
+	u64 fault_lper;
 #endif
 
 #if defined(CONFIG_BOOKE)

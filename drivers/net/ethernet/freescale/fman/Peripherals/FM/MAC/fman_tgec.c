@@ -190,6 +190,19 @@ void fman_tgec_set_promiscuous(struct tgec_regs *regs, bool val)
 	iowrite32be(tmp, &regs->command_config);
 }
 
+void fman_tgec_reset_filter_table(struct tgec_regs *regs)
+{
+	uint32_t i;
+	for (i = 0; i < 512; i++)
+		iowrite32be(i & ~TGEC_HASH_MCAST_EN, &regs->hashtable_ctrl);
+}
+
+void fman_tgec_set_hash_table_entry(struct tgec_regs *regs, uint32_t crc)
+{
+    uint32_t hash = (crc >> TGEC_HASH_MCAST_SHIFT) & TGEC_HASH_ADR_MSK;        /* Take 9 MSB bits */
+	iowrite32be(hash | TGEC_HASH_MCAST_EN, &regs->hashtable_ctrl);
+}
+
 void fman_tgec_set_hash_table(struct tgec_regs *regs, uint32_t value)
 {
 	iowrite32be(value, &regs->hashtable_ctrl);
@@ -348,7 +361,7 @@ void fman_tgec_set_erratum_tx_fifo_corruption_10gmac_a007(struct tgec_regs *regs
 	uint32_t tmp;
 
 	/* restore the default tx ipg Length */
-	tmp = (ioread32be(&regs->tx_ipg_len) & ~TX_IPG_LENGTH_MASK) | 12;
+	tmp = (ioread32be(&regs->tx_ipg_len) & ~TGEC_TX_IPG_LENGTH_MASK) | 12;
 
 	iowrite32be(tmp, &regs->tx_ipg_len);
 }

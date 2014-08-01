@@ -199,6 +199,8 @@ do {                                                            \
 #pragma pack(pop)
 #endif /* defined(__MWERKS__) && ... */
 
+#define DPAA_LIODN_DONT_OVERRIDE    (-1)
+
 /** @} */ /* end of DPAA_grp group */
 
 

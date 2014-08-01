@@ -131,15 +131,15 @@ static bool has_erratum_a005275(struct device_node *node)
 	 * P5020 and P5010 rev 1.0 and 2.0
 	 * P5040 and P1010 rev 1.0
 	 */
-	if ((fsl_svr_is(SVR_P3041)) || (fsl_svr_is(SVR_P3041_E)) ||
-			(fsl_svr_is(SVR_P2041)) || (fsl_svr_is(SVR_P2041_E)))
-		flag = (IS_SVR_REV(svr, 1, 0)) || (IS_SVR_REV(svr, 1, 1));
-	else if ((fsl_svr_is(SVR_P5020)) || (fsl_svr_is(SVR_P5020_E)) ||
-			(fsl_svr_is(SVR_P5010)) || (fsl_svr_is(SVR_P5010_E)))
-		flag = (IS_SVR_REV(svr, 1, 0)) || (IS_SVR_REV(svr, 2, 0));
-	else if ((fsl_svr_is(SVR_P5040)) || (fsl_svr_is(SVR_P5040_E)) ||
-			(fsl_svr_is(SVR_P1010)) || (fsl_svr_is(SVR_P1010_E)))
-		flag = IS_SVR_REV(svr, 1, 0);
+	if ((SVR_SOC_VER(svr) == SVR_P2041) ||
+			(SVR_SOC_VER(svr) == SVR_P3041))
+		flag = (SVR_REV(svr) == 0x10) || (SVR_REV(svr) == 0x11);
+	else if ((SVR_SOC_VER(svr) == SVR_P5010) ||
+			(SVR_SOC_VER(svr) == SVR_P5020))
+		flag = (SVR_REV(svr) == 0x10) || (SVR_REV(svr) == 0x20);
+	else if ((SVR_SOC_VER(svr) == SVR_P5040) ||
+			(SVR_SOC_VER(svr) == SVR_P1010))
+		flag = (SVR_REV(svr) == 0x10);
 
 	return flag;
 }
@@ -151,6 +151,8 @@ static int usb_get_ver_info(struct device_node *np)
 	/*
 	 * returns 1 for usb controller version 1.6
 	 * returns 2 for usb controller version 2.2
+	 * returns 3 for usb controller version 2.4
+	 * returns 4 for usb controller version 2.5
 	 * returns 0 otherwise
 	 */
 	if (of_device_is_compatible(np, "fsl-usb2-dr")) {
@@ -160,6 +162,8 @@ static int usb_get_ver_info(struct device_node *np)
 			ver = FSL_USB_VER_2_2;
 		else if (of_device_is_compatible(np, "fsl-usb2-dr-v2.4"))
 			ver = FSL_USB_VER_2_4;
+		else if (of_device_is_compatible(np, "fsl-usb2-dr-v2.5"))
+			ver = FSL_USB_VER_2_5;
 		else /* for previous controller versions */
 			ver = FSL_USB_VER_OLD;
 
@@ -175,6 +179,8 @@ static int usb_get_ver_info(struct device_node *np)
 			ver = FSL_USB_VER_1_6;
 		else if (of_device_is_compatible(np, "fsl-usb2-mph-v2.2"))
 			ver = FSL_USB_VER_2_2;
+		else if (of_device_is_compatible(np, "fsl-usb2-mph-v2.5"))
+			ver = FSL_USB_VER_2_5;
 		else /* for previous controller versions */
 			ver = FSL_USB_VER_OLD;
 	}

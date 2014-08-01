@@ -63,15 +63,15 @@
 		};
 
 		partition@80000 {
-			/* 3.5 MB for Linux Kernel Image */
-			reg = <0x00080000 0x00380000>;
+			/* 5.5 MB for Linux Kernel Image */
+			reg = <0x00080000 0x00580000>;
 			label = "NOR Linux Kernel Image";
 		};
 
-		partition@400000 {
-			/* 58.75MB for JFFS2 based Root file System */
-			reg = <0x00400000 0x03ac0000>;
-			label = "NOR JFFS2 Root File System";
+		partition@600000 {
+			/* 56.75MB for Root file System */
+			reg = <0x00600000 0x038c0000>;
+			label = "NOR Root File System";
 		};
 
 		partition@ec0000 {

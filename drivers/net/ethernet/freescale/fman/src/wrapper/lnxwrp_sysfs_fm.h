@@ -30,12 +30,6 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/*
- @File          lnxwrp_sysfs_fm.h
-
- @Description   FM sysfs functions.
-
-*/
 
 #ifndef LNXWRP_SYSFS_FM_H_
 #define LNXWRP_SYSFS_FM_H_
@@ -44,5 +38,99 @@
 
 int fm_sysfs_create(struct device *dev);
 void fm_sysfs_destroy(struct device *dev);
+int fm_dump_regs(void *h_dev, char *buf, int nn);
+int fm_fpm_dump_regs(void *h_dev, char *buf, int nn);
+int fm_kg_dump_regs(void *h_pcd, char *buf, int nn);
+int fm_kg_pe_dump_regs(void *h_pcd, char *buf, int nn);
+int fm_dump_scheme(void *h_pcd, int scnum, char *buf, int nn);
+int fm_dump_tnum_dbg(void *h_fm, int tn_s, int tn_e, char *buf, int nn);
+int fm_dump_cls_plan(void *h_pcd, int cpn, char *buf, int nn);
+int fm_plcr_dump_regs(void *h_pcd, char *buf, int nn);
+int fm_prs_dump_regs(void *h_pcd, char *buf, int nn);
+int fm_profile_dump_regs(void *h_pcd, int ppnum, char *buf, int nn);
+
+#define FM_DMP_PGSZ_ERR { \
+			snprintf(&buf[PAGE_SIZE - 80], 70, \
+			"\n Err: current sysfs buffer reached PAGE_SIZE\n");\
+			n = PAGE_SIZE - 2; \
+			}
+
+#define FM_DMP_LN(buf, n, ...) \
+	do { \
+		int k, m = n; \
+		m += k = snprintf(&buf[m], PAGE_SIZE - m, __VA_ARGS__); \
+		if (k < 0 || m > PAGE_SIZE - 90) \
+			FM_DMP_PGSZ_ERR \
+		n = m; \
+	} while (0)
+
+#define FM_DMP_TITLE(buf, n, addr, ...) \
+	do { \
+		int k, m = n; \
+		m += k = snprintf(&buf[m], PAGE_SIZE - m, "\n"); \
+		if (k < 0 || m > PAGE_SIZE - 90) \
+			FM_DMP_PGSZ_ERR \
+		m += k = snprintf(&buf[m], PAGE_SIZE - m, __VA_ARGS__); \
+		if (k < 0 || m > PAGE_SIZE - 90) \
+			FM_DMP_PGSZ_ERR \
+		if (addr) {                           \
+			phys_addr_t pa; \
+			pa = virt_to_phys(addr); \
+			m += k = \
+			snprintf(&buf[m], PAGE_SIZE - m, " (0x%lX)", \
+				(long unsigned int)(pa)); \
+			if (k < 0 || m > PAGE_SIZE - 90) \
+				FM_DMP_PGSZ_ERR \
+		} \
+		m += k = snprintf(&buf[m], PAGE_SIZE - m, \
+			"\n----------------------------------------\n\n"); \
+			if (k < 0 || m > PAGE_SIZE - 90) \
+				FM_DMP_PGSZ_ERR \
+		n = m; \
+	} while (0)
+
+#define FM_DMP_SUBTITLE(buf, n, ...) \
+	do { \
+		int k, m = n; \
+		m += k = snprintf(&buf[m], PAGE_SIZE - m, "------- "); \
+		if (k < 0 || m > PAGE_SIZE - 90) \
+			FM_DMP_PGSZ_ERR \
+		m += k = snprintf(&buf[m], PAGE_SIZE - m, __VA_ARGS__); \
+		if (k < 0 || m > PAGE_SIZE - 90) \
+			FM_DMP_PGSZ_ERR \
+		m += k = snprintf(&buf[m], PAGE_SIZE - m, "\n"); \
+		if (k < 0 || m > PAGE_SIZE - 90) \
+			FM_DMP_PGSZ_ERR \
+		n = m; \
+	} while (0)
+
+#define FM_DMP_MEM_32(buf, n, addr) \
+	{ \
+		uint32_t val; \
+		phys_addr_t pa; \
+		int k, m = n; \
+		pa = virt_to_phys(addr); \
+		val = ioread32be((addr)); \
+		do { \
+			m += k = snprintf(&buf[m], \
+				PAGE_SIZE - m, "0x%010llX: 0x%08x\n", \
+				pa, val); \
+			if (k < 0 || m > PAGE_SIZE - 90) \
+				FM_DMP_PGSZ_ERR \
+			n += k; \
+		} while (0) ;\
+	}
+
+#define FM_DMP_V32(buf, n, st, phrase) \
+	do { \
+		int k, m = n; \
+		phys_addr_t pa = virt_to_phys(&((st)->phrase)); \
+		k = snprintf(&buf[m], PAGE_SIZE - m, \
+		"0x%010llX: 0x%08x%8s\t%s\n", pa, \
+		ioread32be((uint32_t *)&((st)->phrase)), "", #phrase); \
+		if (k < 0 || m > PAGE_SIZE - 90) \
+			FM_DMP_PGSZ_ERR \
+		n += k; \
+	} while (0)
 
 #endif /* LNXWRP_SYSFS_FM_H_ */

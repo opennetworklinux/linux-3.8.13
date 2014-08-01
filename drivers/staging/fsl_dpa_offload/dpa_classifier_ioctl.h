@@ -176,11 +176,7 @@ struct ioc_dpa_cls_hm_mpls_params {
 struct ioc_dpa_cls_mcast_group_params {
 	struct dpa_cls_mcast_group_params mcast_grp_params;
 	int grpd;
-};
-
-struct ioc_dpa_cls_mcast_import_params {
-	void *group;
-	int grpd;
+	struct dpa_cls_mcast_group_resources res;
 };
 
 struct ioc_dpa_cls_mcast_member_params {
@@ -368,7 +364,7 @@ struct compat_ioc_dpa_cls_hm_vlan_params {
 struct compat_ipv4_header {
 	struct iphdr			header;
 	compat_uptr_t			options;
-	unsigned int			options_size;
+	uint8_t				options_size;
 };
 
 struct dpa_cls_compat_hm_nat_pt_params {
@@ -487,14 +483,18 @@ struct dpa_cls_compat_mcast_group_params {
 	compat_uptr_t	fm_pcd;
 	struct	dpa_cls_compat_tbl_enq_action_desc first_member_params;
 	unsigned int prefilled_members;
-	compat_uptr_t group;
 	compat_uptr_t distribution;
 	compat_uptr_t classification;
+};
+
+struct dpa_cls_compat_mcast_group_resources {
+	compat_uptr_t   group_node;
 };
 
 struct compat_ioc_dpa_cls_mcast_group_params {
 	struct dpa_cls_compat_mcast_group_params mcast_grp_params;
 	int grpd;
+	struct dpa_cls_compat_mcast_group_resources res;
 };
 
 struct compat_ioc_dpa_cls_mcast_member_params {

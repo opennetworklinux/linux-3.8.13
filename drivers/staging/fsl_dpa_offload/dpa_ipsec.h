@@ -76,21 +76,21 @@
 	/* DPA_IPSEC_CIPHER_ALG_3DES_CBC_HMAC_SHA_512_256 */	\
 	IPSEC_ALGS_ENTRY(3DES, HMAC_SHA2_512_256),		\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_HMAC_96_MD5_128 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, HMAC_MD5_96),		\
+	IPSEC_ALGS_ENTRY(NULL_ENC, HMAC_MD5_96),		\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_HMAC_96_SHA_160 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, HMAC_SHA1_96),		\
+	IPSEC_ALGS_ENTRY(NULL_ENC, HMAC_SHA1_96),		\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_AES_XCBC_MAC_96 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, AES_XCBC_MAC_96),	\
+	IPSEC_ALGS_ENTRY(NULL_ENC, AES_XCBC_MAC_96),	\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_HMAC_MD5_128 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, HMAC_MD5_128),		\
+	IPSEC_ALGS_ENTRY(NULL_ENC, HMAC_MD5_128),		\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_HMAC_SHA_160 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, HMAC_SHA1_160),	\
+	IPSEC_ALGS_ENTRY(NULL_ENC, HMAC_SHA1_160),	\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_HMAC_SHA_256_128 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, HMAC_SHA2_256_128),	\
+	IPSEC_ALGS_ENTRY(NULL_ENC, HMAC_SHA2_256_128),	\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_HMAC_SHA_384_192 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, HMAC_SHA2_384_192),	\
+	IPSEC_ALGS_ENTRY(NULL_ENC, HMAC_SHA2_384_192),	\
 	/* DPA_IPSEC_CIPHER_ALG_NULL_ENC_HMAC_SHA_512_256 */	\
-	IPSEC_ALGS_ENTRY(INVALID_ALG_ID, HMAC_SHA2_512_256),	\
+	IPSEC_ALGS_ENTRY(NULL_ENC, HMAC_SHA2_512_256),	\
 	/* DPA_IPSEC_CIPHER_ALG_AES_CBC_HMAC_96_MD5_128 */	\
 	IPSEC_ALGS_ENTRY(AES_CBC, HMAC_MD5_96),			\
 	/* DPA_IPSEC_CIPHER_ALG_AES_CBC_HMAC_96_SHA_160 */	\
@@ -242,6 +242,9 @@ struct dpa_ipsec_sa {
 	bool	 sec_desc_extended; /* true if SEC descriptor is extended     */
 	uint32_t *rjob_desc_unaligned;
 	uint32_t *rjob_desc; /* replacement job descriptor address	      */
+	uint64_t w_seq_num; /* RJD will write this SEQ number when modify     */
+	uint64_t r_seq_num; /* RJD will read here the SEQ number for this SA  */
+	bool	 read_seq_in_progress; /* true if a request came but a get not*/
 	uint32_t stats_offset; /* Offset of the statistics (in bytes)	      */
 	uint32_t stats_indx; /* Index of the lifetime counter in descriptor   */
 	uint32_t next_cmd_indx; /* Next command index after SHD header	      */
@@ -249,6 +252,7 @@ struct dpa_ipsec_sa {
 				* form the CAAM Descriptor length
 				* MAX_CAAM_DESCSIZE			      */
 	bool enable_stats; /* Enable counting packets and bytes processed     */
+	bool enable_extended_stats; /* Enable extended statistics per SA      */
 	bool dscp_copy; /* Enable DSCP propagation support		      */
 	bool ecn_copy; /* Enable DSCP propagation support		      */
 	bool enable_dpovrd; /* Enable DECO Protocol Override Register	      */
@@ -258,6 +262,7 @@ struct dpa_ipsec_sa {
 	uint16_t sa_wqid; /* Work queue id in which the TO SEC FQ will be put */
 	uint8_t sa_bpid;  /* Buffer pool id used by SEC for acquiring buffers,
 			     comes from user. Default buffer pool 63	      */
+	uint16_t sa_bufsize;	/* Buffer pool buffer size		      */
 	uint32_t spi;	/* IPsec Security parameter index		      */
 	struct dpa_offload_ip_address src_addr;  /* Source IP address	      */
 	struct dpa_offload_ip_address dest_addr; /* Destination IP address    */

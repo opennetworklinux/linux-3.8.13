@@ -240,23 +240,10 @@ int fm_set_active_fman_ports(struct platform_device *of_dev,
 /* BPOOL size is constant and equal w/ DPA_BP_SIZE */
 static uint32_t get_largest_buf_size(uint32_t max_rx_frame_size, uint32_t buf_size)
 {
-	uint32_t priv_data_size = 16;		/* DPA_PRIV_DATA_SIZE */
-	uint32_t hash_results_size = 16;	/* DPA_HASH_RESULTS_SIZE */
-	uint32_t parse_results_size =
-		sizeof(t_FmPrsResult);		/* DPA_PARSE_RESULTS_SIZE */
-	uint32_t bp_head = priv_data_size + hash_results_size +
-			   parse_results_size +
-			   fm_get_rx_extra_headroom(); /* DPA_BP_HEAD */
-	uint32_t bp_size = bp_head + max_rx_frame_size
-		+ NET_IP_ALIGN;			/* DPA_BP_SIZE */
+	uint32_t bp_head = 512;	/* Max value for FD offset is 511B */
+	uint32_t bp_size = bp_head + max_rx_frame_size;
 
-#ifndef CONFIG_DPAA_ETH_SG_SUPPORT
 	return CEIL_DIV(bp_size, buf_size);
-#else
-	bp_size = CEIL_DIV(bp_size, 16);	/* frame split in 16 frags */
-
-	return max((uint32_t)16, CEIL_DIV(bp_size, buf_size));
-#endif /* CONFIG_DPAA_ETH_SG_SUPPORT */
 }
 
 /* Calculate the fifosize based on MURAM allocation, number of ports, dpde
@@ -369,8 +356,7 @@ int fm_precalculate_fifosizes(t_LnxWrpFmDev *p_LnxWrpFmDev, int muram_fifo_size)
  * buffer in the buffer pool SG frames will be received
  */
 #if defined(FM_FIFO_ALLOCATION_ALG) && \
-	!defined(FMAN_RESOURCES_UNIT_TEST) && \
-	defined(CONFIG_DPAA_ETH_SG_SUPPORT)
+	!defined(FMAN_RESOURCES_UNIT_TEST)
 		uint8_t fm_rev_major = 0;
 		fm_rev_major = (uint8_t) ((*
 				((volatile uint32_t *)

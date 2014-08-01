@@ -216,7 +216,8 @@ static int aead_set_sh_desc(struct crypto_aead *aead)
 			 LDST_SRCDST_BYTE_CONTEXT);
 
 #ifdef DEBUG
-	print_hex_dump(KERN_ERR, "aead enc shdesc@"xstr(__LINE__)": ",
+	print_hex_dump(KERN_ERR,
+		       "aead enc shdesc@"__stringify(__LINE__)": ",
 		       DUMP_PREFIX_ADDRESS, 16, 4, desc,
 		       desc_bytes(desc), 1);
 #endif
@@ -277,7 +278,8 @@ static int aead_set_sh_desc(struct crypto_aead *aead)
 	append_dec_shr_done(desc);
 
 #ifdef DEBUG
-	print_hex_dump(KERN_ERR, "aead dec shdesc@"xstr(__LINE__)": ",
+	print_hex_dump(KERN_ERR, "aead dec shdesc@"
+		       __stringify(__LINE__)": ",
 		       DUMP_PREFIX_ADDRESS, 16, 4, desc,
 		       desc_bytes(desc), 1);
 #endif
@@ -353,7 +355,8 @@ static int aead_set_sh_desc(struct crypto_aead *aead)
 			 LDST_SRCDST_BYTE_CONTEXT);
 
 #ifdef DEBUG
-	print_hex_dump(KERN_ERR, "aead givenc shdesc@"xstr(__LINE__)": ",
+	print_hex_dump(KERN_ERR,
+		       "aead givenc shdesc@"__stringify(__LINE__)": ",
 		       DUMP_PREFIX_ADDRESS, 16, 4, desc,
 		       desc_bytes(desc), 1);
 #endif
@@ -417,7 +420,8 @@ static int aead_setkey(struct crypto_aead *aead,
 	       keylen, enckeylen, authkeylen);
 	printk(KERN_ERR "split_key_len %d split_key_pad_len %d\n",
 	       ctx->split_key_len, ctx->split_key_pad_len);
-	print_hex_dump(KERN_ERR, "key in @"xstr(__LINE__)": ",
+	print_hex_dump(KERN_ERR,
+		       "key in @"__stringify(__LINE__)": ",
 		       DUMP_PREFIX_ADDRESS, 16, 4, key, keylen, 1);
 #endif
 
@@ -435,7 +439,7 @@ static int aead_setkey(struct crypto_aead *aead,
 		return -ENOMEM;
 	}
 #ifdef DEBUG
-	print_hex_dump(KERN_ERR, "ctx.key@"xstr(__LINE__)": ",
+	print_hex_dump(KERN_ERR, "ctx.key@"__stringify(__LINE__)": ",
 		       DUMP_PREFIX_ADDRESS, 16, 4, ctx->key,
 		       ctx->split_key_pad_len + enckeylen, 1);
 #endif

@@ -31,6 +31,7 @@
 
 #include "dpa_sys.h"
 #include <linux/fsl_qman.h>
+#include <linux/iommu.h>
 
 #if !defined(CONFIG_FSL_QMAN_FQ_LOOKUP) && defined(CONFIG_PPC64)
 #error "_PPC64 requires _FSL_QMAN_FQ_LOOKUP"
@@ -184,7 +185,6 @@ struct qm_portal_config {
 };
 
 /* Revision info (for errata and feature handling) */
-#define QMAN_REV10 0x0100
 #define QMAN_REV11 0x0101
 #define QMAN_REV12 0x0102
 #define QMAN_REV20 0x0200
@@ -192,6 +192,7 @@ struct qm_portal_config {
 #define QMAN_REV31 0x0301
 extern u16 qman_ip_rev; /* 0 if uninitialised, otherwise QMAN_REVx */
 extern u32 qman_clk;
+extern u16 qman_portal_max;
 
 #ifdef CONFIG_FSL_QMAN_CONFIG
 /* Hooks from qman_driver.c to qman_config.c */
@@ -212,12 +213,15 @@ struct qman_portal *qman_create_portal(
 struct qman_portal *qman_create_affine_portal(
 			const struct qm_portal_config *config,
 			const struct qman_cgrs *cgrs);
-struct qman_portal *qman_create_affine_slave(struct qman_portal *redirect);
+struct qman_portal *qman_create_affine_slave(struct qman_portal *redirect,
+								int cpu);
 const struct qm_portal_config *qman_destroy_affine_portal(void);
 void qman_destroy_portal(struct qman_portal *qm);
 
 /* Hooks from fsl_usdpaa.c to qman_driver.c */
 struct qm_portal_config *qm_get_unused_portal(void);
+struct qm_portal_config *qm_get_unused_portal_idx(uint32_t idx);
+
 void qm_put_unused_portal(struct qm_portal_config *pcfg);
 void qm_set_liodns(struct qm_portal_config *pcfg);
 
@@ -234,11 +238,6 @@ int qman_testwrite_cgr(struct qman_cgr *cgr, u64 i_bcnt,
  * than a lookup table is required. */
 int qman_setup_fq_lookup_table(size_t num_entries);
 #endif
-
-/* Lookup a QMan portal associated with an FD */
-struct qm_portal_config *usdpaa_get_qm_portal_config(struct file *filp,
-						     void *cinh);
-
 
 
 /*************************************************/
@@ -368,6 +367,15 @@ struct qm_portal_config *usdpaa_get_qm_portal_config(struct file *filp,
 #define qm_isr_inhibit(qm)		__qm_isr_write(qm, qm_isr_inhibit, 1)
 #define qm_isr_uninhibit(qm)		__qm_isr_write(qm, qm_isr_inhibit, 0)
 
+#ifdef CONFIG_FSL_QMAN_CONFIG
+int qman_have_ccsr(void);
+#else
+#define qman_have_ccsr	0
+#endif
+
+__init int qman_init(void);
+__init int qman_resource_init(void);
+
 /* CEETM related */
 #define QMAN_CEETM_MAX	2
 extern u8 num_ceetms;
@@ -381,3 +389,7 @@ int qman_ceetm_query_cq(unsigned int cqid, unsigned int dcpid,
 int qman_ceetm_query_ccgr(struct qm_mcc_ceetm_ccgr_query *ccgr_query,
 				struct qm_mcr_ceetm_ccgr_query *response);
 int qman_ceetm_get_xsfdr(enum qm_dc_portal portal, unsigned int *num);
+
+extern void *affine_portals[NR_CPUS];
+const struct qm_portal_config *qman_get_qm_portal_config(
+						struct qman_portal *portal);

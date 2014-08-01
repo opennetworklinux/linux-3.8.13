@@ -73,20 +73,17 @@ struct bman_portal *bman_create_portal(
 				       const struct bm_portal_config *config);
 struct bman_portal *bman_create_affine_portal(
 			const struct bm_portal_config *config);
-struct bman_portal *bman_create_affine_slave(struct bman_portal *redirect);
+struct bman_portal *bman_create_affine_slave(struct bman_portal *redirect,
+								int cpu);
 void bman_destroy_portal(struct bman_portal *bm);
 
 const struct bm_portal_config *bman_destroy_affine_portal(void);
 
 /* Hooks from fsl_usdpaa.c to bman_driver.c */
 struct bm_portal_config *bm_get_unused_portal(void);
+struct bm_portal_config *bm_get_unused_portal_idx(uint32_t idx);
 void bm_put_unused_portal(struct bm_portal_config *pcfg);
 void bm_set_liodns(struct bm_portal_config *pcfg);
-
-/* Lookup a BMan portal associated with an FD */
-struct bm_portal_config *usdpaa_get_bm_portal_config(struct file *filp,
-						     void *cinh);
-
 
 /* Pool logic in the portal driver, during initialisation, needs to know if
  * there's access to CCSR or not (if not, it'll cripple the pool allocator). */
@@ -156,4 +153,9 @@ int bm_pool_set(u32 bpid, const u32 *thresholds);
 /* Read the free buffer count for a given buffer */
 u32 bm_pool_free_buffers(u32 bpid);
 
+__init int bman_init(void);
+__init int bman_resource_init(void);
+
+const struct bm_portal_config *bman_get_bm_portal_config(
+						struct bman_portal *portal);
 #endif /* CONFIG_FSL_BMAN_CONFIG */

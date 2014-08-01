@@ -40,13 +40,17 @@
 #include <linux/phy.h>
 #include <linux/netdevice.h>
 
-#include "dpaa_eth-common.h"
 #include "dpaa_eth.h"
+#include "dpaa_eth_common.h"
 #include "mac.h"
+#include "lnxwrp_fsl_fman.h"
 
 #include "error_ext.h"	/* GET_ERROR_TYPE, E_OK */
-#include "fm_mac_ext.h"
-#include "fm_rtc_ext.h"
+
+#include "../fman/inc/flib/fsl_fman_dtsec.h"
+#include "../fman/inc/flib/fsl_fman_tgec.h"
+#include "../fman/inc/flib/fsl_fman_memac.h"
+#include "../fman/src/wrapper/lnxwrp_sysfs_fm.h"
 
 #define MAC_DESCRIPTION "FSL FMan MAC API based driver"
 
@@ -57,7 +61,7 @@ MODULE_AUTHOR("Emil Medve <Emilian.Medve@Freescale.com>");
 MODULE_DESCRIPTION(MAC_DESCRIPTION);
 
 struct mac_priv_s {
-	t_Handle	mac;
+	struct fm_mac_dev *fm_mac;
 };
 
 const char	*mac_driver_description __initconst = MAC_DESCRIPTION;
@@ -67,14 +71,12 @@ const size_t	 mac_sizeof_priv[] = {
 	[MEMAC] = sizeof(struct mac_priv_s)
 };
 
-static const e_EnetMode _100[] =
-{
+static const enet_mode_t _100[] = {
 	[PHY_INTERFACE_MODE_MII]	= e_ENET_MODE_MII_100,
 	[PHY_INTERFACE_MODE_RMII]	= e_ENET_MODE_RMII_100
 };
 
-static const e_EnetMode _1000[] =
-{
+static const enet_mode_t _1000[] = {
 	[PHY_INTERFACE_MODE_GMII]	= e_ENET_MODE_GMII_1000,
 	[PHY_INTERFACE_MODE_SGMII]	= e_ENET_MODE_SGMII_1000,
 	[PHY_INTERFACE_MODE_TBI]	= e_ENET_MODE_TBI_1000,
@@ -85,7 +87,7 @@ static const e_EnetMode _1000[] =
 	[PHY_INTERFACE_MODE_RTBI]	= e_ENET_MODE_RTBI_1000
 };
 
-static e_EnetMode __cold __attribute__((nonnull))
+static enet_mode_t __cold __attribute__((nonnull))
 macdev2enetinterface(const struct mac_device *mac_dev)
 {
 	switch (mac_dev->max_speed) {
@@ -100,7 +102,7 @@ macdev2enetinterface(const struct mac_device *mac_dev)
 	}
 }
 
-static void mac_exception(t_Handle _mac_dev, e_FmMacExceptions exception)
+static void mac_exception(handle_t _mac_dev, e_FmMacExceptions exception)
 {
 	struct mac_device	*mac_dev;
 
@@ -108,10 +110,10 @@ static void mac_exception(t_Handle _mac_dev, e_FmMacExceptions exception)
 
 	if (e_FM_MAC_EX_10G_RX_FIFO_OVFL == exception) {
 		/* don't flag RX FIFO after the first */
-		FM_MAC_SetException(
-		    ((struct mac_priv_s *)macdev_priv(_mac_dev))->mac,
+		fm_mac_set_exception(mac_dev->get_mac_handle(mac_dev),
 		    e_FM_MAC_EX_10G_RX_FIFO_OVFL, false);
-		printk(KERN_ERR "10G MAC got RX FIFO Error = %x\n", exception);
+		dev_err(mac_dev->dev, "10G MAC got RX FIFO Error = %x\n",
+				exception);
 	}
 
 	dev_dbg(mac_dev->dev, "%s:%s() -> %d\n", KBUILD_BASENAME".c", __func__,
@@ -121,7 +123,6 @@ static void mac_exception(t_Handle _mac_dev, e_FmMacExceptions exception)
 static int __cold init(struct mac_device *mac_dev)
 {
 	int					_errno;
-	t_Error				err;
 	struct mac_priv_s	*priv;
 	t_FmMacParams		param;
 	uint32_t			version;
@@ -133,101 +134,70 @@ static int __cold init(struct mac_device *mac_dev)
 	param.enetMode	= macdev2enetinterface(mac_dev);
 	memcpy(&param.addr, mac_dev->addr, min(sizeof(param.addr),
 		sizeof(mac_dev->addr)));
-	param.macId			= mac_dev->cell_index;
-	param.h_Fm 			= (t_Handle)mac_dev->fm;
+	param.macId		= mac_dev->cell_index;
+	param.h_Fm		= (handle_t)mac_dev->fm;
 	param.mdioIrq		= NO_IRQ;
 	param.f_Exception	= mac_exception;
 	param.f_Event		= mac_exception;
-	param.h_App			= mac_dev;
+	param.h_App		= mac_dev;
 
-	priv->mac = FM_MAC_Config(&param);
-	if (unlikely(priv->mac == NULL)) {
-		dev_err(mac_dev->dev, "FM_MAC_Config() failed\n");
+	priv->fm_mac = fm_mac_config(&param);
+	if (unlikely(priv->fm_mac == NULL)) {
 		_errno = -EINVAL;
 		goto _return;
 	}
 
-	fm_mac_set_handle(mac_dev->fm_dev, priv->mac,
+	fm_mac_set_handle(mac_dev->fm_dev, priv->fm_mac,
 		(macdev2enetinterface(mac_dev) != e_ENET_MODE_XGMII_10000) ?
 			param.macId : param.macId + FM_MAX_NUM_OF_1G_MACS);
 
-	err = FM_MAC_ConfigMaxFrameLength(priv->mac,
+	_errno = fm_mac_config_max_frame_length(priv->fm_mac,
 					  fm_get_max_frm());
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0)) {
-		dev_err(mac_dev->dev,
-			"FM_MAC_ConfigMaxFrameLength() = 0x%08x\n", err);
+	if (unlikely(_errno < 0))
 		goto _return_fm_mac_free;
-	}
 
 	if (macdev2enetinterface(mac_dev) != e_ENET_MODE_XGMII_10000) {
 		/* 10G always works with pad and CRC */
-		err = FM_MAC_ConfigPadAndCrc(priv->mac, true);
-		_errno = -GET_ERROR_TYPE(err);
-		if (unlikely(_errno < 0)) {
-			dev_err(mac_dev->dev,
-				"FM_MAC_ConfigPadAndCrc() = 0x%08x\n", err);
+		_errno = fm_mac_config_pad_and_crc(priv->fm_mac, true);
+		if (unlikely(_errno < 0))
 			goto _return_fm_mac_free;
-		}
 
-		err = FM_MAC_ConfigHalfDuplex(priv->mac, mac_dev->half_duplex);
-		_errno = -GET_ERROR_TYPE(err);
-		if (unlikely(_errno < 0)) {
-			dev_err(mac_dev->dev,
-				"FM_MAC_ConfigHalfDuplex() = 0x%08x\n", err);
+		_errno = fm_mac_config_half_duplex(priv->fm_mac,
+				mac_dev->half_duplex);
+		if (unlikely(_errno < 0))
 			goto _return_fm_mac_free;
-		}
-	}
-	else  {
-		err = FM_MAC_ConfigResetOnInit(priv->mac, true);
-		_errno = -GET_ERROR_TYPE(err);
-		if (unlikely(_errno < 0)) {
-			dev_err(mac_dev->dev,
-				"FM_MAC_ConfigResetOnInit() = 0x%08x\n", err);
+	} else {
+		_errno = fm_mac_config_reset_on_init(priv->fm_mac, true);
+		if (unlikely(_errno < 0))
 			goto _return_fm_mac_free;
-		}
 	}
 
-	err = FM_MAC_Init(priv->mac);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0)) {
-		dev_err(mac_dev->dev, "FM_MAC_Init() = 0x%08x\n", err);
+	_errno = fm_mac_init(priv->fm_mac);
+	if (unlikely(_errno < 0))
 		goto _return_fm_mac_free;
-	}
 
 #ifndef CONFIG_FMAN_MIB_CNT_OVF_IRQ_EN
 	/* For 1G MAC, disable by default the MIB counters overflow interrupt */
 	if (macdev2enetinterface(mac_dev) != e_ENET_MODE_XGMII_10000) {
-		err = FM_MAC_SetException(priv->mac,
+		_errno = fm_mac_set_exception(mac_dev->get_mac_handle(mac_dev),
 				e_FM_MAC_EX_1G_RX_MIB_CNT_OVFL, FALSE);
-		_errno = -GET_ERROR_TYPE(err);
-		if (unlikely(_errno < 0)) {
-			dev_err(mac_dev->dev,
-				"FM_MAC_SetException() = 0x%08x\n", err);
+		if (unlikely(_errno < 0))
 			goto _return_fm_mac_free;
-		}
 	}
 #endif /* !CONFIG_FMAN_MIB_CNT_OVF_IRQ_EN */
 
 	/* For 10G MAC, disable Tx ECC exception */
 	if (macdev2enetinterface(mac_dev) == e_ENET_MODE_XGMII_10000) {
-		err = FM_MAC_SetException(priv->mac,
+		_errno = fm_mac_set_exception(mac_dev->get_mac_handle(mac_dev),
 					  e_FM_MAC_EX_10G_1TX_ECC_ER, FALSE);
-		_errno = -GET_ERROR_TYPE(err);
-		if (unlikely(_errno < 0)) {
-			dev_err(mac_dev->dev,
-				"FM_MAC_SetException() = 0x%08x\n", err);
+		if (unlikely(_errno < 0))
 			goto _return_fm_mac_free;
-		}
 	}
 
-	err = FM_MAC_GetVesrion(priv->mac, &version);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0)) {
-		dev_err(mac_dev->dev, "FM_MAC_GetVesrion() = 0x%08x\n",
-				err);
+	_errno = fm_mac_get_version(priv->fm_mac, &version);
+	if (unlikely(_errno < 0))
 		goto _return_fm_mac_free;
-	}
+
 	dev_info(mac_dev->dev, "FMan %s version: 0x%08x\n",
 		((macdev2enetinterface(mac_dev) != e_ENET_MODE_XGMII_10000) ?
 			"dTSEC" : "XGEC"), version);
@@ -236,9 +206,8 @@ static int __cold init(struct mac_device *mac_dev)
 
 
 _return_fm_mac_free:
-	err = FM_MAC_Free(priv->mac);
-	if (unlikely(-GET_ERROR_TYPE(err) < 0))
-		dev_err(mac_dev->dev, "FM_MAC_Free() = 0x%08x\n", err);
+	fm_mac_free(mac_dev->get_mac_handle(mac_dev));
+
 _return:
 	return _errno;
 }
@@ -246,7 +215,6 @@ _return:
 static int __cold memac_init(struct mac_device *mac_dev)
 {
 	int			_errno;
-	t_Error			err;
 	struct mac_priv_s	*priv;
 	t_FmMacParams		param;
 
@@ -257,50 +225,37 @@ static int __cold memac_init(struct mac_device *mac_dev)
 	param.enetMode	= macdev2enetinterface(mac_dev);
 	memcpy(&param.addr, mac_dev->addr, sizeof(mac_dev->addr));
 	param.macId		= mac_dev->cell_index;
-	param.h_Fm		= (t_Handle)mac_dev->fm;
+	param.h_Fm		= (handle_t)mac_dev->fm;
 	param.mdioIrq		= NO_IRQ;
 	param.f_Exception	= mac_exception;
 	param.f_Event		= mac_exception;
 	param.h_App		= mac_dev;
 
-	priv->mac = FM_MAC_Config(&param);
-	if (unlikely(priv->mac == NULL)) {
-		dev_err(mac_dev->dev, "FM_MAC_Config() failed\n");
+	priv->fm_mac = fm_mac_config(&param);
+	if (unlikely(priv->fm_mac == NULL)) {
 		_errno = -EINVAL;
 		goto _return;
 	}
 
-	err = FM_MAC_ConfigMaxFrameLength(priv->mac, fm_get_max_frm());
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0)) {
-		dev_err(mac_dev->dev,
-			"FM_MAC_ConfigMaxFrameLength() = 0x%08x\n", err);
+	_errno = fm_mac_config_max_frame_length(priv->fm_mac, fm_get_max_frm());
+	if (unlikely(_errno < 0))
 		goto _return_fm_mac_free;
-	}
 
-	err = FM_MAC_ConfigResetOnInit(priv->mac, true);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0)) {
-		dev_err(mac_dev->dev,
-			"FM_MAC_ConfigResetOnInit() = 0x%08x\n", err);
+	_errno = fm_mac_config_reset_on_init(priv->fm_mac, true);
+	if (unlikely(_errno < 0))
 		goto _return_fm_mac_free;
-	}
 
-	err = FM_MAC_Init(priv->mac);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0)) {
-		dev_err(mac_dev->dev, "FM_MAC_Init() = 0x%08x\n", err);
+	_errno = fm_mac_init(priv->fm_mac);
+	if (unlikely(_errno < 0))
 		goto _return_fm_mac_free;
-	}
 
 	dev_info(mac_dev->dev, "FMan MEMAC\n");
 
 	goto _return;
 
 _return_fm_mac_free:
-	err = FM_MAC_Free(priv->mac);
-	if (unlikely(-GET_ERROR_TYPE(err) < 0))
-		dev_err(mac_dev->dev, "FM_MAC_Free() = 0x%08x\n", err);
+	fm_mac_free(priv->fm_mac);
+
 _return:
 	return _errno;
 }
@@ -308,16 +263,11 @@ _return:
 static int __cold start(struct mac_device *mac_dev)
 {
 	int	 _errno;
-	t_Error	 err;
 	struct phy_device *phy_dev = mac_dev->phy_dev;
 
-	err = FM_MAC_Enable(((struct mac_priv_s *)macdev_priv(mac_dev))->mac,
-			e_COMM_MODE_RX_AND_TX);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_MAC_Enable() = 0x%08x\n", err);
+	_errno = fm_mac_enable(mac_dev->get_mac_handle(mac_dev));
 
-	if (phy_dev) {
+	if (!_errno && phy_dev) {
 		if (macdev2enetinterface(mac_dev) != e_ENET_MODE_XGMII_10000)
 			phy_start(phy_dev);
 		else if (phy_dev->drv->read_status)
@@ -329,76 +279,41 @@ static int __cold start(struct mac_device *mac_dev)
 
 static int __cold stop(struct mac_device *mac_dev)
 {
-	int	 _errno;
-	t_Error	 err;
-
 	if (mac_dev->phy_dev &&
 		(macdev2enetinterface(mac_dev) != e_ENET_MODE_XGMII_10000))
 		phy_stop(mac_dev->phy_dev);
 
-	err = FM_MAC_Disable(((struct mac_priv_s *)macdev_priv(mac_dev))->mac,
-				e_COMM_MODE_RX_AND_TX);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_MAC_Disable() = 0x%08x\n", err);
-
-	return _errno;
+	return fm_mac_disable(mac_dev->get_mac_handle(mac_dev));
 }
 
-static int __cold change_promisc(struct mac_device *mac_dev)
+static int __cold set_multi(struct net_device *net_dev,
+			    struct mac_device *mac_dev)
 {
-	int	 _errno;
-	t_Error	 err;
-
-	err = FM_MAC_SetPromiscuous(
-			((struct mac_priv_s *)macdev_priv(mac_dev))->mac,
-			mac_dev->promisc = !mac_dev->promisc);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev,
-				"FM_MAC_SetPromiscuous() = 0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold set_multi(struct net_device *net_dev)
-{
-	struct dpa_priv_s       *priv;
-	struct mac_device       *mac_dev;
-	struct mac_priv_s 	*mac_priv;
+	struct mac_priv_s	*mac_priv;
 	struct mac_address	*old_addr, *tmp;
 	struct netdev_hw_addr	*ha;
-	int 			 _errno;
-	t_Error 		 err;
+	int			_errno;
 
-	priv = netdev_priv(net_dev);
-	mac_dev = priv->mac_dev;
 	mac_priv = macdev_priv(mac_dev);
 
 	/* Clear previous address list */
 	list_for_each_entry_safe(old_addr, tmp, &mac_dev->mc_addr_list, list) {
-		err = FM_MAC_RemoveHashMacAddr(mac_priv->mac,
-					       (t_EnetAddr  *)old_addr->addr);
-		_errno = -GET_ERROR_TYPE(err);
-		if (_errno < 0) {
-			dev_err(mac_dev->dev,
-				"FM_MAC_RemoveHashMacAddr() = 0x%08x\n", err);
+		_errno = fm_mac_remove_hash_mac_addr(mac_priv->fm_mac,
+				(t_EnetAddr *)old_addr->addr);
+		if (_errno < 0)
 			return _errno;
-		}
+
 		list_del(&old_addr->list);
 		kfree(old_addr);
 	}
 
 	/* Add all the addresses from the new list */
 	netdev_for_each_mc_addr(ha, net_dev) {
-		err = FM_MAC_AddHashMacAddr(mac_priv->mac,
+		_errno = fm_mac_add_hash_mac_addr(mac_priv->fm_mac,
 				(t_EnetAddr *)ha->addr);
-		_errno = -GET_ERROR_TYPE(err);
-		if (_errno < 0) {
-			dev_err(mac_dev->dev,
-				     "FM_MAC_AddHashMacAddr() = 0x%08x\n", err);
+		if (_errno < 0)
 			return _errno;
-		}
+
 		tmp = kmalloc(sizeof(struct mac_address), GFP_ATOMIC);
 		if (!tmp) {
 			dev_err(mac_dev->dev, "Out of memory\n");
@@ -410,63 +325,25 @@ static int __cold set_multi(struct net_device *net_dev)
 	return 0;
 }
 
-static int __cold change_addr(struct mac_device *mac_dev, uint8_t *addr)
-{
-	int	_errno;
-	t_Error err;
-
-	err = FM_MAC_ModifyMacAddr(
-			((struct mac_priv_s *)macdev_priv(mac_dev))->mac,
-			(t_EnetAddr *)addr);
-	_errno = -GET_ERROR_TYPE(err);
-	if (_errno < 0)
-		dev_err(mac_dev->dev,
-			     "FM_MAC_ModifyMacAddr() = 0x%08x\n", err);
-
-	return _errno;
-}
-
 static void adjust_link(struct net_device *net_dev)
 {
 	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
+	struct proxy_device *proxy_dev = (struct proxy_device *)priv->peer;
+	struct mac_device *mac_dev = proxy_dev ? proxy_dev->mac_dev :
+		priv->mac_dev;
 	struct phy_device *phy_dev = mac_dev->phy_dev;
-#if (DPAA_VERSION < 11)
-	struct mac_priv_s *mac_priv;
-#endif
-	int	 _errno;
-	t_Error	 err;
 
-	if (!phy_dev->link) {
-#if (DPAA_VERSION < 11)
-		mac_priv = (struct mac_priv_s *)macdev_priv(mac_dev);
-		FM_MAC_RestartAutoneg(mac_priv->mac);
-#endif
-		return;
-	}
-
-	err = FM_MAC_AdjustLink(
-			((struct mac_priv_s *)macdev_priv(mac_dev))->mac,
-			phy_dev->speed, phy_dev->duplex);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_MAC_AdjustLink() = 0x%08x\n",
-				err);
-
-	return;
+	fm_mac_adjust_link(mac_dev->get_mac_handle(mac_dev),
+			phy_dev->link, phy_dev->speed, phy_dev->duplex);
 }
 
 /* Initializes driver's PHY state, and attaches to the PHY.
  * Returns 0 on success.
  */
-static int dtsec_init_phy(struct net_device *net_dev)
+static int dtsec_init_phy(struct net_device *net_dev,
+			  struct mac_device *mac_dev)
 {
-	struct dpa_priv_s	*priv;
-	struct mac_device	*mac_dev;
 	struct phy_device	*phy_dev;
-
-	priv = netdev_priv(net_dev);
-	mac_dev = priv->mac_dev;
 
 	if (!mac_dev->phy_node)
 		phy_dev = phy_connect(net_dev, mac_dev->fixed_bus_id,
@@ -483,18 +360,17 @@ static int dtsec_init_phy(struct net_device *net_dev)
 	}
 
 	/* Remove any features not supported by the controller */
-	phy_dev->supported &= priv->mac_dev->if_support;
+	phy_dev->supported &= mac_dev->if_support;
 	phy_dev->advertising = phy_dev->supported;
 
-	priv->mac_dev->phy_dev = phy_dev;
+	mac_dev->phy_dev = phy_dev;
 
 	return 0;
 }
 
-static int xgmac_init_phy(struct net_device *net_dev)
+static int xgmac_init_phy(struct net_device *net_dev,
+			  struct mac_device *mac_dev)
 {
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
 	struct phy_device *phy_dev;
 
 	if (!mac_dev->phy_node)
@@ -511,7 +387,7 @@ static int xgmac_init_phy(struct net_device *net_dev)
 		return phy_dev == NULL ? -ENODEV : PTR_ERR(phy_dev);
 	}
 
-	phy_dev->supported &= priv->mac_dev->if_support;
+	phy_dev->supported &= mac_dev->if_support;
 	phy_dev->advertising = phy_dev->supported;
 
 	mac_dev->phy_dev = phy_dev;
@@ -519,14 +395,10 @@ static int xgmac_init_phy(struct net_device *net_dev)
 	return 0;
 }
 
-static int memac_init_phy(struct net_device *net_dev)
+static int memac_init_phy(struct net_device *net_dev,
+			  struct mac_device *mac_dev)
 {
-	struct dpa_priv_s       *priv;
-	struct mac_device       *mac_dev;
 	struct phy_device       *phy_dev;
-
-	priv = netdev_priv(net_dev);
-	mac_dev = priv->mac_dev;
 
 	if (macdev2enetinterface(mac_dev) == e_ENET_MODE_XGMII_10000) {
 		if (!mac_dev->phy_node) {
@@ -553,7 +425,7 @@ static int memac_init_phy(struct net_device *net_dev)
 	}
 
 	/* Remove any features not supported by the controller */
-	phy_dev->supported &= priv->mac_dev->if_support;
+	phy_dev->supported &= mac_dev->if_support;
 	phy_dev->advertising = phy_dev->supported;
 
 	mac_dev->phy_dev = phy_dev;
@@ -561,257 +433,158 @@ static int memac_init_phy(struct net_device *net_dev)
 	return 0;
 }
 
-static int __cold uninit(struct mac_device *mac_dev)
+static int __cold uninit(struct fm_mac_dev *fm_mac_dev)
 {
 	int			 _errno, __errno;
-	t_Error			 err;
+
+	_errno = fm_mac_disable(fm_mac_dev);
+	__errno = fm_mac_free(fm_mac_dev);
+
+	if (unlikely(__errno < 0))
+		_errno = __errno;
+
+	return _errno;
+}
+
+static struct fm_mac_dev *get_mac_handle(struct mac_device *mac_dev)
+{
 	const struct mac_priv_s	*priv;
-
 	priv = macdev_priv(mac_dev);
+	return priv->fm_mac;
+}
 
-	err = FM_MAC_Disable(priv->mac, e_COMM_MODE_RX_AND_TX);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_MAC_Disable() = 0x%08x\n", err);
+static int dtsec_dump_regs(struct mac_device *h_mac, char *buf, int nn)
+{
+	struct dtsec_regs	*p_mm = (struct dtsec_regs *) h_mac->vaddr;
+	int			i = 0, n = nn;
 
-	err = FM_MAC_Free(priv->mac);
-	__errno = -GET_ERROR_TYPE(err);
-	if (unlikely(__errno < 0)) {
-		dev_err(mac_dev->dev, "FM_MAC_Free() = 0x%08x\n", err);
-		if (_errno < 0)
-			_errno = __errno;
+	FM_DMP_SUBTITLE(buf, n, "\n");
+
+	FM_DMP_TITLE(buf, n, p_mm, "FM MAC - DTSEC-%d", h_mac->cell_index);
+
+	FM_DMP_V32(buf, n, p_mm, tsec_id);
+	FM_DMP_V32(buf, n, p_mm, tsec_id2);
+	FM_DMP_V32(buf, n, p_mm, ievent);
+	FM_DMP_V32(buf, n, p_mm, imask);
+	FM_DMP_V32(buf, n, p_mm, ecntrl);
+	FM_DMP_V32(buf, n, p_mm, ptv);
+	FM_DMP_V32(buf, n, p_mm, tmr_ctrl);
+	FM_DMP_V32(buf, n, p_mm, tmr_pevent);
+	FM_DMP_V32(buf, n, p_mm, tmr_pemask);
+	FM_DMP_V32(buf, n, p_mm, tctrl);
+	FM_DMP_V32(buf, n, p_mm, rctrl);
+	FM_DMP_V32(buf, n, p_mm, maccfg1);
+	FM_DMP_V32(buf, n, p_mm, maccfg2);
+	FM_DMP_V32(buf, n, p_mm, ipgifg);
+	FM_DMP_V32(buf, n, p_mm, hafdup);
+	FM_DMP_V32(buf, n, p_mm, maxfrm);
+
+	FM_DMP_V32(buf, n, p_mm, macstnaddr1);
+	FM_DMP_V32(buf, n, p_mm, macstnaddr2);
+
+	for (i = 0; i < 7; ++i) {
+		FM_DMP_V32(buf, n, p_mm, macaddr[i].exact_match1);
+		FM_DMP_V32(buf, n, p_mm, macaddr[i].exact_match2);
 	}
 
-	return _errno;
+	FM_DMP_V32(buf, n, p_mm, car1);
+	FM_DMP_V32(buf, n, p_mm, car2);
+
+	return n;
 }
 
-static int __cold ptp_enable(struct mac_device *mac_dev)
+static int xgmac_dump_regs(struct mac_device *h_mac, char *buf, int nn)
 {
-	int			 _errno;
-	t_Error			 err;
-	const struct mac_priv_s	*priv;
+	struct tgec_regs	*p_mm = (struct tgec_regs *) h_mac->vaddr;
+	int			n = nn;
 
-	priv = macdev_priv(mac_dev);
+	FM_DMP_SUBTITLE(buf, n, "\n");
+	FM_DMP_TITLE(buf, n, p_mm, "FM MAC - TGEC -%d", h_mac->cell_index);
 
-	err = FM_MAC_Enable1588TimeStamp(priv->mac);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_MAC_Enable1588TimeStamp()"
-				"= 0x%08x\n", err);
-	return _errno;
+	FM_DMP_V32(buf, n, p_mm, tgec_id);
+	FM_DMP_V32(buf, n, p_mm, command_config);
+	FM_DMP_V32(buf, n, p_mm, mac_addr_0);
+	FM_DMP_V32(buf, n, p_mm, mac_addr_1);
+	FM_DMP_V32(buf, n, p_mm, maxfrm);
+	FM_DMP_V32(buf, n, p_mm, pause_quant);
+	FM_DMP_V32(buf, n, p_mm, rx_fifo_sections);
+	FM_DMP_V32(buf, n, p_mm, tx_fifo_sections);
+	FM_DMP_V32(buf, n, p_mm, rx_fifo_almost_f_e);
+	FM_DMP_V32(buf, n, p_mm, tx_fifo_almost_f_e);
+	FM_DMP_V32(buf, n, p_mm, hashtable_ctrl);
+	FM_DMP_V32(buf, n, p_mm, mdio_cfg_status);
+	FM_DMP_V32(buf, n, p_mm, mdio_command);
+	FM_DMP_V32(buf, n, p_mm, mdio_data);
+	FM_DMP_V32(buf, n, p_mm, mdio_regaddr);
+	FM_DMP_V32(buf, n, p_mm, status);
+	FM_DMP_V32(buf, n, p_mm, tx_ipg_len);
+	FM_DMP_V32(buf, n, p_mm, mac_addr_2);
+	FM_DMP_V32(buf, n, p_mm, mac_addr_3);
+	FM_DMP_V32(buf, n, p_mm, rx_fifo_ptr_rd);
+	FM_DMP_V32(buf, n, p_mm, rx_fifo_ptr_wr);
+	FM_DMP_V32(buf, n, p_mm, tx_fifo_ptr_rd);
+	FM_DMP_V32(buf, n, p_mm, tx_fifo_ptr_wr);
+	FM_DMP_V32(buf, n, p_mm, imask);
+	FM_DMP_V32(buf, n, p_mm, ievent);
+
+	return n;
 }
 
-static int __cold ptp_disable(struct mac_device *mac_dev)
+static int memac_dump_regs(struct mac_device *h_mac, char *buf, int nn)
 {
-	int			 _errno;
-	t_Error			 err;
-	const struct mac_priv_s	*priv;
+	struct memac_regs	*p_mm = (struct memac_regs *) h_mac->vaddr;
+	int			i = 0, n = nn;
 
-	priv = macdev_priv(mac_dev);
+	FM_DMP_SUBTITLE(buf, n, "\n");
+	FM_DMP_TITLE(buf, n, p_mm, "FM MAC - MEMAC -%d", h_mac->cell_index);
 
-	err = FM_MAC_Disable1588TimeStamp(priv->mac);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_MAC_Disable1588TimeStamp()"
-				"= 0x%08x\n", err);
-	return _errno;
+	FM_DMP_V32(buf, n, p_mm, command_config);
+	FM_DMP_V32(buf, n, p_mm, mac_addr0.mac_addr_l);
+	FM_DMP_V32(buf, n, p_mm, mac_addr0.mac_addr_u);
+	FM_DMP_V32(buf, n, p_mm, maxfrm);
+	FM_DMP_V32(buf, n, p_mm, hashtable_ctrl);
+	FM_DMP_V32(buf, n, p_mm, ievent);
+	FM_DMP_V32(buf, n, p_mm, tx_ipg_length);
+	FM_DMP_V32(buf, n, p_mm, imask);
+
+	for (i = 0; i < 4; ++i)
+		FM_DMP_V32(buf, n, p_mm, pause_quanta[i]);
+
+	for (i = 0; i < 4; ++i)
+		FM_DMP_V32(buf, n, p_mm, pause_thresh[i]);
+
+	FM_DMP_V32(buf, n, p_mm, rx_pause_status);
+
+	for (i = 0; i < MEMAC_NUM_OF_PADDRS; ++i) {
+		FM_DMP_V32(buf, n, p_mm, mac_addr[i].mac_addr_l);
+		FM_DMP_V32(buf, n, p_mm, mac_addr[i].mac_addr_u);
+	}
+
+	FM_DMP_V32(buf, n, p_mm, lpwake_timer);
+	FM_DMP_V32(buf, n, p_mm, sleep_timer);
+	FM_DMP_V32(buf, n, p_mm, statn_config);
+	FM_DMP_V32(buf, n, p_mm, if_mode);
+	FM_DMP_V32(buf, n, p_mm, if_status);
+	FM_DMP_V32(buf, n, p_mm, hg_config);
+	FM_DMP_V32(buf, n, p_mm, hg_pause_quanta);
+	FM_DMP_V32(buf, n, p_mm, hg_pause_thresh);
+	FM_DMP_V32(buf, n, p_mm, hgrx_pause_status);
+	FM_DMP_V32(buf, n, p_mm, hg_fifos_status);
+	FM_DMP_V32(buf, n, p_mm, rhm);
+	FM_DMP_V32(buf, n, p_mm, thm);
+
+	return n;
 }
 
-static void *get_mac_handle(struct mac_device *mac_dev)
+int fm_mac_dump_regs(struct mac_device *h_mac, char *buf, int nn)
 {
-	const struct mac_priv_s	*priv;
-	priv = macdev_priv(mac_dev);
-	return (void*)priv->mac;
+	int	n = nn;
+
+	n = h_mac->dump_mac_regs(h_mac, buf, n);
+
+	return n;
 }
 
-static int __cold set_rx_pause(struct mac_device *mac_dev, bool en)
-{
-	int	_errno;
-	t_Error err;
-
-	/* if rx pause is enabled, do NOT ignore pause frames */
-	err = FM_MAC_SetRxIgnorePauseFrames(
-			((struct mac_priv_s *)macdev_priv(mac_dev))->mac, !en);
-
-	_errno = -GET_ERROR_TYPE(err);
-	if (_errno < 0)
-		dev_err(mac_dev->dev,
-				 "FM_MAC_SetRxIgnorePauseFrames() = 0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold set_tx_pause(struct mac_device *mac_dev, bool en)
-{
-	int	_errno;
-	t_Error err;
-
-	if (en)
-		err = FM_MAC_SetTxPauseFrames(
-				((struct mac_priv_s *)macdev_priv(mac_dev))->mac,
-				TX_PAUSE_PRIO_DEFAULT,
-				TX_PAUSE_TIME_ENABLE,
-				TX_PAUSE_THRESH_DEFAULT);
-	else
-		err = FM_MAC_SetTxPauseFrames(
-				((struct mac_priv_s *)macdev_priv(mac_dev))->mac,
-				TX_PAUSE_PRIO_DEFAULT,
-				TX_PAUSE_TIME_DISABLE,
-				TX_PAUSE_THRESH_DEFAULT);
-
-	_errno = -GET_ERROR_TYPE(err);
-	if (_errno < 0)
-		dev_err(mac_dev->dev,
-				 "FM_MAC_SetTxPauseFrames() = 0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_enable(struct net_device *net_dev)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	int			 _errno;
-	t_Error			 err;
-
-	err = FM_RTC_Enable(fm_get_rtc_handle(mac_dev->fm_dev), 0);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_Enable = 0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_disable(struct net_device *net_dev)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	int			 _errno;
-	t_Error			 err;
-
-	err = FM_RTC_Disable(fm_get_rtc_handle(mac_dev->fm_dev));
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_Disable = 0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_get_cnt(struct net_device *net_dev, uint64_t *ts)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	int _errno;
-	t_Error	err;
-
-	err = FM_RTC_GetCurrentTime(fm_get_rtc_handle(mac_dev->fm_dev), ts);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_GetCurrentTime = 0x%08x\n",
-				err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_set_cnt(struct net_device *net_dev, uint64_t ts)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	int _errno;
-	t_Error	err;
-
-	err = FM_RTC_SetCurrentTime(fm_get_rtc_handle(mac_dev->fm_dev), ts);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_SetCurrentTime = 0x%08x\n",
-				err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_get_drift(struct net_device *net_dev, uint32_t *drift)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	int _errno;
-	t_Error	err;
-
-	err = FM_RTC_GetFreqCompensation(fm_get_rtc_handle(mac_dev->fm_dev),
-			drift);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_GetFreqCompensation ="
-				"0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_set_drift(struct net_device *net_dev, uint32_t drift)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	int _errno;
-	t_Error	err;
-
-	err = FM_RTC_SetFreqCompensation(fm_get_rtc_handle(mac_dev->fm_dev),
-			drift);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_SetFreqCompensation ="
-				"0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_set_alarm(struct net_device *net_dev, uint32_t id,
-		uint64_t time)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	t_FmRtcAlarmParams alarm;
-	int _errno;
-	t_Error	err;
-
-	alarm.alarmId = id;
-	alarm.alarmTime = time;
-	alarm.f_AlarmCallback = NULL;
-	err = FM_RTC_SetAlarm(fm_get_rtc_handle(mac_dev->fm_dev),
-			&alarm);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_SetAlarm ="
-				"0x%08x\n", err);
-
-	return _errno;
-}
-
-static int __cold fm_rtc_set_fiper(struct net_device *net_dev, uint32_t id,
-		uint64_t fiper)
-{
-	struct dpa_priv_s *priv = netdev_priv(net_dev);
-	struct mac_device *mac_dev = priv->mac_dev;
-	t_FmRtcPeriodicPulseParams pp;
-	int _errno;
-	t_Error	err;
-
-	pp.periodicPulseId = id;
-	pp.periodicPulsePeriod = fiper;
-	pp.f_PeriodicPulseCallback = NULL;
-	err = FM_RTC_SetPeriodicPulse(fm_get_rtc_handle(mac_dev->fm_dev), &pp);
-	_errno = -GET_ERROR_TYPE(err);
-	if (unlikely(_errno < 0))
-		dev_err(mac_dev->dev, "FM_RTC_SetPeriodicPulse ="
-				"0x%08x\n", err);
-
-	return _errno;
-}
-
-void fm_mac_dump_regs(struct mac_device *mac_dev)
-{
-	struct mac_priv_s *mac_priv = macdev_priv(mac_dev);
-
-	FM_MAC_DumpRegs(mac_priv->mac);
-}
 
 static void __cold setup_dtsec(struct mac_device *mac_dev)
 {
@@ -819,15 +592,15 @@ static void __cold setup_dtsec(struct mac_device *mac_dev)
 	mac_dev->init		= init;
 	mac_dev->start		= start;
 	mac_dev->stop		= stop;
-	mac_dev->change_promisc	= change_promisc;
-	mac_dev->change_addr    = change_addr;
+	mac_dev->set_promisc	= fm_mac_set_promiscuous;
+	mac_dev->change_addr    = fm_mac_modify_mac_addr;
 	mac_dev->set_multi      = set_multi;
 	mac_dev->uninit		= uninit;
-	mac_dev->ptp_enable		= ptp_enable;
-	mac_dev->ptp_disable		= ptp_disable;
+	mac_dev->ptp_enable		= fm_mac_enable_1588_time_stamp;
+	mac_dev->ptp_disable		= fm_mac_disable_1588_time_stamp;
 	mac_dev->get_mac_handle		= get_mac_handle;
-	mac_dev->set_tx_pause		= set_tx_pause;
-	mac_dev->set_rx_pause		= set_rx_pause;
+	mac_dev->set_tx_pause		= fm_mac_set_tx_pause_frames;
+	mac_dev->set_rx_pause		= fm_mac_set_rx_ignore_pause_frames;
 	mac_dev->fm_rtc_enable		= fm_rtc_enable;
 	mac_dev->fm_rtc_disable		= fm_rtc_disable;
 	mac_dev->fm_rtc_get_cnt		= fm_rtc_get_cnt;
@@ -836,6 +609,7 @@ static void __cold setup_dtsec(struct mac_device *mac_dev)
 	mac_dev->fm_rtc_set_drift	= fm_rtc_set_drift;
 	mac_dev->fm_rtc_set_alarm	= fm_rtc_set_alarm;
 	mac_dev->fm_rtc_set_fiper	= fm_rtc_set_fiper;
+	mac_dev->dump_mac_regs		= dtsec_dump_regs;
 }
 
 static void __cold setup_xgmac(struct mac_device *mac_dev)
@@ -844,12 +618,14 @@ static void __cold setup_xgmac(struct mac_device *mac_dev)
 	mac_dev->init		= init;
 	mac_dev->start		= start;
 	mac_dev->stop		= stop;
-	mac_dev->change_promisc	= change_promisc;
-	mac_dev->change_addr    = change_addr;
+	mac_dev->set_promisc	= fm_mac_set_promiscuous;
+	mac_dev->change_addr    = fm_mac_modify_mac_addr;
 	mac_dev->set_multi      = set_multi;
 	mac_dev->uninit		= uninit;
-	mac_dev->set_tx_pause	= set_tx_pause;
-	mac_dev->set_rx_pause	= set_rx_pause;
+	mac_dev->get_mac_handle	= get_mac_handle;
+	mac_dev->set_tx_pause	= fm_mac_set_tx_pause_frames;
+	mac_dev->set_rx_pause	= fm_mac_set_rx_ignore_pause_frames;
+	mac_dev->dump_mac_regs	= xgmac_dump_regs;
 }
 
 static void __cold setup_memac(struct mac_device *mac_dev)
@@ -858,13 +634,13 @@ static void __cold setup_memac(struct mac_device *mac_dev)
 	mac_dev->init		= memac_init;
 	mac_dev->start		= start;
 	mac_dev->stop		= stop;
-	mac_dev->change_promisc	= change_promisc;
-	mac_dev->change_addr    = change_addr;
+	mac_dev->set_promisc	= fm_mac_set_promiscuous;
+	mac_dev->change_addr    = fm_mac_modify_mac_addr;
 	mac_dev->set_multi      = set_multi;
 	mac_dev->uninit		= uninit;
 	mac_dev->get_mac_handle		= get_mac_handle;
-	mac_dev->set_tx_pause		= set_tx_pause;
-	mac_dev->set_rx_pause		= set_rx_pause;
+	mac_dev->set_tx_pause		= fm_mac_set_tx_pause_frames;
+	mac_dev->set_rx_pause		= fm_mac_set_rx_ignore_pause_frames;
 	mac_dev->fm_rtc_enable		= fm_rtc_enable;
 	mac_dev->fm_rtc_disable		= fm_rtc_disable;
 	mac_dev->fm_rtc_get_cnt		= fm_rtc_get_cnt;
@@ -873,6 +649,7 @@ static void __cold setup_memac(struct mac_device *mac_dev)
 	mac_dev->fm_rtc_set_drift	= fm_rtc_set_drift;
 	mac_dev->fm_rtc_set_alarm	= fm_rtc_set_alarm;
 	mac_dev->fm_rtc_set_fiper	= fm_rtc_set_fiper;
+	mac_dev->dump_mac_regs		= memac_dump_regs;
 }
 
 void (*const mac_setup[])(struct mac_device *mac_dev) = {

@@ -71,13 +71,13 @@
 #include "fm_port_ioctls.h"
 #include "fm_vsp_ext.h"
 
+#define __ERR_MODULE__  MODULE_FM
+
 #if defined(CONFIG_COMPAT)
 #include "lnxwrp_ioctls_fm_compat.h"
 #endif
 
 #include "lnxwrp_fm.h"
-
-#include "dpaa_eth.h"
 
 #define CMP_IOC_DEFINE(def) (IOC_##def != def)
 
@@ -123,18 +123,6 @@
 #endif
 
 #if CMP_IOC_DEFINE(FM_PCD_PRS_SW_OFFSET)
-#error Error: please synchronize IOC_ defines!
-#endif
-
-#if CMP_IOC_DEFINE(FM_PCD_PRS_SW_PATCHES_SIZE)
-#error Error: please synchronize IOC_ defines!
-#endif
-
-#if CMP_IOC_DEFINE(FM_PCD_PRS_SW_TAIL_SIZE)
-#error Error: please synchronize IOC_ defines!
-#endif
-
-#if CMP_IOC_DEFINE(FM_SW_PRS_MAX_IMAGE_SIZE)
 #error Error: please synchronize IOC_ defines!
 #endif
 
@@ -1946,6 +1934,155 @@ invalid_port_id:
             XX_Free(param);
             break;
         }
+        
+        
+#if defined(CONFIG_COMPAT)
+        case FM_PCD_IOC_MATCH_TABLE_GET_MISS_STAT_COMPAT:
+#endif
+        case FM_PCD_IOC_MATCH_TABLE_GET_MISS_STAT:
+        {
+            ioc_fm_pcd_cc_tbl_get_miss_params_t param;
+
+#if defined(CONFIG_COMPAT)
+            if (compat)
+            {
+                ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *compat_param;
+
+                compat_param = (ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *) XX_Malloc(
+                        sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                if (!compat_param)
+                    RETURN_ERROR(MINOR, E_NO_MEMORY, ("IOCTL FM PCD"));
+
+                memset(compat_param, 0, sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                if (copy_from_user(compat_param,
+                            (ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *)compat_ptr(arg),
+                            sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t)))
+                {
+                    XX_Free(compat_param);
+                    RETURN_ERROR(MINOR, E_WRITE_FAILED, NO_MSG);
+                }
+
+                compat_copy_fm_pcd_cc_tbl_get_miss(compat_param, &param, COMPAT_US_TO_K);
+
+                XX_Free(compat_param);
+            }
+            else
+#endif
+            {
+                if (copy_from_user(&param, (ioc_fm_pcd_cc_tbl_get_miss_params_t *)arg,
+                            sizeof(ioc_fm_pcd_cc_tbl_get_miss_params_t)))
+                    RETURN_ERROR(MINOR, E_WRITE_FAILED, NO_MSG);
+            }
+
+  
+            err = FM_PCD_MatchTableGetMissStatistics((t_Handle) param.id,
+                                                     (t_FmPcdCcKeyStatistics *) &param.miss_statistics);
+         
+#if defined(CONFIG_COMPAT)
+            if (compat)
+            {
+                ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *compat_param;
+
+                compat_param = (ioc_compat_fm_pcd_cc_tbl_get_miss_params_t*) XX_Malloc(
+                        sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                if (!compat_param)
+                    RETURN_ERROR(MINOR, E_NO_MEMORY, ("IOCTL FM PCD"));
+
+                memset(compat_param, 0, sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                compat_copy_fm_pcd_cc_tbl_get_miss(compat_param, &param, COMPAT_K_TO_US);
+                if (copy_to_user((ioc_compat_fm_pcd_cc_tbl_get_miss_params_t*) compat_ptr(arg),
+                            compat_param,
+                            sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t)))
+                    RETURN_ERROR(MINOR, E_READ_FAILED, NO_MSG);
+
+                XX_Free(compat_param);
+            }
+            else
+#endif
+            {
+                if (copy_to_user((ioc_fm_pcd_hash_table_params_t *)arg,
+                                  &param,
+                                  sizeof(ioc_fm_pcd_cc_tbl_get_miss_params_t)))
+                    RETURN_ERROR(MINOR, E_READ_FAILED, NO_MSG);
+            }
+
+            break;
+        }
+        
+
+#if defined(CONFIG_COMPAT)
+        case FM_PCD_IOC_HASH_TABLE_GET_MISS_STAT_COMPAT:
+#endif
+        case FM_PCD_IOC_HASH_TABLE_GET_MISS_STAT:
+        {
+            ioc_fm_pcd_cc_tbl_get_miss_params_t param;
+
+#if defined(CONFIG_COMPAT)
+            if (compat)
+            {
+                ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *compat_param;
+
+                compat_param = (ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *) XX_Malloc(
+                        sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                if (!compat_param)
+                    RETURN_ERROR(MINOR, E_NO_MEMORY, ("IOCTL FM PCD"));
+
+                memset(compat_param, 0, sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                if (copy_from_user(compat_param,
+                            (ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *)compat_ptr(arg),
+                            sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t)))
+                {
+                    XX_Free(compat_param);
+                    RETURN_ERROR(MINOR, E_WRITE_FAILED, NO_MSG);
+                }
+
+                compat_copy_fm_pcd_cc_tbl_get_miss(compat_param, &param, COMPAT_US_TO_K);
+
+                XX_Free(compat_param);
+            }
+            else
+#endif
+            {
+                if (copy_from_user(&param, (ioc_fm_pcd_cc_tbl_get_miss_params_t *)arg,
+                            sizeof(ioc_fm_pcd_cc_tbl_get_miss_params_t)))
+                    RETURN_ERROR(MINOR, E_WRITE_FAILED, NO_MSG);
+            }
+
+  
+            err = FM_PCD_HashTableGetMissStatistics((t_Handle) param.id,
+                                                     (t_FmPcdCcKeyStatistics *) &param.miss_statistics);
+         
+#if defined(CONFIG_COMPAT)
+            if (compat)
+            {
+                ioc_compat_fm_pcd_cc_tbl_get_miss_params_t *compat_param;
+
+                compat_param = (ioc_compat_fm_pcd_cc_tbl_get_miss_params_t*) XX_Malloc(
+                        sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                if (!compat_param)
+                    RETURN_ERROR(MINOR, E_NO_MEMORY, ("IOCTL FM PCD"));
+
+                memset(compat_param, 0, sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t));
+                compat_copy_fm_pcd_cc_tbl_get_miss(compat_param, &param, COMPAT_K_TO_US);
+                if (copy_to_user((ioc_compat_fm_pcd_cc_tbl_get_miss_params_t*) compat_ptr(arg),
+                            compat_param,
+                            sizeof(ioc_compat_fm_pcd_cc_tbl_get_miss_params_t)))
+                    RETURN_ERROR(MINOR, E_READ_FAILED, NO_MSG);
+
+                XX_Free(compat_param);
+            }
+            else
+#endif
+            {
+                if (copy_to_user((ioc_fm_pcd_hash_table_params_t *)arg,
+                                  &param,
+                                  sizeof(ioc_fm_pcd_cc_tbl_get_miss_params_t)))
+                    RETURN_ERROR(MINOR, E_READ_FAILED, NO_MSG);
+            }
+
+            break;
+        }
+      
 #if defined(CONFIG_COMPAT)
         case FM_PCD_IOC_HASH_TABLE_SET_COMPAT:
 #endif
@@ -4036,39 +4173,30 @@ t_Error LnxwrpFmPortIOCTL(t_LnxWrpFmPortDev *p_LnxWrpFmPortDev, unsigned int cmd
 
             if (p_LnxWrpFmPortDev->pcd_owner_params.dev)
             {
-                struct net_device *net_dev = dev_get_drvdata(p_LnxWrpFmPortDev->pcd_owner_params.dev);
+                int id = -1;
 
-                if (net_dev)
+                switch(p_LnxWrpFmPortDev->settings.param.portType)
                 {
-                    struct dpa_priv_s *priv = netdev_priv(net_dev);
-
-                    if (priv)
-                    {
-                        struct mac_device *mac_dev = priv->mac_dev;
-
-                        if (mac_dev)
-                        {
-                            void *mac_handle = mac_dev->get_mac_handle(mac_dev);
-
-                            err = (cmd == FM_PORT_IOC_ADD_RX_HASH_MAC_ADDR)
-                                ? FM_MAC_AddHashMacAddr((t_Handle) mac_handle, (t_EnetAddr*) param)
-                                : FM_MAC_RemoveHashMacAddr((t_Handle) mac_handle, (t_EnetAddr*) param)
-                                ;
-                        }
-                        else
-                        {
-                            err = E_NOT_AVAILABLE;
-                            REPORT_ERROR(MINOR, err, ("Attempt to add/remove hash MAC addr. to/from MAC-less port!"));
-                        }
-                    }
-                    else
-                        /* Not possible, set err nevertheless: */
+                    case e_FM_PORT_TYPE_RX:
+                    case e_FM_PORT_TYPE_TX:
+                        id = p_LnxWrpFmPortDev->id;
+                    break;
+                    case e_FM_PORT_TYPE_RX_10G:
+                    case e_FM_PORT_TYPE_TX_10G:
+                        id = p_LnxWrpFmPortDev->id + FM_MAX_NUM_OF_1G_MACS;
+                    break;
+                    default:
                         err = E_NOT_AVAILABLE;
+                        REPORT_ERROR(MINOR, err, ("Attempt to add/remove hash MAC addr. to/from MAC-less port!"));
                 }
-                else
+                if (id >= 0)
                 {
-                    err = E_NOT_AVAILABLE;
-                    REPORT_ERROR(MINOR, err, ("No net device (and no MAC!) associated to this port!"));
+                    t_LnxWrpFmDev *fm = (t_LnxWrpFmDev *)p_LnxWrpFmPortDev->h_LnxWrpFmDev;
+                    t_Handle mac_handle = fm->macs[id].h_Dev;
+
+                    err = (cmd == FM_PORT_IOC_ADD_RX_HASH_MAC_ADDR)
+                        ? FM_MAC_AddHashMacAddr(mac_handle, (t_EnetAddr*) param)
+                        : FM_MAC_RemoveHashMacAddr(mac_handle, (t_EnetAddr*) param);
                 }
             }
             else

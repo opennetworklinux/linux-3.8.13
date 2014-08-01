@@ -103,6 +103,8 @@ struct sdhci_host {
  */
 #define SDHCI_QUIRK2_CIRCUIT_SUPPORT_VS33		(1<<5)
 #define SDHCI_QUIRK2_FORCE_CMD13_DETECT_CARD		(1<<6)
+/* Controller need to disable clock before reset all */
+#define SDHCI_QUIRK2_DISABLE_CLOCK_BEFORE_RESET		(1<<7)
 
 	int irq;		/* Device IRQ */
 	void __iomem *ioaddr;	/* Mapped address */
@@ -175,6 +177,7 @@ struct sdhci_host {
 	unsigned int            ocr_avail_sdio;	/* OCR bit masks */
 	unsigned int            ocr_avail_sd;
 	unsigned int            ocr_avail_mmc;
+	u32 ocr_mask;		/* available voltages */
 
 	wait_queue_head_t	buf_ready_int;	/* Waitqueue for Buffer Read Ready interrupt */
 	unsigned int		tuning_done;	/* Condition flag set when CMD19 succeeds */

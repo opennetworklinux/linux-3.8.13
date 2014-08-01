@@ -77,7 +77,6 @@
 		fsl,bpid = <12>;
 		fsl,bpool-thresholds = <0x100 0x300 0x0 0x0>;
 	};
-
 	bp16: buffer-pool@16 {
 		compatible = "fsl,b4420-bpool", "fsl,bpool";
 		fsl,bpid = <16>;
@@ -117,14 +116,14 @@
 		 * On receiving frame at this interface, the ethernet driver will do
 		 * kmap_atomic/kunmap_atomic for that frame. */
 		ethernet@16 {
-			compatible = "fsl,b4420-dpa-ethernet", "fsl,dpa-ethernet";
+			compatible = "fsl,b4420-dpa-ethernet-macless", "fsl,dpa-ethernet-macless";
 			fsl,bman-buffer-pools = <&bp16>;
 			fsl,qman-frame-queues-rx = <4000 8>;
 			fsl,qman-frame-queues-tx = <4008 8>;
 			local-mac-address = [00 11 22 33 44 55];
 		};
 		ethernet@17 {
-			compatible = "fsl,b4420-dpa-ethernet", "fsl,dpa-ethernet";
+			compatible = "fsl,b4420-dpa-ethernet-macless", "fsl,dpa-ethernet-macless";
 			fsl,bman-buffer-pools = <&bp16>;
 			fsl,qman-frame-queues-rx = <5000 8>;
 			fsl,qman-frame-queues-tx = <5008 8>;

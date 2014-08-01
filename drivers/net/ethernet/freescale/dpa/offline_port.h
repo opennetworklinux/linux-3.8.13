@@ -40,6 +40,8 @@ struct dpa_oh_config_s {
 	uint32_t		error_fqid;
 	uint32_t		default_fqid;
 	struct fm_port		*oh_port;
+	uint32_t		egress_cnt;
+	struct qman_fq		*egress_fqs;
 };
 
 #endif /* __OFFLINE_PORT_H */

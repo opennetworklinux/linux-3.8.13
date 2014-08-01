@@ -87,6 +87,7 @@ int print_sa_sec_param(struct dpa_ipsec_sa *sa)
 		pr_info("%x, ", sa->cipher_data.cipher_key[i]);
 
 	pr_info("\n sa_bpid = %d\n", sa->sa_bpid);
+	pr_info("\n sa_bufsize = %d\n", sa->sa_bufsize);
 	pr_info(" spi = %d\n", sa->spi);
 	pr_info(" sa_wqid = %d\n", sa->sa_wqid);
 	pr_info(" outbound_flowid = %d\n", sa->outbound_flowid);
@@ -221,12 +222,12 @@ static int check_ipsec_params(const struct dpa_ipsec_params *prms)
 	int i, err, valid_tables = 0, fqid_range_size, min_fqid_num;
 
 	if (!prms) {
-		pr_err("Invalid DPA IPsec parameters handle\n");
+		log_err("Invalid DPA IPsec parameters handle\n");
 		return -EINVAL;
 	}
 
 	if ((prms->post_sec_in_params.do_pol_check) && (!prms->fm_pcd)) {
-		pr_err("Provide a valid PCD handle to enable inbound policy check!\n");
+		log_err("Provide a valid PCD handle to enable inbound policy check!\n");
 		return -EINVAL;
 	}
 
@@ -244,7 +245,7 @@ static int check_ipsec_params(const struct dpa_ipsec_params *prms)
 						DPA_OFFLD_DESC_NONE) {
 			/* verify that a valid key structure was configured */
 			if (!pre_sec_out_prms->table[i].key_fields) {
-				pr_err("Invalid key struct. for out table %d\n",
+				log_err("Invalid key struct. for out table %d\n",
 				       i);
 				return -EINVAL;
 			}
@@ -254,19 +255,19 @@ static int check_ipsec_params(const struct dpa_ipsec_params *prms)
 					pre_sec_out_prms->table[i].dpa_cls_td,
 				       &table_params);
 			if (err < 0) {
-				pr_err("Couldn't check type of outbound policy lookup table\n");
+				log_err("Couldn't check type of outbound policy lookup table\n");
 				return -EINVAL;
 			}
 
 			if (table_params.type == DPA_CLS_TBL_INDEXED) {
-				pr_err("Outbound policy lookup table cannot be of type INDEXED\n");
+				log_err("Outbound policy lookup table cannot be of type INDEXED\n");
 				return -EINVAL;
 			}
 			valid_tables++;
 		}
 
 	if (!valid_tables) {
-		pr_err("Specify at least one table for outbound policy lookup\n");
+		log_err("Specify at least one table for outbound policy lookup\n");
 		return -EINVAL;
 	}
 
@@ -277,7 +278,7 @@ static int check_ipsec_params(const struct dpa_ipsec_params *prms)
 	 */
 	if (prms->post_sec_in_params.dpa_cls_td == DPA_OFFLD_DESC_NONE) {
 		if (prms->post_sec_in_params.do_pol_check) {
-			pr_err("Index table required policy check enabled\n");
+			log_err("Index table required policy check enabled\n");
 			return -EINVAL;
 		}
 		goto skip_post_decryption_check;
@@ -287,13 +288,13 @@ static int check_ipsec_params(const struct dpa_ipsec_params *prms)
 	err = dpa_classif_table_get_params(prms->post_sec_in_params.dpa_cls_td,
 					   &table_params);
 	if (err < 0) {
-		pr_err("Could not check type of post decryption table\n");
+		log_err("Could not check type of post decryption table\n");
 		return -EINVAL;
 	}
 
 	/* verify that it is an indexed table */
 	if (table_params.type != DPA_CLS_TBL_INDEXED) {
-		pr_err("Post decryption table must be of type INDEXED\n");
+		log_err("Post decryption table must be of type INDEXED\n");
 		return -EINVAL;
 	}
 
@@ -303,7 +304,7 @@ static int check_ipsec_params(const struct dpa_ipsec_params *prms)
 	 */
 	if (table_params.indexed_params.entries_cnt <
 	    (prms->max_sa_pairs + prms->post_sec_in_params.base_flow_id)) {
-		pr_err("The post decryption table size is to small!\n");
+		log_err("The post decryption table size is to small!\n");
 		return -EINVAL;
 	}
 
@@ -318,18 +319,18 @@ skip_post_decryption_check:
 						pre_sec_in_prms->dpa_cls_td[i],
 						&table_params);
 			if (err < 0) {
-				pr_err("Couldn't check type of SA table\n");
+				log_err("Couldn't check type of SA table\n");
 				return -EINVAL;
 			}
 
 			if (table_params.type == DPA_CLS_TBL_INDEXED) {
-				pr_err("SA tables mustn't be of type index\n");
+				log_err("SA tables mustn't be of type index\n");
 				return -EINVAL;
 			}
 			valid_tables++;
 		}
 	if (!valid_tables) {
-		pr_err("Specify at least one valid table for SA lookup\n");
+		log_err("Specify at least one valid table for SA lookup\n");
 		return -EINVAL;
 	}
 
@@ -339,7 +340,7 @@ skip_post_decryption_check:
 	 */
 	if (prms->post_sec_in_params.do_pol_check &&
 	    prms->post_sec_in_params.key_fields == 0) {
-		pr_err("At least one field must be specified IN policy keys\n");
+		log_err("At least one field must be specified IN policy keys\n");
 		return -EINVAL;
 	}
 
@@ -348,7 +349,7 @@ skip_post_decryption_check:
 	 * for offloading at least one SA pair
 	 */
 	if (prms->max_sa_pairs == 0) {
-		pr_err("The instance must be configured for offloading at least one SA pair\n");
+		log_err("The instance must be configured for offloading at least one SA pair\n");
 		return -EINVAL;
 	}
 
@@ -358,7 +359,7 @@ skip_post_decryption_check:
 						prms->fqid_range->start_fqid;
 		min_fqid_num = prms->max_sa_pairs * 2 * NUM_FQS_PER_SA;
 		if (fqid_range_size <= 0 || fqid_range_size <  min_fqid_num) {
-			pr_err("Insufficient number of FQIDs in range!\n");
+			log_err("Insufficient number of FQIDs in range!\n");
 			return -EINVAL;
 		}
 	}
@@ -441,7 +442,7 @@ static int create_inpol_node(struct dpa_ipsec *dpa_ipsec, void **cc_node)
 	*cc_node = FM_PCD_MatchTableSet(dpa_ipsec->config.fm_pcd,
 					&cc_node_prms);
 	if (!*cc_node) {
-		pr_err("%s: FM_PCD_MatchTableSet failed!\n", __func__);
+		log_err("%s: FM_PCD_MatchTableSet failed!\n", __func__);
 		return -EBUSY;
 	}
 
@@ -458,8 +459,8 @@ static inline void destroy_inpol_node(struct dpa_ipsec *dpa_ipsec,
 
 	fmd_err = FM_PCD_MatchTableDelete(cc_node);
 	if (fmd_err != E_OK) {
-		pr_err("%s: FM_PCD_MatchTableDelete failed!\n", __func__);
-		pr_err("Could not free policy check CC Node\n");
+		log_err("%s: FM_PCD_MatchTableDelete failed!\n", __func__);
+		log_err("Could not free policy check CC Node\n");
 	}
 }
 
@@ -485,7 +486,7 @@ static int create_inpol_cls_tbl(struct dpa_ipsec *dpa_ipsec,
 	params.cc_node = cc_node;
 	err = dpa_classif_table_create(&params, td);
 	if (err < 0) {
-		pr_err("Could not create exact match tbl");
+		log_err("Could not create exact match tbl");
 		return err;
 	}
 
@@ -499,7 +500,7 @@ static inline void destroy_inpol_cls_tbl(int td)
 	if (td != DPA_OFFLD_DESC_NONE) {
 		err = dpa_classif_table_free(td);
 		if (err < 0)
-			pr_err("Could not free EM table\n");
+			log_err("Could not free EM table\n");
 	}
 }
 
@@ -510,7 +511,7 @@ static int get_inbound_flowid(struct dpa_ipsec *dpa_ipsec, uint16_t *flowid)
 	BUG_ON(!flowid);
 
 	if (cq_get_2bytes(dpa_ipsec->sa_mng.inbound_flowid_cq, flowid) < 0) {
-		pr_err("Could not retrieve a valid inbound flow ID\n");
+		log_err("Could not retrieve a valid inbound flow ID\n");
 		return -EDOM;
 	}
 
@@ -523,7 +524,7 @@ static int put_inbound_flowid(struct dpa_ipsec *dpa_ipsec, uint16_t flowid)
 	BUG_ON(!dpa_ipsec->sa_mng.inbound_flowid_cq);
 
 	if (cq_put_2bytes(dpa_ipsec->sa_mng.inbound_flowid_cq, flowid) < 0) {
-		pr_err("Could not release inbound flow id\n");
+		log_err("Could not release inbound flow id\n");
 		return -EDOM;
 	}
 
@@ -540,7 +541,7 @@ static int create_inbound_flowid_cq(struct dpa_ipsec *dpa_ipsec)
 
 	cq = cq_new(dpa_ipsec->sa_mng.max_num_sa / 2, sizeof(uint16_t));
 	if (!cq) {
-		pr_err("Could not create inbound flow ID management CQ\n");
+		log_err("Could not create inbound flow ID management CQ\n");
 		return -ENOMEM;
 	}
 
@@ -552,7 +553,7 @@ static int create_inbound_flowid_cq(struct dpa_ipsec *dpa_ipsec)
 	     i < dpa_ipsec->sa_mng.max_num_sa / 2 + base_flow_id; i++) {
 		err = put_inbound_flowid(dpa_ipsec, (uint16_t) i);
 		if (err < 0) {
-			pr_err("Couldn't fill flow id management queue\n");
+			log_err("Couldn't fill flow id management queue\n");
 			cq_delete(cq);
 			dpa_ipsec->sa_mng.inbound_flowid_cq = NULL;
 			return err;
@@ -592,7 +593,7 @@ static int get_free_inbpol_tbl(struct dpa_ipsec *dpa_ipsec, int *table_desc)
 		inpol_tbl->used = true;
 		*table_desc = inpol_tbl->td;
 	} else {
-		pr_err("No more free EM tables for inbound policy verification\n");
+		log_err("No more free EM tables for inbound policy verification\n");
 		ret = -ENOMEM;
 	}
 
@@ -653,7 +654,7 @@ static int get_free_ipsec_manip_node(struct dpa_ipsec *dpa_ipsec, void **hm)
 		ipsec_manip_node->used = true;
 		*hm = ipsec_manip_node->hm;
 	} else {
-		pr_err("No more free IPSec manip nodes for special operations\n");
+		log_err("No more free IPSec manip nodes for special operations\n");
 		ret = -ENOMEM;
 	}
 
@@ -751,7 +752,7 @@ static int create_fqid_cq(struct dpa_ipsec *dpa_ipsec)
 		fqid_cq = cq_new(fqid_range->end_fqid - fqid_range->start_fqid,
 				 sizeof(uint32_t));
 		if (!fqid_cq) {
-			pr_err("Could not create CQ for FQID management!\n");
+			log_err("Could not create CQ for FQID management!\n");
 			return -ENOMEM;
 		}
 
@@ -760,7 +761,7 @@ static int create_fqid_cq(struct dpa_ipsec *dpa_ipsec)
 		/* fill the CQ */
 		for (i = fqid_range->start_fqid; i < fqid_range->end_fqid; i++)
 			if (cq_put_4bytes(fqid_cq, (uint16_t)i) < 0) {
-				pr_err("Could not fill fqid management CQ!\n");
+				log_err("Could not fill fqid management CQ!\n");
 				return -EDOM;
 			}
 	}
@@ -804,28 +805,28 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 	/* create queue that holds free SA IDs */
 	sa_mng->sa_id_cq = cq_new(sa_mng->max_num_sa, sizeof(int));
 	if (!sa_mng->sa_id_cq) {
-		pr_err("Could not create SA IDs circular queue\n");
+		log_err("Could not create SA IDs circular queue\n");
 		return -ENOMEM;
 	}
 
-	/* fill with ids */
+	/* fill with IDs */
 	for (i = 0; i < sa_mng->max_num_sa; i++)
 		if (cq_put_4bytes(sa_mng->sa_id_cq, i) < 0) {
-			pr_err("Could not fill SA ID management CQ\n");
+			log_err("Could not fill SA ID management CQ\n");
 			return -EDOM;
 		}
 
 	/* initialize the circular queue for FQIDs management */
 	err = create_fqid_cq(dpa_ipsec);
 	if (err < 0) {
-		pr_err("Could not initialize FQID management mechanism!\n");
+		log_err("Could not initialize FQID management mechanism!\n");
 		return err;
 	}
 
 	/* alloc SA array */
 	sa = kzalloc(sa_mng->max_num_sa * sizeof(*sa_mng->sa), GFP_KERNEL);
 	if (!sa) {
-		pr_err("Could not allocate memory for SAs\n");
+		log_err("Could not allocate memory for SAs\n");
 		return -ENOMEM;
 	}
 	sa_mng->sa = sa;
@@ -836,43 +837,44 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 		sa[i].cipher_data.cipher_key =
 					kzalloc(MAX_CIPHER_KEY_LEN, GFP_KERNEL);
 		if (!sa[i].cipher_data.cipher_key) {
-			pr_err("Could not allocate memory for cipher key\n");
+			log_err("Could not allocate memory for cipher key\n");
 			return -ENOMEM;
 		}
 		sa[i].auth_data.auth_key =
 					kzalloc(MAX_AUTH_KEY_LEN, GFP_KERNEL);
 		if (!sa[i].auth_data.auth_key) {
-			pr_err("Could not allocate memory for authentication key\n");
+			log_err("Could not allocate memory for authentication key\n");
 			return -ENOMEM;
 		}
 
 		sa[i].auth_data.split_key =
 					kzalloc(MAX_AUTH_KEY_LEN, GFP_KERNEL);
 		if (!sa[i].auth_data.split_key) {
-			pr_err("Could not allocate memory for authentication split key\n");
+			log_err("Could not allocate memory for authentication split key\n");
 			return -ENOMEM;
 		}
 
 		sa[i].from_sec_fq = kzalloc(sizeof(struct qman_fq), GFP_KERNEL);
 		if (!sa[i].from_sec_fq) {
-			pr_err("Can't allocate space for 'from SEC FQ'\n");
+			log_err("Can't allocate space for 'from SEC FQ'\n");
 			return -ENOMEM;
 		}
 
 		sa[i].to_sec_fq = kzalloc(sizeof(struct qman_fq), GFP_KERNEL);
 		if (!sa[i].to_sec_fq) {
-			pr_err("Can't allocate space for 'to SEC FQ'\n");
+			log_err("Can't allocate space for 'to SEC FQ'\n");
 			return -ENOMEM;
 		}
 
-		/* Allocate space for the SEC descriptor which is holding the
+		/*
+		 * Allocate space for the SEC descriptor which is holding the
 		 * preheader information and the share descriptor.
 		 * Required 64 byte align.
 		 */
 		sa[i].sec_desc_unaligned =
 			kzalloc(sizeof(struct sec_descriptor) + 64, GFP_KERNEL);
 		if (!sa[i].sec_desc_unaligned) {
-			pr_err("Could not allocate memory for SEC descriptor\n");
+			log_err("Could not allocate memory for SEC descriptor\n");
 			return -ENOMEM;
 		}
 		sa[i].sec_desc = PTR_ALIGN(sa[i].sec_desc_unaligned, 64);
@@ -883,7 +885,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 			kzalloc(2 * MAX_EXTRA_DESC_COMMANDS + L1_CACHE_BYTES,
 				GFP_KERNEL);
 		if (!sa[i].sec_desc_extra_cmds_unaligned) {
-			pr_err("Allocation failed for CAAM extra commands\n");
+			log_err("Allocation failed for CAAM extra commands\n");
 			return -ENOMEM;
 		}
 		sa[i].sec_desc_extra_cmds =
@@ -901,7 +903,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 			kzalloc(MAX_CAAM_DESCSIZE * sizeof(uint32_t) + 64,
 				GFP_KERNEL);
 		if (!sa[i].rjob_desc_unaligned) {
-			pr_err("No memory for replacement job descriptor\n");
+			log_err("No memory for replacement job descriptor\n");
 			return -ENOMEM;
 		}
 		sa[i].rjob_desc = PTR_ALIGN(sa[i].rjob_desc_unaligned, 64);
@@ -924,7 +926,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 	if (!ignore_post_ipsec_action(dpa_ipsec)) {
 		err = create_inbound_flowid_cq(dpa_ipsec);
 		if (err < 0) {
-			pr_err("Could not create inbound policy flow id cq\n");
+			log_err("Could not create inbound policy flow id cq\n");
 			return err;
 		}
 	} else {
@@ -945,7 +947,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 				     &dpa_ipsec->sa_mng.inpol_key_size);
 
 		if (dpa_ipsec->sa_mng.inpol_key_size == 0) {
-			pr_err("Invalid argument: in policy table key size\n");
+			log_err("Invalid argument: in policy table key size\n");
 			return -EFAULT;
 		}
 
@@ -955,7 +957,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 		for (i = 0; i < dpa_ipsec->config.max_sa_pairs; i++) {
 			pol_table = kzalloc(sizeof(*pol_table), GFP_KERNEL);
 			if (!pol_table) {
-				pr_err("Could not allocate memory for policy table");
+				log_err("Could not allocate memory for policy table");
 				mutex_unlock(&sa_mng->inpol_tables_lock);
 				return -ENOMEM;
 			}
@@ -963,7 +965,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 			/* create cc node for inbound policy */
 			err = create_inpol_node(dpa_ipsec, &cc_node);
 			if (err < 0) {
-				pr_err("Could not create cc node for EM table\n");
+				log_err("Could not create cc node for EM table\n");
 				kfree(pol_table);
 				mutex_unlock(&sa_mng->inpol_tables_lock);
 				return err;
@@ -973,7 +975,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 						   cc_node,
 						   &pol_table->td);
 			if (err < 0) {
-				pr_err("Failed create in policy table\n");
+				log_err("Failed create in policy table\n");
 				destroy_inpol_node(dpa_ipsec, cc_node);
 				kfree(pol_table);
 				mutex_unlock(&sa_mng->inpol_tables_lock);
@@ -992,14 +994,14 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 		struct ipsec_manip_node *node;
 		node = kzalloc(sizeof(*node), GFP_KERNEL);
 		if (!node) {
-			pr_err("Could not allocate memory for IPSec manip node\n");
+			log_err("Could not allocate memory for IPSec manip node\n");
 			mutex_unlock(&sa_mng->ipsec_manip_node_lock);
 			return -ENOMEM;
 		}
 
 		node->hm = alloc_ipsec_manip(dpa_ipsec);
 		if (!node->hm) {
-			pr_err("Could not create IPSec manip node\n");
+			log_err("Could not create IPSec manip node\n");
 			kfree(node);
 			mutex_unlock(&sa_mng->ipsec_manip_node_lock);
 			return -ENOMEM;
@@ -1021,7 +1023,7 @@ static int init_sa_manager(struct dpa_ipsec *dpa_ipsec)
 	dpa_ipsec->sa_mng.sa_rekeying_wq =
 		create_singlethread_workqueue("sa_rekeying_wq");
 	if (!dpa_ipsec->sa_mng.sa_rekeying_wq) {
-		pr_err("Creating SA rekeying work queue failed\n");
+		log_err("Creating SA rekeying work queue failed\n");
 		return -ENOSPC;
 	}
 
@@ -1044,7 +1046,7 @@ static void free_sa_mng(struct dpa_ipsec *dpa_ipsec)
 
 	/* sanity checks */
 	if (!dpa_ipsec) {
-		pr_err("Invalid argument: NULL DPA IPSec instance\n");
+		log_err("Invalid argument: NULL DPA IPSec instance\n");
 		return;
 	}
 
@@ -1129,7 +1131,7 @@ static void free_resources(void)
 
 	/* sanity checks */
 	if (!gbl_dpa_ipsec) {
-		pr_err("There is no DPA IPSec instance initialized\n");
+		log_err("There is no DPA IPSec instance initialized\n");
 		return;
 	}
 	dpa_ipsec = gbl_dpa_ipsec;
@@ -1193,7 +1195,7 @@ static int set_flow_id_action(struct dpa_ipsec_sa *sa,
 	err = dpa_classif_table_modify_entry_by_key(table, &tbl_key,
 						    &mod_params);
 	if (err < 0) {
-		pr_err("Couldn't set flowID action for SA id %d\n", sa->id);
+		log_err("Couldn't set flowID action for SA id %d\n", sa->id);
 		return err;
 	}
 	sa->valid_flowid_entry = true;
@@ -1297,13 +1299,13 @@ static int fill_policy_key(int td,
 	/* get table params (including maximum key size) */
 	err = dpa_classif_table_get_params(td, &tbl_params);
 	if (err < 0) {
-		pr_err("Could not retrieve table maximum key size\n");
+		log_err("Could not retrieve table maximum key size\n");
 		return -EINVAL;
 	}
 	tbl_key_size = TABLE_KEY_SIZE(tbl_params);
 
 	if (tbl_key_size < offset) {
-		pr_err("Policy key is greater than maximum table key size\n");
+		log_err("Policy key is greater than maximum table key size\n");
 		return -EINVAL;
 	}
 
@@ -1388,13 +1390,13 @@ static int create_ipsec_manip(struct dpa_ipsec_sa *sa, int next_hmd, int *hmd)
 	hm = FM_PCD_ManipNodeSet(sa->dpa_ipsec->config.fm_pcd,
 				 &pcd_manip_params);
 	if (!hm) {
-		pr_err("%s: FM_PCD_ManipNodeSet failed!\n", __func__);
+		log_err("%s: FM_PCD_ManipNodeSet failed!\n", __func__);
 		return -EBUSY;
 	}
 
 	err = dpa_classif_import_static_hm(hm, next_hmd, hmd);
 	if (err < 0)
-		pr_err("%s: Failed to import header manipulation into DPA "
+		log_err("%s: Failed to import header manipulation into DPA "
 			"Classifier.\n", __func__);
 
 	return err;
@@ -1426,7 +1428,7 @@ static void *alloc_ipsec_manip(struct dpa_ipsec *dpa_ipsec)
 
 	hm = FM_PCD_ManipNodeSet(dpa_ipsec->config.fm_pcd, &pcd_manip_params);
 	if (!hm) {
-		pr_err("%s: FM_PCD_ManipSetNode failed!\n", __func__);
+		log_err("%s: FM_PCD_ManipSetNode failed!\n", __func__);
 		return NULL;
 	}
 
@@ -1472,7 +1474,7 @@ static int update_ipsec_manip(struct dpa_ipsec_sa *sa, int next_hmd, int *hmd)
 
 	ret = get_free_ipsec_manip_node(sa->dpa_ipsec, &ipsec_hm);
 	if (ret < 0) {
-		pr_err("%s: get_free_ipsec_manip_node failed for %s SA %d!\n",
+		log_err("%s: get_free_ipsec_manip_node failed for %s SA %d!\n",
 			__func__, sa_is_inbound(sa) ?
 			"inbound" : "outbound", sa->id);
 		return ret;
@@ -1484,7 +1486,7 @@ static int update_ipsec_manip(struct dpa_ipsec_sa *sa, int next_hmd, int *hmd)
 	new_hm = FM_PCD_ManipNodeSet(sa->dpa_ipsec->config.fm_pcd,
 				     &pcd_manip_params);
 	if (!new_hm) {
-		pr_err("%s: FM_PCD_ManipSetNode failed!\n", __func__);
+		log_err("%s: FM_PCD_ManipSetNode failed!\n", __func__);
 		put_free_ipsec_manip_node(sa->dpa_ipsec, ipsec_hm);
 		return -EBUSY;
 	}
@@ -1493,7 +1495,7 @@ static int update_ipsec_manip(struct dpa_ipsec_sa *sa, int next_hmd, int *hmd)
 
 	err = FM_PCD_ManipNodeDelete(ipsec_hm);
 	if (err != E_OK) {
-		pr_err("%s: FM_PCD_ManipNodeDelete failed for %s SA %d!\n",
+		log_err("%s: FM_PCD_ManipNodeDelete failed for %s SA %d!\n",
 			__func__, sa_is_inbound(sa) ?
 			"inbound" : "outbound", sa->id);
 		put_free_ipsec_manip_node(sa->dpa_ipsec, new_hm);
@@ -1502,7 +1504,7 @@ static int update_ipsec_manip(struct dpa_ipsec_sa *sa, int next_hmd, int *hmd)
 
 	ret = dpa_classif_import_static_hm(new_hm, next_hmd, hmd);
 	if (ret < 0) {
-		pr_err("%s: Failed to import header manipulation into DPA "
+		log_err("%s: Failed to import header manipulation into DPA "
 			"Classifier.\n", __func__);
 		put_free_ipsec_manip_node(sa->dpa_ipsec, new_hm);
 	}
@@ -1539,7 +1541,7 @@ static int destroy_recycle_manip(struct dpa_ipsec_sa *sa,
 		 */
 		err = FM_PCD_ManipNodeDelete(hm);
 		if (err != E_OK) {
-			pr_err("%s: FM_PCD_ManipNodeDelete failed for SA %d!\n",
+			log_err("%s: FM_PCD_ManipNodeDelete failed for SA %d!\n",
 				__func__, sa->id);
 			return -EBUSY;
 		}
@@ -1549,7 +1551,7 @@ static int destroy_recycle_manip(struct dpa_ipsec_sa *sa,
 remove_hm:
 	err = dpa_classif_free_hm(hmd);
 	if (err < 0) {
-		pr_err("%s: Failed to remove header manip!\n", __func__);
+		log_err("%s: Failed to remove header manip!\n", __func__);
 		return err;
 	}
 
@@ -1575,7 +1577,7 @@ static int update_inbound_policy(struct dpa_ipsec_sa *sa,
 	memset(key_data, 0, DPA_OFFLD_MAXENTRYKEYSIZE);
 	memset(mask_data, 0, DPA_OFFLD_MAXENTRYKEYSIZE);
 	if (sa->em_inpol_td < 0) {
-		pr_err("Invalid exact match table for SA %d.\n", sa->id);
+		log_err("Invalid exact match table for SA %d.\n", sa->id);
 		return -EINVAL;
 	}
 
@@ -1615,7 +1617,7 @@ static int update_inbound_policy(struct dpa_ipsec_sa *sa,
 					      policy_entry->pol_params.priority,
 					      &entry_id);
 		if (err < 0) {
-			pr_err("Could not insert key in EM table\n");
+			log_err("Could not insert key in EM table\n");
 			return err;
 		}
 		policy_entry->entry_id = entry_id;
@@ -1625,12 +1627,12 @@ static int update_inbound_policy(struct dpa_ipsec_sa *sa,
 		err = dpa_classif_table_delete_entry_by_ref(sa->em_inpol_td,
 							    entry_id);
 		if (err < 0) {
-			pr_err("Could not remove key in EM table\n");
+			log_err("Could not remove key in EM table\n");
 			return err;
 		}
 		break;
 	case MNG_OP_MODIFY:
-		pr_err("Modify operation unsupported for IN Policy PCD\n");
+		log_err("Modify operation unsupported for IN Policy PCD\n");
 		return -EINVAL;
 	}
 
@@ -1675,7 +1677,7 @@ static int update_outbound_policy(struct dpa_ipsec_sa *sa,
 	 * provided
 	 */
 	if (table == DPA_OFFLD_DESC_NONE) {
-		pr_err("No suitable table found for this policy type!\n");
+		log_err("No suitable table found for this policy type!\n");
 		return -EBADF;
 	}
 
@@ -1721,7 +1723,7 @@ static int update_outbound_policy(struct dpa_ipsec_sa *sa,
 			err = update_ipsec_manip(sa, manip_hmd,
 						 &policy_entry->hmd);
 		if (err < 0) {
-			pr_err("Couldn't create policy manip chain!\n");
+			log_err("Couldn't create policy manip chain!\n");
 			return err;
 		}
 
@@ -1748,7 +1750,7 @@ no_frag_or_manip:
 							 DPA_OFFLD_DESC_NONE,
 							 &sa->ipsec_hmd);
 			if (err < 0) {
-				pr_err("Couldn't create SA manip!\n");
+				log_err("Couldn't create SA manip!\n");
 				return err;
 			}
 		}
@@ -1756,14 +1758,15 @@ no_frag_or_manip:
 
 set_manipulation:
 		memset(&action, 0, sizeof(action));
-		fill_cls_action_enq(&action, FALSE,
+		fill_cls_action_enq(&action,
+				    (sa->enable_extended_stats)? TRUE: FALSE,
 				    qman_fq_fqid(sa->to_sec_fq), pol_hmd);
 
 		err = dpa_classif_table_insert_entry(table, &tbl_key, &action,
 					      policy_entry->pol_params.priority,
 					      &policy_entry->entry_id);
 		if (err < 0) {
-			pr_err("Could not add key in exact match table\n");
+			log_err("Could not add key in exact match table\n");
 			return err;
 		}
 		break;
@@ -1771,7 +1774,7 @@ set_manipulation:
 		err = dpa_classif_table_delete_entry_by_ref(table,
 							policy_entry->entry_id);
 		if (err < 0) {
-			pr_err("Could not remove key from EM table\n");
+			log_err("Could not remove key from EM table\n");
 			return err;
 		}
 
@@ -1781,7 +1784,7 @@ set_manipulation:
 			hmd_entry.hmd_special_op = policy_entry->hmd_special_op;
 			err = destroy_recycle_manip(sa, &hmd_entry);
 			if (err < 0) {
-				pr_err("Couldn't delete frag & ipsec manip\n");
+				log_err("Couldn't delete frag & ipsec manip\n");
 				return err;
 			}
 			policy_entry->hmd = DPA_OFFLD_DESC_NONE;
@@ -1795,7 +1798,8 @@ set_manipulation:
 			pol_hmd = sa->ipsec_hmd;
 
 		memset(&action, 0, sizeof(action));
-		fill_cls_action_enq(&action, FALSE,
+		fill_cls_action_enq(&action,
+				    (sa->enable_extended_stats)? TRUE: FALSE,
 				    qman_fq_fqid((sa->to_sec_fq)), pol_hmd);
 
 		memset(&params, 0, sizeof(params));
@@ -1807,7 +1811,7 @@ set_manipulation:
 							 policy_entry->entry_id,
 							 &params);
 		if (err < 0) {
-			pr_err("Could not modify key in EM table\n");
+			log_err("Could not modify key in EM table\n");
 			return err;
 		}
 		break;
@@ -1839,7 +1843,7 @@ static int update_pre_sec_inbound_table(struct dpa_ipsec_sa *sa,
 		table =
 		      dpa_ipsec->config.pre_sec_in_params.dpa_cls_td[table_idx];
 		if (table == DPA_OFFLD_DESC_NONE) {
-			pr_err("No SA table defined for this type of SA\n");
+			log_err("No SA table defined for this type of SA\n");
 			return -EBADF;
 		}
 
@@ -1890,13 +1894,13 @@ static int update_pre_sec_inbound_table(struct dpa_ipsec_sa *sa,
 		/* determine padding length based on the table params */
 		err = dpa_classif_table_get_params(table, &tbl_params);
 		if (err < 0) {
-			pr_err("Could not get table maximum key size\n");
+			log_err("Could not get table maximum key size\n");
 			return err;
 		}
 		tbl_key_size = TABLE_KEY_SIZE(tbl_params);
 
 		if (tbl_key_size < offset) {
-			pr_err("SA lookup key is greater than maximum table key size\n");
+			log_err("SA lookup key is greater than maximum table key size\n");
 			return -EINVAL;
 		}
 
@@ -1911,13 +1915,14 @@ static int update_pre_sec_inbound_table(struct dpa_ipsec_sa *sa,
 
 		/* Complete the parameters for table insert function */
 		memset(&action, 0, sizeof(action));
-		fill_cls_action_enq(&action, FALSE,
+		fill_cls_action_enq(&action,
+			(sa->enable_extended_stats)? TRUE: FALSE,
 			qman_fq_fqid((sa->to_sec_fq)), sa->ipsec_hmd);
 
 		err = dpa_classif_table_insert_entry(table, &tbl_key, &action,
 						     0, &entry_id);
 		if (err < 0) {
-			pr_err("Could not add key for inbound SA!\n");
+			log_err("Could not add key for inbound SA!\n");
 			return err;
 		}
 		sa->inbound_hash_entry = entry_id;
@@ -1928,7 +1933,7 @@ static int update_pre_sec_inbound_table(struct dpa_ipsec_sa *sa,
 		err = dpa_classif_table_delete_entry_by_ref(sa->inbound_sa_td,
 							    entry_id);
 		if (err < 0) {
-			pr_err("Could not remove key for inbound SA!\n");
+			log_err("Could not remove key for inbound SA!\n");
 			return err;
 		}
 		sa->inbound_hash_entry = DPA_OFFLD_INVALID_OBJECT_ID;
@@ -1947,7 +1952,7 @@ static int update_pre_sec_inbound_table(struct dpa_ipsec_sa *sa,
 							    entry_id,
 							    &mod_params);
 		if (err < 0) {
-			pr_err("Failed set drop action for inbound SA %d\n",
+			log_err("Failed set drop action for inbound SA %d\n",
 				  sa->id);
 			return err;
 		}
@@ -1985,7 +1990,7 @@ static inline int remove_inbound_flow_id_classif(struct dpa_ipsec_sa *sa)
 	action.type = DPA_CLS_TBL_ACTION_DROP;
 	err = set_flow_id_action(sa, &action);
 	if (err < 0) {
-		pr_err("Could not remove SA entry in indexed table\n");
+		log_err("Could not remove SA entry in indexed table\n");
 		return err;
 	}
 
@@ -2007,7 +2012,7 @@ static int get_new_fqid(struct dpa_ipsec *dpa_ipsec, uint32_t *fqid)
 	if (dpa_ipsec->sa_mng.fqid_cq != NULL) {
 		err = cq_get_4bytes(dpa_ipsec->sa_mng.fqid_cq, fqid);
 		if (err < 0)
-			pr_err("FQID allocation (from range) failure."
+			log_err("FQID allocation (from range) failure."
 				   "QMan error code %d\n", err);
 		return err;
 	}
@@ -2015,7 +2020,7 @@ static int get_new_fqid(struct dpa_ipsec *dpa_ipsec, uint32_t *fqid)
 	/* No pool defined. Get FQID from default allocator. */
 	err = qman_alloc_fqid(fqid);
 	if (err < 0) {
-		pr_err("FQID allocation (no pool) failure.\n");
+		log_err("FQID allocation (no pool) failure.\n");
 		return -ERANGE;
 	}
 
@@ -2028,7 +2033,7 @@ static void put_free_fqid(uint32_t fqid)
 	int err;
 
 	if (!gbl_dpa_ipsec) {
-		pr_err("There is no DPA IPSec instance initialized\n");
+		log_err("There is no DPA IPSec instance initialized\n");
 		return;
 	}
 	dpa_ipsec = gbl_dpa_ipsec;
@@ -2055,7 +2060,7 @@ static int wait_until_fq_empty(struct qman_fq *fq, int timeout)
 	} while (queryfq_np.frm_cnt && timeout);
 
 	if (timeout == 0) {
-		pr_err("Timeout. Fq with id %d not empty.\n", fq->fqid);
+		log_err("Timeout. Fq with id %d not empty.\n", fq->fqid);
 		return -EBUSY;
 	}
 
@@ -2078,13 +2083,13 @@ static int remove_sa_sec_fq(struct qman_fq *sec_fq)
 
 	err = qman_retire_fq(sec_fq, &flags);
 	if (err < 0) {
-		pr_err("Failed to retire FQ %d\n", sec_fq->fqid);
+		log_err("Failed to retire FQ %d\n", sec_fq->fqid);
 		return err;
 	}
 
 	err = qman_oos_fq(sec_fq);
 	if (err < 0) {
-		pr_err("Failed to OOS FQ %d\n", sec_fq->fqid);
+		log_err("Failed to OOS FQ %d\n", sec_fq->fqid);
 		return err;
 	}
 
@@ -2136,7 +2141,7 @@ static int create_sec_frame_queue(uint32_t fq_id, uint16_t channel,
 
 	err = qman_create_fq(fq_id, flags, fq);
 	if (unlikely(err < 0)) {
-		pr_err("Could not create FQ with ID: %u\n", fq_id);
+		log_err("Could not create FQ with ID: %u\n", fq_id);
 		goto create_sec_fq_err;
 	}
 
@@ -2174,8 +2179,8 @@ static int create_sec_frame_queue(uint32_t fq_id, uint16_t channel,
 			error = FM_GetSpecialOperationCoding(fm, sp_op,
 							     &sp_op_code);
 			if (error != E_OK) {
-				pr_err("FM_GetSpecialOperationCoding failed\n");
-				pr_err("Could not retrieve special op code");
+				log_err("FM_GetSpecialOperationCoding failed\n");
+				log_err("Could not retrieve special op code");
 				goto create_sec_fq_err;
 			}
 			/* the opcode is a 4-bit value */
@@ -2199,7 +2204,7 @@ static int create_sec_frame_queue(uint32_t fq_id, uint16_t channel,
 
 	err = qman_init_fq(fq, flags, &fq_opts);
 	if (unlikely(err < 0)) {
-		pr_err("Could not init FQ with ID: %u\n", fq->fqid);
+		log_err("Could not init FQ with ID: %u\n", fq->fqid);
 		goto create_sec_fq_err;
 	}
 
@@ -2229,7 +2234,7 @@ static int create_sa_fq_pair(struct dpa_ipsec_sa *sa,
 
 	err = create_sec_descriptor(sa);
 	if (err < 0) {
-		pr_err("Could not create sec descriptor\n");
+		log_err("Could not create sec descriptor\n");
 		return err;
 	}
 
@@ -2274,7 +2279,7 @@ static int create_sa_fq_pair(struct dpa_ipsec_sa *sa,
 					     sa->dpa_ipsec->config.fm_pcd,
 					     FALSE, sa->from_sec_fq);
 		if (err < 0) {
-			pr_err("From SEC FQ couldn't be created\n");
+			log_err("From SEC FQ couldn't be created\n");
 			goto create_fq_pair_err;
 		}
 	}
@@ -2290,7 +2295,7 @@ static int create_sa_fq_pair(struct dpa_ipsec_sa *sa,
 			qman_fq_fqid(sa->from_sec_fq), /*ctxB - output SEC fq*/
 			0, NULL, parked_to_secfq, sa->to_sec_fq);
 	if (err < 0) {
-		pr_err("%s FQ (to SEC) couldn't be created\n",
+		log_err("%s FQ (to SEC) couldn't be created\n",
 			sa_is_outbound(sa) ? "Encrypt" : "Decrypt");
 		goto create_fq_pair_err;
 	}
@@ -2310,14 +2315,14 @@ static int create_sa_fq_pair(struct dpa_ipsec_sa *sa,
 }
 
 static inline int set_cipher_auth_alg(enum dpa_ipsec_cipher_alg alg_suite,
-			       uint16_t *cipher, uint16_t *auth)
+				      uint16_t *cipher, uint16_t *auth)
 {
 	*cipher = ipsec_algs[alg_suite].enc_alg;
 	*auth = ipsec_algs[alg_suite].auth_alg;
 
 	if (*cipher == OP_PCL_IPSEC_INVALID_ALG_ID ||
 	    *auth == OP_PCL_IPSEC_INVALID_ALG_ID) {
-		pr_err("Invalid algorithm suite selected\n");
+		log_err("Invalid algorithm suite selected\n");
 		return -EINVAL;
 	}
 
@@ -2336,6 +2341,7 @@ static int copy_sa_params_to_out_sa(struct dpa_ipsec_sa *sa,
 
 	sa->sa_dir = DPA_IPSEC_OUTBOUND;
 	sa->sa_bpid = sa_params->sa_bpid;
+	sa->sa_bufsize = sa_params->sa_bufsize;
 	sa->sa_wqid = sa_params->sa_wqid;
 	ip_addr_type = sa_params->sa_out_params.ip_ver;
 
@@ -2436,7 +2442,7 @@ static int copy_sa_params_to_out_sa(struct dpa_ipsec_sa *sa,
 			 * this should never be reached - it should be checked
 			 * before in check SA params function
 			 */
-			pr_err("NAT-T is not supported for IPv6 SAs\n");
+			log_err("NAT-T is not supported for IPv6 SAs\n");
 			return -EINVAL;
 		}
 	} else {
@@ -2456,6 +2462,7 @@ static int copy_sa_params_to_out_sa(struct dpa_ipsec_sa *sa,
 
 	sa->l2_hdr_size = sa_params->l2_hdr_size;
 	sa->enable_stats = sa_params->enable_stats;
+	sa->enable_extended_stats = sa_params->enable_extended_stats;
 #ifdef DEBUG_PARAM
 	/* Printing all the parameters */
 	print_sa_sec_param(sa);
@@ -2481,7 +2488,7 @@ static int copy_sa_params_to_in_sa(struct dpa_ipsec_sa *sa,
 	if (!ignore_post_ipsec_action(dpa_ipsec) && !rekeying) {
 		err = get_inbound_flowid(dpa_ipsec, &sa->inbound_flowid);
 		if (err < 0) {
-			pr_err("Can't get valid inbound flow id\n");
+			log_err("Can't get valid inbound flow id\n");
 			sa->inbound_flowid = INVALID_INB_FLOW_ID;
 			return -EINVAL;
 		}
@@ -2489,6 +2496,7 @@ static int copy_sa_params_to_in_sa(struct dpa_ipsec_sa *sa,
 
 	sa->sa_dir = DPA_IPSEC_INBOUND;
 	sa->sa_bpid = sa_params->sa_bpid;
+	sa->sa_bufsize = sa_params->sa_bufsize;
 	sa->sa_wqid = sa_params->sa_wqid;
 	sa->spi = sa_params->spi;
 
@@ -2524,7 +2532,7 @@ static int copy_sa_params_to_in_sa(struct dpa_ipsec_sa *sa,
 		struct dpa_cls_tbl_policer_params	*policer_params;
 		policer_params = kzalloc(sizeof(*policer_params), GFP_KERNEL);
 		if (!policer_params) {
-			pr_err("Could not allocate memory for policer parameters\n");
+			log_err("Could not allocate memory for policer parameters\n");
 			return -ENOMEM;
 		}
 		memcpy(policer_params,
@@ -2564,7 +2572,7 @@ static int copy_sa_params_to_in_sa(struct dpa_ipsec_sa *sa,
 		sa->sec_desc->pdb_dec.options |= PDBOPTS_ESP_ARS64;
 		break;
 	default:
-		pr_err("Invalid ARS mode specified\n");
+		log_err("Invalid ARS mode specified\n");
 		return -EINVAL;
 	}
 
@@ -2612,6 +2620,7 @@ static int copy_sa_params_to_in_sa(struct dpa_ipsec_sa *sa,
 	sa->policy_miss_action = sa_params->sa_in_params.policy_miss_action;
 	sa->l2_hdr_size = sa_params->l2_hdr_size;
 	sa->enable_stats = sa_params->enable_stats;
+	sa->enable_extended_stats = sa_params->enable_extended_stats;
 #ifdef DEBUG_PARAM
 	/* Printing all the parameters */
 	print_sa_sec_param(sa);
@@ -2628,27 +2637,27 @@ static int check_policy_params(struct dpa_ipsec_sa *sa,
 
 	/* check if both IP address are of the same type */
 	if (pol_params->src_addr.version != pol_params->dest_addr.version) {
-		pr_err("Src and dest IP address types must be the same!\n");
+		log_err("Src and dest IP address types must be the same!\n");
 		return -EINVAL;
 	}
 
 	/* check if IP address version is valid */
 	if (pol_params->src_addr.version != DPA_IPSEC_ADDR_T_IPv4 &&
 	    pol_params->src_addr.version != DPA_IPSEC_ADDR_T_IPv6) {
-		pr_err("Src and dest IP address types either 4 or 6!\n");
+		log_err("Src and dest IP address types either 4 or 6!\n");
 		return -EINVAL;
 	}
 
 	/* check if fragmentation is enabled for inbound SAs */
 	if (pol_params->dir_params.type == DPA_IPSEC_POL_DIR_PARAMS_MANIP &&
 	    sa_is_inbound(sa)) {
-		pr_err("Fragmentation or header manipulation can't be enabled for inbound policy!\n");
+		log_err("Fragmentation or header manipulation can't be enabled for inbound policy!\n");
 		return -EINVAL;
 	}
 
 	if (pol_params->dir_params.type == DPA_IPSEC_POL_DIR_PARAMS_MANIP &&
 	    pol_params->dir_params.manip_desc < 0) {
-		pr_err("Invalid manip descriptor for SA id %d\n", sa->id);
+		log_err("Invalid manip descriptor for SA id %d\n", sa->id);
 		return -EINVAL;
 	}
 
@@ -2658,7 +2667,7 @@ static int check_policy_params(struct dpa_ipsec_sa *sa,
 	 */
 	if (pol_params->dir_params.type == DPA_IPSEC_POL_DIR_PARAMS_ACT &&
 	    sa_is_outbound(sa)) {
-		pr_err("Action cannot be configured for outbound policy!\n");
+		log_err("Action cannot be configured for outbound policy!\n");
 		return -EINVAL;
 	}
 
@@ -2666,7 +2675,7 @@ static int check_policy_params(struct dpa_ipsec_sa *sa,
 	if (sa_is_outbound(sa) &&
 	    sa->sec_desc->pdb_en.hmo_rsvd == PDBHMO_ESP_DFBIT &&
 	    pol_params->src_addr.version == DPA_IPSEC_ADDR_T_IPv6) {
-		pr_err("Can't add IPv6 policy to IPv4 SA w/ DF bit copy set\n");
+		log_err("Can't add IPv6 policy to IPv4 SA w/ DF bit copy set\n");
 		return -EINVAL;
 	}
 
@@ -2686,7 +2695,7 @@ static int store_policy_param_to_sa_pol_list(struct dpa_ipsec_sa *sa,
 
 	pol_entry = kzalloc(sizeof(*pol_entry), GFP_KERNEL);
 	if (!pol_entry) {
-		pr_err("Could not allocate memory for policy\n");
+		log_err("Could not allocate memory for policy\n");
 		return -ENOMEM;
 	}
 
@@ -2705,7 +2714,8 @@ static int store_policy_param_to_sa_pol_list(struct dpa_ipsec_sa *sa,
 
 		plcr = kzalloc(sizeof(*plcr), GFP_KERNEL);
 		if (!plcr) {
-			pr_err("Could not allocate memory for policer\n");
+			log_err("Could not allocate memory for policer\n");
+			kfree(pol_entry);
 			return -ENOMEM;
 		}
 		memcpy(plcr, dir->in_action.enq_params.policer_params,
@@ -2744,7 +2754,7 @@ static inline int addr_match(struct dpa_offload_ip_address *addr1,
 		 * off-loaded so it can be invalid only if DPA IPsec component
 		 * messed it up.
 		 */
-		pr_err("Invalid IP version\n");
+		log_err("Invalid IP version\n");
 		BUG();
 	}
 
@@ -2763,7 +2773,7 @@ static int find_policy(struct dpa_ipsec_sa *sa,
 	BUG_ON(!policy_entry);
 
 	if (list_empty(&sa->policy_headlist)) {
-		pr_err("Policy list is empty\n");
+		log_err("Policy list is empty\n");
 		return -EDOM;
 	}
 
@@ -2839,7 +2849,7 @@ static int copy_all_policies(struct dpa_ipsec_sa *sa,
 	BUG_ON(!policy_params);
 
 	if (list_empty(&sa->policy_headlist)) {
-		pr_err("Policy parameter list is empty\n");
+		log_err("Policy parameter list is empty\n");
 		return 0;
 	}
 
@@ -2847,7 +2857,7 @@ static int copy_all_policies(struct dpa_ipsec_sa *sa,
 				 &sa->policy_headlist, node) {
 		pol_count++;
 		if (pol_count > num_pol) {
-			pr_err("Num policies in this SA greater than %d",
+			log_err("Num policies in this SA greater than %d",
 				num_pol);
 			return -EAGAIN;
 		}
@@ -2868,7 +2878,7 @@ static int remove_policy_from_sa_policy_list(struct dpa_ipsec_sa *sa,
 	BUG_ON(!policy_entry);
 
 	if (list_empty(&sa->policy_headlist)) {
-		pr_err("Policy parameter list is empty\n");
+		log_err("Policy parameter list is empty\n");
 		return -EINVAL;
 	}
 
@@ -2899,25 +2909,25 @@ static int remove_policy(struct dpa_ipsec_sa *sa,
 	if (sa_is_inbound(sa)) {
 		err = update_inbound_policy(sa, policy_entry, MNG_OP_REMOVE);
 		if (err < 0) {
-			pr_err("Could not remove the inbound policy\n");
+			log_err("Could not remove the inbound policy\n");
 			return err;
 		}
 
 		err = remove_policy_from_sa_policy_list(sa, policy_entry);
 		if (err < 0) {
-			pr_err("Couldn't remove inbound policy from SA policy list\n");
+			log_err("Couldn't remove inbound policy from SA policy list\n");
 			return err;
 		}
 	} else {  /* DPA_IPSEC_OUTBOUND */
 		err = update_outbound_policy(sa, policy_entry, MNG_OP_REMOVE);
 		if (err < 0) {
-			pr_err("Could not remove the outbound policy\n");
+			log_err("Could not remove the outbound policy\n");
 			return err;
 		}
 
 		err = remove_policy_from_sa_policy_list(sa, policy_entry);
 		if (err < 0) {
-			pr_err("Could not remove outbound policy from SA policy list\n");
+			log_err("Could not remove outbound policy from SA policy list\n");
 			return err;
 		}
 	}
@@ -2932,7 +2942,7 @@ static struct dpa_ipsec_sa *get_sa_from_sa_id(int sa_id)
 	struct dpa_ipsec_sa *sa = NULL;
 
 	if (!gbl_dpa_ipsec) {
-		pr_err("There is no dpa_ipsec component initialized\n");
+		log_err("There is no dpa_ipsec component initialized\n");
 		return NULL;
 	}
 
@@ -2940,14 +2950,14 @@ static struct dpa_ipsec_sa *get_sa_from_sa_id(int sa_id)
 	sa_mng = &dpa_ipsec->sa_mng;
 
 	if (sa_id < 0 || sa_id > sa_mng->max_num_sa) {
-		pr_err("Invalid SA id %d provided\n", sa_id);
+		log_err("Invalid SA id %d provided\n", sa_id);
 		return NULL;
 	}
 	sa = &sa_mng->sa[sa_id];
 
 	/* Validity check for this SA */
 	if (sa->used_sa_index == -1) {
-		pr_err("SA with id %d is not valid\n", sa_id);
+		log_err("SA with id %d is not valid\n", sa_id);
 		return NULL;
 	}
 
@@ -2961,14 +2971,14 @@ static int check_sa_params(struct dpa_ipsec_sa_params *sa_params)
 
 	/* sanity checks */
 	if (!sa_params) {
-		pr_err("Invalid SA parameters handle\n");
+		log_err("Invalid SA parameters handle\n");
 		return -EINVAL;
 	}
 
 	/*
 	 * check crypto params:
 	 * - an authentication key must always be provided
-	 * - a cipher key must be provided if alg != NULL encryption
+	 * - a cipher key must be provided if algorithm != NULL encryption
 	 */
 
 	err = set_cipher_auth_alg(sa_params->crypto_params.alg_suite,
@@ -2976,21 +2986,24 @@ static int check_sa_params(struct dpa_ipsec_sa_params *sa_params)
 	if (err < 0)
 		return err;
 
-	if (sa_params->crypto_params.auth_key == NULL) {
-		pr_err("A valid authentication key must be provided\n");
+	if (!sa_params->crypto_params.auth_key ||
+	    sa_params->crypto_params.auth_key_len == 0) {
+		log_err("A valid authentication key must be provided\n");
 		return -EINVAL;
 	}
 
-	/* TODO: check cipher_key ONLY if alg != null encryption */
-	if (sa_params->crypto_params.cipher_key == NULL) {
-		pr_err("A valid cipher key must be provided\n");
+	/* Check cipher_key only if the cipher algorithm isn't NULL encryption*/
+	if (cipher_alg != OP_PCL_IPSEC_NULL_ENC &&
+	    (!sa_params->crypto_params.cipher_key ||
+	    sa_params->crypto_params.cipher_key_len == 0)) {
+		log_err("A valid cipher key must be provided\n");
 		return -EINVAL;
 	}
 
 	if (sa_params->sa_dir == DPA_IPSEC_OUTBOUND) {
-		if ((sa_params->sa_out_params.ip_hdr_size == 0) ||
-		    (sa_params->sa_out_params.outer_ip_header == NULL)) {
-			pr_err("Transport mode is not currently supported."
+		if (sa_params->sa_out_params.ip_hdr_size == 0 ||
+		    !sa_params->sa_out_params.outer_ip_header) {
+			log_err("Transport mode is not currently supported."
 				   "Specify a valid encapsulation header\n");
 			return -EINVAL;
 		}
@@ -2998,28 +3011,28 @@ static int check_sa_params(struct dpa_ipsec_sa_params *sa_params)
 		if (sa_params->sa_out_params.outer_udp_header &&
 			sa_params->sa_out_params.ip_ver ==
 				DPA_IPSEC_ADDR_T_IPv6) {
-			pr_err("NAT-T is not supported for IPV6 SAs\n");
+			log_err("NAT-T is not supported for IPV6 SAs\n");
 			return -EINVAL;
 		}
 	} else {
 		/* Inbound SA */
 		if (sa_params->sa_in_params.src_addr.version !=
 		    sa_params->sa_in_params.dest_addr.version) {
-			pr_err("Source and destination IP address must be of same type\n");
+			log_err("Source and destination IP address must be of same type\n");
 			return -EINVAL;
 		}
 
 		if (sa_params->sa_in_params.use_udp_encap &&
 			sa_params->sa_in_params.src_addr.version ==
 				DPA_IPSEC_ADDR_T_IPv6) {
-			pr_err("NAT-T is not supported for IPV6 SAs\n");
+			log_err("NAT-T is not supported for IPV6 SAs\n");
 			return -EINVAL;
 		}
 	}
 
 	/* check buffer pool ID validity */
 	if (sa_params->sa_bpid > MAX_BUFFER_POOL_ID) {
-		pr_err("Invalid SA buffer pool ID.\n");
+		log_err("Invalid SA buffer pool ID.\n");
 		return -EINVAL;
 	}
 
@@ -3046,7 +3059,7 @@ static int get_new_sa(struct dpa_ipsec *dpa_ipsec,
 
 	/* Get an id for new SA */
 	if (cq_get_4bytes(dpa_ipsec->sa_mng.sa_id_cq, &id) < 0) {
-		pr_err("No more unused SA handles\n");
+		log_err("No more unused SA handles\n");
 		/* Release DPA IPSec instance lock */
 		mutex_unlock(&dpa_ipsec->lock);
 		return -EDOM;
@@ -3056,7 +3069,7 @@ static int get_new_sa(struct dpa_ipsec *dpa_ipsec,
 		if (dpa_ipsec->used_sa_ids[i] == DPA_OFFLD_INVALID_OBJECT_ID)
 			break;
 	if (i == dpa_ipsec->sa_mng.max_num_sa) {
-		pr_err("No more unused SAs ID holders");
+		log_err("No more unused SAs ID holders");
 		cq_put_4bytes(dpa_ipsec->sa_mng.sa_id_cq, id);
 		/* Release DPA IPSec instance lock */
 		mutex_unlock(&dpa_ipsec->lock);
@@ -3111,11 +3124,25 @@ static int put_sa(struct dpa_ipsec_sa *sa)
 	/* Release the SA id in the SA IDs circular queue */
 	err = cq_put_4bytes(sa_mng->sa_id_cq, sa->id);
 	if (err < 0) {
-		pr_err("Could not release the sa id %d\n", sa->id);
+		log_err("Could not release the sa id %d\n", sa->id);
 		/* Release DPA IPSec instance lock */
 		mutex_unlock(&dpa_ipsec->lock);
 		return -EDOM;
 	}
+
+	/* Release the flow ID - only for inbound SAs */
+	if (sa_is_inbound(sa) && !ignore_post_ipsec_action(dpa_ipsec) &&
+	    sa->inbound_flowid != INVALID_INB_FLOW_ID && !sa_is_parent(sa)) {
+		err = put_inbound_flowid(dpa_ipsec, sa->inbound_flowid);
+		if (err < 0) {
+			log_err("Could not put flow id in circular queue.\n");
+			mutex_unlock(&dpa_ipsec->lock);
+			return err;
+		}
+		sa->inbound_flowid = INVALID_INB_FLOW_ID;
+	}
+
+	sa->child_sa = NULL;
 
 	/* Mark as free index in used SA IDs vector of this DPA IPSEC instance*/
 	dpa_ipsec->used_sa_ids[sa->used_sa_index] = DPA_OFFLD_INVALID_OBJECT_ID;
@@ -3144,7 +3171,7 @@ static int rollback_create_sa(struct dpa_ipsec_sa *sa)
 	if (sa->inbound_hash_entry != DPA_OFFLD_INVALID_OBJECT_ID) {
 		err_rb = update_pre_sec_inbound_table(sa, MNG_OP_REMOVE);
 		if (err_rb < 0) {
-			pr_err("Couln't remove SA lookup table entry\n");
+			log_err("Couln't remove SA lookup table entry\n");
 			return err_rb;
 		}
 	}
@@ -3155,7 +3182,7 @@ static int rollback_create_sa(struct dpa_ipsec_sa *sa)
 		hmd_entry.hmd_special_op = true;
 		err_rb = destroy_recycle_manip(sa, &hmd_entry);
 		if (err_rb < 0) {
-			pr_err("Could not delete manip object!\n");
+			log_err("Could not delete manip object!\n");
 			return err_rb;
 		}
 		sa->ipsec_hmd = DPA_OFFLD_DESC_NONE;
@@ -3165,7 +3192,7 @@ static int rollback_create_sa(struct dpa_ipsec_sa *sa)
 	    sa->valid_flowid_entry) {
 		err_rb = remove_inbound_flow_id_classif(sa);
 		if (err_rb < 0) {
-			pr_err("Couldn't remove post decrypt tbl entry\n");
+			log_err("Couldn't remove post decrypt tbl entry\n");
 			return err_rb;
 		}
 	}
@@ -3173,22 +3200,11 @@ static int rollback_create_sa(struct dpa_ipsec_sa *sa)
 remove_fq_pair:
 	err_rb = remove_sa_fq_pair(sa);
 	if (err_rb < 0) {
-		pr_err("Could not remove SA FQs.\n");
+		log_err("Could not remove SA FQs.\n");
 		return err_rb;
 	}
 
-	/* Free the SA id and FlowID (for inbound SAs only).*/
-	if (sa_is_inbound(sa) &&
-	    !ignore_post_ipsec_action(dpa_ipsec) &&
-	    sa->inbound_flowid != INVALID_INB_FLOW_ID) {
-		err_rb = put_inbound_flowid(dpa_ipsec, sa->inbound_flowid);
-		if (err_rb < 0) {
-			pr_err("Could not put flow id in circular queue.\n");
-			return err_rb;
-		}
-		sa->inbound_flowid = INVALID_INB_FLOW_ID;
-	}
-
+	/* Release the SA */
 	err_rb = put_sa(sa);
 
 	return err_rb;
@@ -3210,7 +3226,7 @@ static int rollback_rekeying_sa(struct dpa_ipsec_sa *sa)
 	if (sa->inbound_hash_entry != DPA_OFFLD_INVALID_OBJECT_ID) {
 		err_rb = update_pre_sec_inbound_table(sa, MNG_OP_REMOVE);
 		if (err_rb < 0) {
-			pr_err("Couln't remove SA lookup table entry\n");
+			log_err("Couln't remove SA lookup table entry\n");
 			return err_rb;
 		}
 	}
@@ -3221,7 +3237,7 @@ static int rollback_rekeying_sa(struct dpa_ipsec_sa *sa)
 		hmd_entry.hmd_special_op = true;
 		err_rb = destroy_recycle_manip(sa, &hmd_entry);
 		if (err_rb < 0) {
-			pr_err("Could not delete manip object!\n");
+			log_err("Could not delete manip object!\n");
 			return err_rb;
 		}
 		sa->ipsec_hmd = DPA_OFFLD_DESC_NONE;
@@ -3230,7 +3246,7 @@ static int rollback_rekeying_sa(struct dpa_ipsec_sa *sa)
 remove_fq_pair:
 	err_rb = remove_sa_fq_pair(sa);
 	if (err_rb < 0) {
-		pr_err("Could not remove SA FQs.\n");
+		log_err("Could not remove SA FQs.\n");
 		return err_rb;
 	}
 
@@ -3250,8 +3266,8 @@ int dpa_ipsec_init(const struct dpa_ipsec_params *params, int *dpa_ipsec_id)
 
 	/* sanity checks */
 	if (gbl_dpa_ipsec) {
-		pr_err("There is already an initialized dpa_ipsec component.\n");
-		pr_err("Multiple DPA IPSec Instances aren't currently supported.\n");
+		log_err("There is already an initialized dpa_ipsec component.\n");
+		log_err("Multiple DPA IPSec Instances aren't currently supported.\n");
 		return -EPERM;
 	}
 
@@ -3263,7 +3279,7 @@ int dpa_ipsec_init(const struct dpa_ipsec_params *params, int *dpa_ipsec_id)
 	/* alloc control block */
 	dpa_ipsec = kzalloc(sizeof(*dpa_ipsec), GFP_KERNEL);
 	if (!dpa_ipsec) {
-		pr_err("Could not allocate memory for control block.\n");
+		log_err("Could not allocate memory for control block.\n");
 		return -ENOMEM;
 	}
 
@@ -3287,7 +3303,7 @@ int dpa_ipsec_init(const struct dpa_ipsec_params *params, int *dpa_ipsec_id)
 	max_num_sa = dpa_ipsec->sa_mng.max_num_sa;
 	dpa_ipsec->used_sa_ids = kmalloc(max_num_sa * sizeof(u32), GFP_KERNEL);
 	if (!dpa_ipsec->used_sa_ids) {
-		pr_err("No more memory for used sa id's vector ");
+		log_err("No more memory for used sa id's vector ");
 		free_resources();
 		return -ENOMEM;
 	}
@@ -3316,7 +3332,7 @@ int dpa_ipsec_free(int dpa_ipsec_id)
 	/* destroy all SAs offloaded in this DPA IPSec instance */
 	err = dpa_ipsec_flush_all_sa(0);
 	if (err < 0) {
-		pr_err("Could not remove all SAs from this instance!\n");
+		log_err("Could not remove all SAs from this instance!\n");
 		return err;
 	}
 
@@ -3338,12 +3354,12 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 	unused(dpa_ipsec_id);
 
 	if (!gbl_dpa_ipsec) {
-		pr_err("There is no dpa_ipsec component initialized\n");
+		log_err("There is no dpa_ipsec component initialized\n");
 		return -EPERM;
 	}
 
 	if (!sa_id) {
-		pr_err("Invalid SA ID holder\n");
+		log_err("Invalid SA ID holder\n");
 		return -EINVAL;
 	}
 	*sa_id = DPA_OFFLD_INVALID_OBJECT_ID;
@@ -3356,7 +3372,7 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 
 	err = get_new_sa(dpa_ipsec, &sa, &id);
 	if (err < 0) {
-		pr_err("Failed retrieving a preallocated SA\n");
+		log_err("Failed retrieving a preallocated SA\n");
 		return err;
 	}
 
@@ -3368,6 +3384,7 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 	sa->child_sa = NULL;
 	sa->sa_rekeying_node.next = LIST_POISON1;
 	sa->sa_rekeying_node.prev = LIST_POISON2;
+	sa->read_seq_in_progress = false;
 
 	/* Copy SA params into the internal SA structure */
 	if (sa_is_outbound(sa))
@@ -3376,7 +3393,7 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 		err = copy_sa_params_to_in_sa(sa, sa_params, FALSE);
 
 	if (err < 0) {
-		pr_err("Could not copy SA parameters into SA\n");
+		log_err("Could not copy SA parameters into SA\n");
 		goto create_sa_err;
 	}
 
@@ -3392,7 +3409,7 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 			err = update_ipsec_manip(sa, DPA_OFFLD_DESC_NONE,
 						 &sa->ipsec_hmd);
 		if (err < 0) {
-			pr_err("Could not create Manip object for in SA!\n");
+			log_err("Could not create Manip object for in SA!\n");
 			goto create_sa_err;
 		}
 	}
@@ -3405,14 +3422,14 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 	/* Call internal function to create SEC FQ according to SA parameters */
 	err = create_sa_fq_pair(sa, FALSE, FALSE);
 	if (err < 0) {
-		pr_err("Could not create SEC frame queues\n");
+		log_err("Could not create SEC frame queues\n");
 		goto create_sa_err;
 	}
 
 	if (sa_is_inbound(sa)) {
 		err = update_pre_sec_inbound_table(sa, MNG_OP_ADD);
 		if (err < 0) {
-			pr_err("Could not update PCD entry\n");
+			log_err("Could not update PCD entry\n");
 			goto create_sa_err;
 		}
 
@@ -3422,7 +3439,7 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 
 			err = get_free_inbpol_tbl(dpa_ipsec, &inbpol_td);
 			if (err < 0) {
-				pr_err("Could not get a free EM table\n");
+				log_err("Could not get a free EM table\n");
 				goto create_sa_err;
 			}
 			sa->em_inpol_td = inbpol_td;
@@ -3434,17 +3451,18 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 			memset(&action, 0, sizeof(action));
 			action.type = DPA_CLS_TBL_ACTION_NEXT_TABLE;
 			action.next_table_params.next_td = inbpol_td;
+			action.next_table_params.hmd = DPA_OFFLD_DESC_NONE;
 			action.enable_statistics = FALSE;
 			err = set_flow_id_action(sa, &action);
 			if (err < 0) {
-				pr_err("Can't link EM table with index table\n");
+				log_err("Can't link EM table with index table\n");
 				goto create_sa_err;
 			}
 
 			err = dpa_classif_table_modify_miss_action(inbpol_td,
 						       &sa->policy_miss_action);
 			if (err < 0) {
-				pr_err("Can't set policy miss action\n");
+				log_err("Can't set policy miss action\n");
 				goto create_sa_err;
 			}
 		} else {
@@ -3454,7 +3472,7 @@ int dpa_ipsec_create_sa(int dpa_ipsec_id,
 			/* Set the post decryption default action */
 			err = set_flow_id_action(sa, &sa->def_sa_action);
 			if (err < 0) {
-				pr_err("Could not set default action for post decryption\n");
+				log_err("Could not set default action for post decryption\n");
 				goto create_sa_err;
 			}
 		}
@@ -3533,7 +3551,7 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 			hmd_entry.hmd_special_op = true;
 			err = destroy_recycle_manip(sa, &hmd_entry);
 			if (err < 0) {
-				pr_err("Could not delete manip object!\n");
+				log_err("Could not delete manip object!\n");
 				return err;
 			}
 			sa->ipsec_hmd = DPA_OFFLD_DESC_NONE;
@@ -3541,14 +3559,15 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 
 		err = wait_until_fq_empty(sa->to_sec_fq, timeout);
 		if (err < 0) {
-			pr_err("Waiting old SA's TO SEC FQ to get empty\n");
+			log_err("Waiting old SA's TO SEC FQ to get empty\n");
 			return -ETIME;
 		}
 
 		/* schedule child SA */
 		err = schedule_sa(child_sa);
 		if (unlikely(err < 0)) {
-			pr_err("Scheduling child SA %d failed\n", child_sa->id);
+			log_err("Scheduling child SA %d failed\n",
+				child_sa->id);
 			return -EIO;
 		}
 
@@ -3564,10 +3583,11 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 		mutex_lock(&sa->dpa_ipsec->sa_mng.sa_rekeying_headlist_lock);
 
 		child_sa->parent_sa = NULL;
-		sa->child_sa = NULL;
 
 		/* Remove the child SA from rekeying list */
-		list_del(&child_sa->sa_rekeying_node);
+		if (child_sa->sa_rekeying_node.next != LIST_POISON1 &&
+		    child_sa->sa_rekeying_node.prev != LIST_POISON2)
+			list_del(&child_sa->sa_rekeying_node);
 
 		/* Invalidate the FROM SEC FQ of parent SA */
 		memset(sa->from_sec_fq, 0, sizeof(struct qman_fq));
@@ -3584,14 +3604,14 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 		/* Now free the parent SA structure and all its resources */
 		err = remove_sa_sec_fq(sa->to_sec_fq);
 		if (err < 0) {
-			pr_err("Couln't remove SA %d TO SEC FQ\n", sa->id);
+			log_err("Couln't remove SA %d TO SEC FQ\n", sa->id);
 			return -EUCLEAN;
 		}
 
 		/* Recycle parent SA memory */
 		err = put_sa(sa);
 		if (unlikely(err < 0)) {
-			pr_err("Could not recycle parent SA.\n");
+			log_err("Could not recycle parent SA.\n");
 			return -EDQUOT;
 		}
 
@@ -3616,7 +3636,7 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 		hmd_entry.hmd_special_op = true;
 		err = destroy_recycle_manip(sa, &hmd_entry);
 		if (err < 0) {
-			pr_err("Could not delete manip object!\n");
+			log_err("Could not delete manip object!\n");
 			return err;
 		}
 		sa->ipsec_hmd = DPA_OFFLD_DESC_NONE;
@@ -3625,7 +3645,7 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 	/* Destroy the TO_SEC and FROM_SEC queues */
 	err = remove_sa_fq_pair(sa);
 	if (err != 0) {
-		pr_err("Could not remove the SEC frame queues\n");
+		log_err("Could not remove the SEC frame queues\n");
 		return err;
 	}
 
@@ -3633,7 +3653,7 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 	if (sa->dpa_ipsec->config.post_sec_in_params.do_pol_check) {
 		err = sa_flush_policies(sa);
 		if (err < 0) {
-			pr_err("Could not flush inbound policies");
+			log_err("Could not flush inbound policies");
 			return err;
 		}
 	}
@@ -3654,7 +3674,7 @@ static int remove_inbound_sa(struct dpa_ipsec_sa *sa)
 	/* Mark SA as free */
 	err = put_sa(sa);
 	if (err < 0) {
-		pr_err("Could not recycle the sa with id %d\n", sa->id);
+		log_err("Could not recycle the sa with id %d\n", sa->id);
 		return err;
 	}
 
@@ -3743,7 +3763,7 @@ static int remove_outbound_sa(struct dpa_ipsec_sa *sa)
 	/* Flush policies i.e remove PCD entries that direct traffic to SEC */
 	err = sa_flush_policies(sa);
 	if (err < 0) {
-		pr_err("Could not flush outbound policies\n");
+		log_err("Could not flush outbound policies\n");
 		return err;
 	}
 
@@ -3754,7 +3774,7 @@ static int remove_outbound_sa(struct dpa_ipsec_sa *sa)
 		hmd_entry.hmd_special_op = true;
 		err = destroy_recycle_manip(sa, &hmd_entry);
 		if (err < 0) {
-			pr_err("Couldn't delete SA manip\n");
+			log_err("Couldn't delete SA manip\n");
 			return err;
 		}
 		sa->ipsec_hmd = DPA_OFFLD_DESC_NONE;
@@ -3763,14 +3783,14 @@ static int remove_outbound_sa(struct dpa_ipsec_sa *sa)
 	/* Destroy the TO_SEC and FROM_SEC queues */
 	err = remove_sa_fq_pair(sa);
 	if (err < 0) {
-		pr_err("Could not remove the SEC frame queues\n");
+		log_err("Could not remove the SEC frame queues\n");
 		return err;
 	}
 
 	/* Mark SA as free */
 	err = put_sa(sa);
 	if (err < 0) {
-		pr_err("Could not recycle the SA id %d\n", sa->id);
+		log_err("Could not recycle the SA id %d\n", sa->id);
 		return err;
 	}
 
@@ -3815,7 +3835,7 @@ int dpa_ipsec_remove_sa(int sa_id)
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA handle for SA id %d\n", sa_id);
+		log_err("Invalid SA handle for SA id %d\n", sa_id);
 		return -EINVAL;
 	}
 
@@ -3825,7 +3845,7 @@ int dpa_ipsec_remove_sa(int sa_id)
 		return -EAGAIN;
 
 	if (sa_is_child(sa)) {
-		pr_err("This SA %d is a child in rekeying process\n", sa_id);
+		log_err("This SA %d is a child in rekeying process\n", sa_id);
 		mutex_unlock(&sa->lock);
 		return -EINPROGRESS;
 	}
@@ -3864,19 +3884,19 @@ int dpa_ipsec_sa_add_policy(int sa_id,
 	int ret;
 
 	if (!policy_params) {
-		pr_err("Invalid policy params handle\n");
+		log_err("Invalid policy params handle\n");
 		return -EINVAL;
 	}
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA handle\n");
+		log_err("Invalid SA handle\n");
 		return -EINVAL;
 	}
 
 	ret = mutex_trylock(&sa->lock);
 	if (ret == 0) {
-		pr_err("Failed to acquire lock for SA %d\n", sa->id);
+		log_err("Failed to acquire lock for SA %d\n", sa->id);
 		return -EBUSY;
 	}
 
@@ -3884,7 +3904,7 @@ int dpa_ipsec_sa_add_policy(int sa_id,
 	mutex_lock(&sa->dpa_ipsec->lock);
 	if (sa_is_inbound(sa) &&
 	    !sa->dpa_ipsec->config.post_sec_in_params.do_pol_check) {
-		pr_err("Inbound policy verification is disabled.\n");
+		log_err("Inbound policy verification is disabled.\n");
 		mutex_unlock(&sa->dpa_ipsec->lock);
 		mutex_unlock(&sa->lock);
 		return -EPERM;
@@ -3898,13 +3918,13 @@ int dpa_ipsec_sa_add_policy(int sa_id,
 	}
 
 	if (sa_is_parent(sa) && sa_is_outbound(sa)) {
-		pr_err("Illegal to set out policy - parent SA %d\n", sa->id);
+		log_err("Illegal to set out policy - parent SA %d\n", sa->id);
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
 
 	if (sa_is_child(sa) && sa_is_inbound(sa)) {
-		pr_err("Illegal to set in policy on child SA %d\n", sa->id);
+		log_err("Illegal to set in policy on child SA %d\n", sa->id);
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
@@ -3917,7 +3937,7 @@ int dpa_ipsec_sa_add_policy(int sa_id,
 	ret = store_policy_param_to_sa_pol_list(sa, policy_params,
 						&policy_entry);
 	if (ret < 0) {
-		pr_err("Could not store the policy in the SA\n");
+		log_err("Could not store the policy in the SA\n");
 		mutex_unlock(&sa->lock);
 		return ret;
 	}
@@ -3927,15 +3947,13 @@ int dpa_ipsec_sa_add_policy(int sa_id,
 		ret = update_inbound_policy(sa, policy_entry, MNG_OP_ADD);
 		if (ret < 0) {
 			remove_policy_from_sa_policy_list(sa, policy_entry);
-			pr_err("Could not add the inbound policy\n");
-			kfree(policy_entry);
+			log_err("Could not add the inbound policy\n");
 		}
 	} else {  /* DPA_IPSEC_OUTBOUND */
 		ret = update_outbound_policy(sa, policy_entry, MNG_OP_ADD);
 		if (ret < 0) {
 			remove_policy_from_sa_policy_list(sa, policy_entry);
-			pr_err("Could not add the outbound policy\n");
-			kfree(policy_entry);
+			log_err("Could not add the outbound policy\n");
 		}
 	}
 
@@ -3953,44 +3971,44 @@ int dpa_ipsec_sa_remove_policy(int sa_id,
 	int ret = 0;
 
 	if (!policy_params) {
-		pr_err("Invalid policy parameters handle\n");
+		log_err("Invalid policy parameters handle\n");
 		return -EINVAL;
 	}
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA handle provided\n");
+		log_err("Invalid SA handle provided\n");
 		return -EINVAL;
 	}
 
 	ret = mutex_trylock(&sa->lock);
 	if (ret == 0) {
-		pr_err("Failed to acquire lock for SA %d\n", sa->id);
+		log_err("Failed to acquire lock for SA %d\n", sa->id);
 		return -EBUSY;
 	}
 
 	if (sa_is_inbound(sa) &&
 	    !sa->dpa_ipsec->config.post_sec_in_params.do_pol_check) {
-		pr_err("Inbound policy verification is disabled.\n");
+		log_err("Inbound policy verification is disabled.\n");
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
 
 	if (sa_is_parent(sa) && sa_is_outbound(sa)) {
-		pr_err("Illegal removing out policy parent SA %d\n", sa->id);
+		log_err("Illegal removing out policy parent SA %d\n", sa->id);
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
 
 	if (sa_is_child(sa) && sa_is_inbound(sa)) {
-		pr_err("Illegal removing in policy, child SA %d\n", sa->id);
+		log_err("Illegal removing in policy, child SA %d\n", sa->id);
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
 
 	ret = find_policy(sa, policy_params, &policy_entry);
 	if (ret < 0) {
-		pr_err("Could not find policy entry in SA policy list\n");
+		log_err("Could not find policy entry in SA policy list\n");
 		mutex_unlock(&sa->lock);
 		return ret;
 	}
@@ -4030,13 +4048,13 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 	int err = 0, err_rb;
 
 	if (!gbl_dpa_ipsec) {
-		pr_err("There is no dpa_ipsec instance initialized\n");
+		log_err("There is no dpa_ipsec instance initialized\n");
 		return -EPERM;
 	}
 	dpa_ipsec = gbl_dpa_ipsec;
 
 	if (!new_sa_id) {
-		pr_err("Invalid SA ID holder\n");
+		log_err("Invalid SA ID holder\n");
 		return -EINVAL;
 	}
 	*new_sa_id = DPA_OFFLD_INVALID_OBJECT_ID;
@@ -4047,20 +4065,20 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 
 	old_sa = get_sa_from_sa_id(sa_id);
 	if (!old_sa) {
-		pr_err("Invalid SA handle provided\n");
+		log_err("Invalid SA handle provided\n");
 		return -EINVAL;
 	}
 
 	/* Acquire parent SA's lock */
 	err = mutex_trylock(&old_sa->lock);
 	if (err == 0) {
-		pr_err("SA %d is being used\n", old_sa->id);
+		log_err("SA %d is being used\n", old_sa->id);
 		return -EBUSY;
 	}
 
 	/* Check if SA is currently in rekeying process */
 	if (sa_currently_in_rekeying(old_sa)) {
-		pr_err("SA with id %d is already in rekeying process\n",
+		log_err("SA with id %d is already in rekeying process\n",
 			  old_sa->id);
 		mutex_unlock(&old_sa->lock);
 		return -EEXIST;
@@ -4068,7 +4086,7 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 
 	/* Check if new SA parameters are matching the rekeyed SA */
 	if (old_sa->sa_dir != sa_params->sa_dir) {
-		pr_err("New SA parameters don't match the parent SA %d\n",
+		log_err("New SA parameters don't match the parent SA %d\n",
 			  old_sa->sa_dir);
 		mutex_unlock(&old_sa->lock);
 		return -EINVAL;
@@ -4076,7 +4094,7 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 
 	err = get_new_sa(dpa_ipsec, &new_sa, &id);
 	if (err < 0) {
-		pr_err("Failed retrieving a preallocated SA\n");
+		log_err("Failed retrieving a preallocated SA\n");
 		mutex_unlock(&old_sa->lock);
 		return err;
 	}
@@ -4088,19 +4106,12 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 	new_sa->ipsec_hmd = old_sa->ipsec_hmd;
 	new_sa->valid_flowid_entry = false;
 	new_sa->rekey_event_cb = rekey_event_cb;
-	if (auto_rmv_old_sa) {
-		new_sa->parent_sa = old_sa;
-		new_sa->child_sa  = NULL;
-			new_sa->sa_rekeying_node.next = LIST_POISON1;
-			new_sa->sa_rekeying_node.prev = LIST_POISON2;
-		old_sa->child_sa = new_sa;
-			old_sa->parent_sa = NULL;
-	} else {
-		new_sa->parent_sa = NULL;
-		new_sa->child_sa  = NULL;
-		old_sa->child_sa  = NULL;
-		old_sa->parent_sa = NULL;
-	}
+	new_sa->parent_sa = old_sa;
+	new_sa->child_sa  = NULL;
+	new_sa->sa_rekeying_node.next = LIST_POISON1;
+	new_sa->sa_rekeying_node.prev = LIST_POISON2;
+	old_sa->child_sa = new_sa;
+	old_sa->parent_sa = NULL;
 
 	/* Copy SA params into the internal SA structure */
 	if (sa_is_outbound(old_sa))
@@ -4109,7 +4120,7 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 		err = copy_sa_params_to_in_sa(new_sa, sa_params, true);
 
 	if (err < 0) {
-		pr_err("Could not copy SA parameters into SA\n");
+		log_err("Could not copy SA parameters into SA\n");
 		goto rekey_sa_err;
 	}
 
@@ -4122,7 +4133,7 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 			err = update_ipsec_manip(new_sa, DPA_OFFLD_DESC_NONE,
 						 &new_sa->ipsec_hmd);
 		if (err < 0) {
-			pr_err("Could not create Manip object for in SA!\n");
+			log_err("Could not create Manip object for in SA!\n");
 			goto rekey_sa_err;
 		}
 	}
@@ -4145,7 +4156,7 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 	/* Create SEC queues according to SA parameters */
 	err = create_sa_fq_pair(new_sa, true, true);
 	if (err < 0) {
-		pr_err("Could not create SEC frame queues\n");
+		log_err("Could not create SEC frame queues\n");
 		goto rekey_sa_err;
 	}
 
@@ -4173,7 +4184,7 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 				 * using remove_sa
 				 */
 				*new_sa_id = new_sa->id;
-				pr_err("Could't modify outbound policy\n");
+				log_err("Could't modify outbound policy\n");
 				new_sa->parent_sa = NULL;
 				new_sa->child_sa  = NULL;
 				old_sa->child_sa  = NULL;
@@ -4209,7 +4220,7 @@ int dpa_ipsec_sa_rekeying(int sa_id,
 		/* Need to update the IN SA PCD entry */
 		err = update_pre_sec_inbound_table(new_sa, MNG_OP_ADD);
 		if (err < 0) {
-			pr_err("Could not add PCD entry for new SA\n");
+			log_err("Could not add PCD entry for new SA\n");
 			goto rekey_sa_err;
 		}
 
@@ -4310,21 +4321,21 @@ static int sa_rekeying_outbound(struct dpa_ipsec_sa *new_sa)
 
 	err = wait_until_fq_empty(old_sa->to_sec_fq, timeout);
 	if (err < 0) {
-		pr_err("Waiting old SA's TO SEC FQ to get empty. Timeout\n");
+		log_err("Waiting old SA's TO SEC FQ to get empty. Timeout\n");
 		return -ETIME;
 	}
 
 	/* Schedule the new SA */
 	err = qman_schedule_fq(new_sa->to_sec_fq);
 	if (unlikely(err < 0)) {
-		pr_err("Scheduling the new SA %d failed\n", new_sa->id);
+		log_err("Scheduling the new SA %d failed\n", new_sa->id);
 		return -EIO;
 	}
 
 	/* Now free the old SA structure and all its resources */
 	err = remove_sa_sec_fq(old_sa->to_sec_fq);
 	if (err < 0) {
-		pr_err("Couln't remove old SA's %d TO SEC FQ\n", old_sa->id);
+		log_err("Couln't remove old SA's %d TO SEC FQ\n", old_sa->id);
 		rekey_err_report(new_sa->rekey_event_cb, 0, new_sa->id,
 				 -EUCLEAN);
 		return -EUCLEAN;
@@ -4333,7 +4344,7 @@ static int sa_rekeying_outbound(struct dpa_ipsec_sa *new_sa)
 	/* Recycle SA memory */
 	err = put_sa(old_sa);
 	if (unlikely(err < 0)) {
-		pr_err("Could not recycle parent SA.\n");
+		log_err("Could not recycle parent SA.\n");
 		rekey_err_report(new_sa->rekey_event_cb, 0, new_sa->id,
 				 -EDQUOT);
 		return -EDQUOT;
@@ -4416,7 +4427,7 @@ static int sa_rekeying_inbound(struct dpa_ipsec_sa *new_sa)
 			hmd_entry.hmd_special_op = true;
 			err = destroy_recycle_manip(old_sa, &hmd_entry);
 			if (err < 0) {
-				pr_err("Could not delete manip object!\n");
+				log_err("Could not delete manip object!\n");
 				return err;
 			}
 			old_sa->ipsec_hmd = DPA_OFFLD_DESC_NONE;
@@ -4425,14 +4436,14 @@ static int sa_rekeying_inbound(struct dpa_ipsec_sa *new_sa)
 
 	err = wait_until_fq_empty(old_sa->to_sec_fq, timeout);
 	if (err < 0) {
-		pr_err("Waiting old SA's TO SEC FQ to get empty. Timeout\n");
+		log_err("Waiting old SA's TO SEC FQ to get empty. Timeout\n");
 		return -ETIME;
 	}
 
 	/* schedule new inbound SA */
 	err = qman_schedule_fq(new_sa->to_sec_fq);
 	if (unlikely(err < 0)) {
-		pr_err("Scheduling the new SA %d failed\n", new_sa->id);
+		log_err("Scheduling the new SA %d failed\n", new_sa->id);
 		return -EIO;
 	}
 
@@ -4447,7 +4458,7 @@ static int sa_rekeying_inbound(struct dpa_ipsec_sa *new_sa)
 	/* Now free the old SA structure and all its resources */
 	err = remove_sa_sec_fq(old_sa->to_sec_fq);
 	if (err < 0) {
-		pr_err("Couln't remove old SA's %d TO SEC FQ\n", old_sa->id);
+		log_err("Couln't remove old SA's %d TO SEC FQ\n", old_sa->id);
 		rekey_err_report(new_sa->rekey_event_cb, 0, new_sa->id,
 				 -EUCLEAN);
 		return -EUCLEAN;
@@ -4456,7 +4467,7 @@ static int sa_rekeying_inbound(struct dpa_ipsec_sa *new_sa)
 	/* Recycle SA memory */
 	err = put_sa(old_sa);
 	if (unlikely(err < 0)) {
-		pr_err("Could not recycle parent SA.\n");
+		log_err("Could not recycle parent SA.\n");
 		rekey_err_report(new_sa->rekey_event_cb, 0, new_sa->id,
 				 -EDQUOT);
 		return -EDQUOT;
@@ -4598,7 +4609,7 @@ int dpa_ipsec_disable_sa(int sa_id)
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA handle for SA id %d\n", sa_id);
+		log_err("Invalid SA handle for SA id %d\n", sa_id);
 		return -EINVAL;
 	}
 
@@ -4608,7 +4619,7 @@ int dpa_ipsec_disable_sa(int sa_id)
 		return -EAGAIN;
 
 	if (!sa_is_single(sa)) {
-		pr_err("SA %d is a parent or child in rekeying\n", sa_id);
+		log_err("SA %d is a parent or child in rekeying\n", sa_id);
 		mutex_unlock(&sa->lock);
 		return -EINPROGRESS;
 	}
@@ -4644,7 +4655,7 @@ int dpa_ipsec_flush_all_sa(int dpa_ipsec_id)
 	unused(dpa_ipsec_id);
 
 	if (!gbl_dpa_ipsec) {
-		pr_err("There is no dpa_ipsec component initialized\n");
+		log_err("There is no dpa_ipsec component initialized\n");
 		return -EPERM;
 	}
 	dpa_ipsec = gbl_dpa_ipsec;
@@ -4675,30 +4686,30 @@ int dpa_ipsec_sa_get_policies(int sa_id,
 	int ret;
 
 	if (sa_id < 0) {
-		pr_err("Invalid SA id");
+		log_err("Invalid SA id");
 		return -EINVAL;
 	}
 
 	if (!num_pol) {
-		pr_err("Invalid num_pol parameter handle\n");
+		log_err("Invalid num_pol parameter handle\n");
 		return -EINVAL;
 	}
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA handle\n");
+		log_err("Invalid SA handle\n");
 		return -EINVAL;
 	}
 
 	ret = mutex_trylock(&sa->lock);
 	if (ret == 0) {
-		pr_err("Failed to acquire lock for SA %d\n", sa->id);
+		log_err("Failed to acquire lock for SA %d\n", sa->id);
 		return -EBUSY;
 	}
 
 	if (sa_is_inbound(sa) &&
 	    !sa->dpa_ipsec->config.post_sec_in_params.do_pol_check) {
-		pr_err("Inbound policy verification is disabled.\n");
+		log_err("Inbound policy verification is disabled.\n");
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
@@ -4729,7 +4740,7 @@ static int sa_flush_policies(struct dpa_ipsec_sa *sa)
 	list_for_each_entry_safe(pol_entry, tmp, &sa->policy_headlist, node) {
 		err = remove_policy(sa, pol_entry);
 		if (err < 0) {
-			pr_err("Failed remove policy entry SA %d\n", sa->id);
+			log_err("Failed remove policy entry SA %d\n", sa->id);
 			ret = -EAGAIN;
 			/*
 			 * continue with the other policies even if error
@@ -4748,19 +4759,19 @@ int dpa_ipsec_sa_flush_policies(int sa_id)
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA handle for SA id %d\n", sa_id);
+		log_err("Invalid SA handle for SA id %d\n", sa_id);
 		return -EINVAL;
 	}
 
 	ret = mutex_trylock(&sa->lock);
 	if (ret == 0) {
-		pr_err("Failed to acquire lock for SA %d\n", sa->id);
+		log_err("Failed to acquire lock for SA %d\n", sa->id);
 		return -EBUSY;
 	}
 
 	if (sa_is_inbound(sa) &&
 	    !sa->dpa_ipsec->config.post_sec_in_params.do_pol_check) {
-		pr_err("Inbound policy verification is disabled.\n");
+		log_err("Inbound policy verification is disabled.\n");
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
@@ -4778,26 +4789,29 @@ int dpa_ipsec_sa_get_stats(int sa_id, struct dpa_ipsec_sa_stats *sa_stats)
 	struct dpa_ipsec_sa *sa;
 	int ret = 0;
 	uint32_t *desc;
+	struct dpa_cls_tbl_entry_stats stats;
 
 	if (!sa_stats) {
-		pr_err("Invalid SA statistics storage pointer\n");
+		log_err("Invalid SA statistics storage pointer\n");
 		return -EINVAL;
 	}
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA handle for SA id %d\n", sa_id);
+		log_err("Invalid SA handle for SA id %d\n", sa_id);
 		return -EINVAL;
 	}
 
 	ret = mutex_trylock(&sa->lock);
 	if (ret == 0) {
-		pr_err("Failed to acquire lock for SA %d\n", sa->id);
+		log_err("Failed to acquire lock for SA %d\n", sa->id);
 		return -EBUSY;
 	}
 
+	memset(sa_stats, 0, sizeof(*sa_stats));
+
 	if (!sa->enable_stats) {
-		pr_err("Statistics are not enabled for SA id %d\n", sa_id);
+		log_err("Statistics are not enabled for SA id %d\n", sa_id);
 		mutex_unlock(&sa->lock);
 		return -EPERM;
 	}
@@ -4811,11 +4825,176 @@ int dpa_ipsec_sa_get_stats(int sa_id, struct dpa_ipsec_sa_stats *sa_stats)
 		sa_stats->packets_count = *(desc + sa->stats_offset / 4 + 1);
 	}
 
+	if (!sa->enable_extended_stats)
+		goto sa_get_stats_return;
+
+	memset(&stats, 0, sizeof(stats));
+
+	if (sa_is_inbound(sa)) { /* Inbound SA */
+		ret = dpa_classif_table_get_entry_stats_by_ref(
+					sa->inbound_sa_td,
+					sa->inbound_hash_entry,
+					&stats);
+		if (ret != 0) {
+			log_err("Failed to acquire total packets counter for inbound SA Id=%d.\n",
+				sa_id);
+			mutex_unlock(&sa->lock);
+			return ret;
+		} else {
+			sa_stats->input_packets	= stats.pkts;
+		}
+	} else { /* Outbound SA */
+		struct dpa_ipsec_policy_entry *out_policy;
+		struct dpa_ipsec_policy_params *policy_params;
+		struct dpa_ipsec_pre_sec_out_params *psop;
+		int table_idx, td;
+
+		psop = &sa->dpa_ipsec->config.pre_sec_out_params;
+
+		list_for_each_entry(out_policy, &sa->policy_headlist,
+									node) {
+			policy_params = &out_policy->pol_params;
+			if (IP_ADDR_TYPE_IPV4(policy_params->dest_addr))
+				table_idx = GET_POL_TABLE_IDX(
+						policy_params->protocol,
+						IPV4);
+			else
+				table_idx = GET_POL_TABLE_IDX(
+						policy_params->protocol,
+						IPV6);
+			td = psop->table[table_idx].dpa_cls_td;
+			ret = dpa_classif_table_get_entry_stats_by_ref(
+						td,
+						out_policy->entry_id,
+						&stats);
+			if (ret != 0) {
+				log_err("Failed to acquire total packets counter for outbound SA Id=%d. Failure occured on outbound policy table %d (td=%d).\n",
+					sa_id, table_idx, td);
+				mutex_unlock(&sa->lock);
+				return ret;
+			} else {
+				sa_stats->input_packets	+= stats.pkts;
+			}
+		}
+	}
+
+sa_get_stats_return:
 	mutex_unlock(&sa->lock);
+
+	return ret;
+}
+EXPORT_SYMBOL(dpa_ipsec_sa_get_stats);
+
+int dpa_ipsec_get_stats(struct dpa_ipsec_stats *stats)
+{
+	t_FmPcdCcKeyStatistics		miss_stats;
+	struct dpa_cls_tbl_params	table_params;
+	int				i, j, td;
+	t_Error				err;
+	struct dpa_ipsec		*dpa_ipsec;
+
+	dpa_ipsec = gbl_dpa_ipsec;
+
+	if (!stats) {
+		log_err("\"stats\" cannot be NULL.\n");
+		return -EINVAL;
+	}
+
+	memset(stats, 0, sizeof(*stats));
+
+	mutex_lock(&dpa_ipsec->lock);
+
+	/* On inbound add up miss counters from all inbound pre-SEC tables: */
+	for (i = 0; i < DPA_IPSEC_MAX_SA_TYPE; i++) {
+		td = dpa_ipsec->config.pre_sec_in_params.dpa_cls_td[i];
+
+		/*
+		 * Check if this policy table is defined by the user. If not,
+		 * skip to the next.
+		 */
+		if (td == DPA_OFFLD_DESC_NONE)
+			continue;
+
+		if (dpa_classif_table_get_params(td, &table_params)) {
+			log_err("Failed to acquire params for inbound table type %d (td=%d).\n",
+				i, td);
+			mutex_unlock(&dpa_ipsec->lock);
+			return -EINVAL;
+		}
+		if (table_params.type == DPA_CLS_TBL_HASH)
+			err = FM_PCD_HashTableGetMissStatistics(
+						table_params.cc_node,
+						&miss_stats);
+		else
+			err = FM_PCD_MatchTableGetMissStatistics(
+					table_params.cc_node,
+					&miss_stats);
+		if (err != E_OK) {
+			log_err("Failed to acquire miss statistics for inbound table type %d (td=%d, Cc node handle=0x%p).\n",
+				i, td, table_params.cc_node);
+			mutex_unlock(&dpa_ipsec->lock);
+			return -EINVAL;
+		} else {
+			stats->inbound_miss_pkts += miss_stats.frameCount;
+			stats->inbound_miss_bytes += miss_stats.byteCount;
+		}
+	}
+
+	/* On outbound add up miss statistics from all outbound pre-SEC tables: */
+	for (i = 0; i < DPA_IPSEC_MAX_SUPPORTED_PROTOS; i++) {
+		td = dpa_ipsec->config.pre_sec_out_params.table[i].dpa_cls_td;
+
+		/*
+		 * Check if this protocol table is defined by the user. If not,
+		 * skip to the next.
+		 */
+		if (td == DPA_OFFLD_DESC_NONE)
+			continue;
+
+		/*
+		 * Some applications are using the same tables in more than one
+		 * role on the outbound, hence we need to check whether we
+		 * haven't already processed this table:
+		 */
+		for (j = 0; j < i; j++) {
+			if (td == dpa_ipsec->config.pre_sec_out_params.
+							table[j].dpa_cls_td)
+				break;
+		}
+
+		if (j < i)
+			continue;
+
+		if (dpa_classif_table_get_params(td, &table_params)) {
+			log_err("Failed to acquire table params for outbound proto type #%d (td=%d).\n",
+				i, td);
+			mutex_unlock(&dpa_ipsec->lock);
+			return -EINVAL;
+		}
+		if (table_params.type == DPA_CLS_TBL_HASH)
+			err = FM_PCD_HashTableGetMissStatistics(
+						table_params.cc_node,
+						&miss_stats);
+		else
+			err = FM_PCD_MatchTableGetMissStatistics(
+						table_params.cc_node,
+						&miss_stats);
+		if (err != E_OK) {
+			log_err("Failed to acquire miss statistics for outbound proto type %d (td=%d, Cc node handle=0x%p).\n",
+				i, td, table_params.cc_node);
+			mutex_unlock(&dpa_ipsec->lock);
+			return -EINVAL;
+		} else {
+			stats->outbound_miss_pkts += miss_stats.frameCount;
+			stats->outbound_miss_bytes += miss_stats.byteCount;
+		}
+	}
+
+	mutex_unlock(&dpa_ipsec->lock);
 
 	return 0;
 }
-EXPORT_SYMBOL(dpa_ipsec_sa_get_stats);
+EXPORT_SYMBOL(dpa_ipsec_get_stats);
 
 int dpa_ipsec_sa_modify(int sa_id, struct dpa_ipsec_sa_modify_prm *modify_prm)
 {
@@ -4823,54 +5002,75 @@ int dpa_ipsec_sa_modify(int sa_id, struct dpa_ipsec_sa_modify_prm *modify_prm)
 	dma_addr_t dma_rjobd;
 	uint32_t *rjobd;
 	struct qm_fd fd;
+	char msg[5];
+	const size_t msg_len = 5;
 	int ret;
 
 	if (!modify_prm) {
-		pr_err("Invalid modify SA parameter\n");
+		log_err("Invalid modify SA parameter\n");
 		return -EINVAL;
 	}
 
 	sa = get_sa_from_sa_id(sa_id);
 	if (!sa) {
-		pr_err("Invalid SA id provided\n");
+		log_err("Invalid SA id provided\n");
 		return -EINVAL;
 	}
 
 	ret = mutex_trylock(&sa->lock);
 	if (ret == 0) {
-		pr_err("SA %d is being used\n", sa->id);
+		log_err("SA %d is being used\n", sa->id);
 		return -EBUSY;
 	}
 
 	BUG_ON(!sa->dpa_ipsec);
 
+	/* Set the SA id in the message that will be in the output SEC frame */
+	*(u32 *)(&msg[1]) = sa->id;
+
 	switch (modify_prm->type) {
 	case DPA_IPSEC_SA_MODIFY_ARS:
-		ret = build_rjob_desc_ars_update(sa, modify_prm->arw);
+		msg[0] = DPA_IPSEC_SA_MODIFY_ARS_DONE;
+		ret = build_rjob_desc_ars_update(sa, modify_prm->arw, msg_len);
 		if (ret < 0)
 			return ret;
 		break;
 	case DPA_IPSEC_SA_MODIFY_SEQ_NUM:
-		pr_err("Modifying SEQ number is unsupported\n");
-		return -EOPNOTSUPP;
+		msg[0] = DPA_IPSEC_SA_MODIFY_SEQ_NUM_DONE;
+		sa->w_seq_num = modify_prm->seq_num;
+
+		ret = build_rjob_desc_seq_write(sa, msg_len);
+		if (ret < 0)
+			return ret;
+		break;
 	case DPA_IPSEC_SA_MODIFY_EXT_SEQ_NUM:
-		pr_err("Modifying extended SEQ number is unsupported\n");
-		return -EOPNOTSUPP;
+		msg[0] = DPA_IPSEC_SA_MODIFY_EXT_SEQ_NUM_DONE;
+		sa->w_seq_num = modify_prm->seq_num;
+
+		ret = build_rjob_desc_seq_write(sa, msg_len);
+		if (ret < 0)
+			return ret;
+		break;
 	case DPA_IPSEC_SA_MODIFY_CRYPTO:
-		pr_err("Modifying cryptographic parameters is unsupported\n");
+		log_err("Modifying cryptographic parameters is unsupported\n");
 		return -EOPNOTSUPP;
 	default:
-		pr_err("Invalid type for modify parameters\n");
+		log_err("Invalid type for modify parameters\n");
 		mutex_unlock(&sa->lock);
 		return -EINVAL;
 	}
 
 	rjobd = sa->rjob_desc;
+
+	/* Copy completion message to the end of the RJOB */
+	memcpy(((char *)rjobd) + desc_len(rjobd) * CAAM_CMD_SZ, msg, msg_len);
+
 	dma_rjobd = dma_map_single(sa->dpa_ipsec->jrdev, rjobd,
-				   desc_len(rjobd) * CAAM_CMD_SZ,
+				   desc_len(rjobd) * CAAM_CMD_SZ + msg_len,
 				   DMA_BIDIRECTIONAL);
 	if (!dma_rjobd) {
-		pr_err("Failed DMA mapping the RJD for SA %d\n", sa->id);
+		log_err("Failed DMA mapping the RJD for SA %d\n", sa->id);
+		mutex_unlock(&sa->lock);
 		return -ENXIO;
 	}
 
@@ -4878,21 +5078,145 @@ int dpa_ipsec_sa_modify(int sa_id, struct dpa_ipsec_sa_modify_prm *modify_prm)
 	/* fill frame descriptor parameters */
 	fd.format = qm_fd_contig;
 	qm_fd_addr_set64(&fd, dma_rjobd);
-	fd.length20 = desc_len(rjobd) * sizeof(uint32_t);
+	fd.length20 = desc_len(rjobd) * sizeof(uint32_t) + msg_len;
 	fd.offset = 0;
 	fd.bpid = 0;
 	fd.cmd = FD_CMD_REPLACE_JOB_DESC;
 	ret = qman_enqueue(sa->to_sec_fq, &fd, 0);
 	if (ret != 0) {
-		pr_err("Could not enqueue frame with RJAD for SA %d\n", sa->id);
+		log_err("Could not enqueue frame with RJAD for SA %d\n",
+			sa->id);
 		ret = -ETXTBSY;
 	}
 
 	dma_unmap_single(sa->dpa_ipsec->jrdev, dma_rjobd,
-			 desc_len(rjobd) * CAAM_CMD_SZ, DMA_BIDIRECTIONAL);
+			 desc_len(rjobd) * CAAM_CMD_SZ + msg_len,
+			 DMA_BIDIRECTIONAL);
 
 	mutex_unlock(&sa->lock);
 
 	return ret;
 }
 EXPORT_SYMBOL(dpa_ipsec_sa_modify);
+int dpa_ipsec_sa_request_seq_number(int sa_id)
+{
+	struct dpa_ipsec_sa *sa;
+	dma_addr_t dma_rjobd;
+	uint32_t *rjobd;
+	struct qm_fd fd;
+	char msg[5];
+	const size_t msg_len = 5;
+	int ret;
+
+	sa = get_sa_from_sa_id(sa_id);
+	if (!sa) {
+		log_err("Invalid SA id provided\n");
+		return -EINVAL;
+	}
+
+	ret = mutex_trylock(&sa->lock);
+	if (ret == 0) {
+		log_err("SA %d is being used\n", sa->id);
+		return -EBUSY;
+	}
+
+	BUG_ON(!sa->dpa_ipsec);
+
+	if (sa->read_seq_in_progress) {
+		log_err("A new request for SA %d can be done only after a get SEQ is done\n",
+			sa->id);
+		mutex_unlock(&sa->lock);
+		return -EBUSY;
+	}
+
+	msg[0] = DPA_IPSEC_SA_GET_SEQ_NUM_DONE;
+	*(u32 *)(&msg[1]) = sa->id;
+
+	ret = build_rjob_desc_seq_read(sa, msg_len);
+	if (ret < 0) {
+		log_err("Failed to create RJOB for reading SEQ number\n");
+		mutex_unlock(&sa->lock);
+		return ret;
+	}
+
+	rjobd = sa->rjob_desc;
+
+	/* Copy completion message to the end of the RJOB */
+	memcpy(((char *)rjobd) + desc_len(rjobd) * CAAM_CMD_SZ, msg, msg_len);
+
+	dma_rjobd = dma_map_single(sa->dpa_ipsec->jrdev, rjobd,
+				   desc_len(rjobd) * CAAM_CMD_SZ + msg_len,
+				   DMA_BIDIRECTIONAL);
+	if (!dma_rjobd) {
+		log_err("Failed DMA mapping the RJD for SA %d\n", sa->id);
+		mutex_unlock(&sa->lock);
+		return -ENXIO;
+	}
+
+	memset(&fd, 0x00, sizeof(struct qm_fd));
+	/* fill frame descriptor parameters */
+	fd.format = qm_fd_contig;
+	qm_fd_addr_set64(&fd, dma_rjobd);
+	fd.length20 = desc_len(rjobd) * sizeof(uint32_t) + msg_len;
+	fd.offset = 0;
+	fd.bpid = 0;
+	fd.cmd = FD_CMD_REPLACE_JOB_DESC;
+	ret = qman_enqueue(sa->to_sec_fq, &fd, 0);
+	if (ret != 0) {
+		log_err("Could not enqueue frame with RJAD for SA %d\n",
+			sa->id);
+		ret = -ETXTBSY;
+	}
+
+	/* Request has been done successfully */
+	sa->read_seq_in_progress = true;
+
+	dma_unmap_single(sa->dpa_ipsec->jrdev, dma_rjobd,
+			 desc_len(rjobd) * CAAM_CMD_SZ + msg_len,
+			 DMA_BIDIRECTIONAL);
+
+	mutex_unlock(&sa->lock);
+
+	return ret;
+}
+EXPORT_SYMBOL(dpa_ipsec_sa_request_seq_number);
+
+int dpa_ipsec_sa_get_seq_number(int sa_id, uint64_t *seq)
+{
+	struct dpa_ipsec_sa *sa;
+	int ret;
+
+	sa = get_sa_from_sa_id(sa_id);
+	if (!sa) {
+		log_err("Invalid SA id provided\n");
+		return -EINVAL;
+	}
+
+	if (!seq) {
+		log_err("Invalid SEQ parameter handle\n");
+		return -EINVAL;
+	}
+
+	ret = mutex_trylock(&sa->lock);
+	if (ret == 0) {
+		log_err("SA %d is being used\n", sa_id);
+		return -EBUSY;
+	}
+
+	BUG_ON(!sa->dpa_ipsec);
+
+	if (!sa->read_seq_in_progress) {
+		log_err("Prior to getting the SEQ number for SA %d a request must be made\n",
+			sa->id);
+		mutex_unlock(&sa->lock);
+		return -EBUSY;
+	}
+
+	*seq = sa->r_seq_num;
+	sa->read_seq_in_progress = false;
+
+	mutex_unlock(&sa->lock);
+
+	return 0;
+}
+EXPORT_SYMBOL(dpa_ipsec_sa_get_seq_number);

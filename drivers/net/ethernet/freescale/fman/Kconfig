@@ -34,7 +34,7 @@ endmenu
 
 config FMAN_RESOURCE_ALLOCATION_ALGORITHM
 	bool "Enable FMan dynamic resource allocation algorithm"
-	default y if ((FMAN_P3040_P4080_P5020 || FMAN_P1023) && FSL_DPAA_ETH_OPTIMIZE_FOR_IPFWD)
+	default y if (FMAN_P3040_P4080_P5020 || FMAN_P1023)
 	---help---
 		Enables algorithm for dynamic resource allocation
 
@@ -85,14 +85,16 @@ config FSL_FM_MAX_FRAME_SIZE
 config FSL_FM_RX_EXTRA_HEADROOM
 	int "Add extra headroom at beginning of data buffers"
 	depends on FSL_FMAN
-	range 0 384
+	range 16 384
 	default "64"
 	help
 		Configure this to tell the Frame Manager to reserve some extra
 		space at the beginning of a data buffer on the receive path,
 		before Internal Context fields are copied. This is in addition
 		to the private data area already reserved for driver internal
-		use. The option does not affect in any way the layout of
+		use. The provided value must be a multiple of 16.
+
+		This option does not affect in any way the layout of
 		transmitted buffers. You may be required to enable the config
 		option FMAN_RESOURCE_ALLOCATION_ALGORITHM and also
 		FMAN_DISABLE_OH_TO_REUSE_RESOURCES to have enough resources

@@ -88,6 +88,8 @@ EXPORT_SYMBOL(FM_PCD_MatchTableGetNextEngine);
 EXPORT_SYMBOL(FM_PCD_MatchTableGetKeyCounter);
 EXPORT_SYMBOL(FM_PCD_MatchTableGetKeyStatistics);
 EXPORT_SYMBOL(FM_PCD_MatchTableFindNGetKeyStatistics);
+EXPORT_SYMBOL(FM_PCD_MatchTableGetMissStatistics);
+EXPORT_SYMBOL(FM_PCD_HashTableGetMissStatistics);
 EXPORT_SYMBOL(FM_PCD_HashTableSet);
 EXPORT_SYMBOL(FM_PCD_HashTableDelete);
 EXPORT_SYMBOL(FM_PCD_HashTableAddKey);

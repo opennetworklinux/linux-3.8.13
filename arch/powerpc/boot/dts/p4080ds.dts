@@ -339,7 +339,7 @@
 
 	mdio-mux-emi1 {
 		compatible = "mdio-mux-gpio";
-		gpios = <&gpio0 0 0>, <&gpio0 1 0>;
+		gpios = <&gpio0 1 0>, <&gpio0 0 0>;
 		mdio-parent-bus = <&mdio0>;
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -414,7 +414,7 @@
 	};
 	mdio-mux-emi2 {
 		compatible = "mdio-mux-gpio";
-		gpios = <&gpio0 2 0>, <&gpio0 3 0>;
+		gpios = <&gpio0 3 0>, <&gpio0 2 0>;
 		mdio-parent-bus = <&xmdio0>;
 		#address-cells = <1>;
 		#size-cells = <0>;

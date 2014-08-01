@@ -80,6 +80,8 @@
 #include "lnxwrp_exp_sym.h"
 #endif
 
+#define __ERR_MODULE__  MODULE_FM
+
 extern struct device_node *GetFmPortAdvArgsDevTreeNode (struct device_node *fm_node,
                                                          e_FmPortType       portType,
                                                          uint8_t            portId);
@@ -105,8 +107,14 @@ extern struct device_node *GetFmPortAdvArgsDevTreeNode (struct device_node *fm_n
 /* Bootarg used to override FSL_FM_RX_EXTRA_HEADROOM Kconfig value */
 #define FSL_FM_RX_EXTRA_HEADROOM_BOOTARG  "fsl_fm_rx_extra_headroom"
 
-/* Maximum value for the fsl_fm_rx_extra_headroom bootarg */
+/* Minimum and maximum value for the fsl_fm_rx_extra_headroom bootarg */
+#define FSL_FM_RX_EXTRA_HEADROOM_MIN 16
 #define FSL_FM_RX_EXTRA_HEADROOM_MAX 384
+
+#define TX_PAUSE_PRIO_DEFAULT 0xff
+#define TX_PAUSE_TIME_ENABLE 0xf000
+#define TX_PAUSE_TIME_DISABLE 0
+#define TX_PAUSE_THRESH_DEFAULT 0
 
 /*
  * Max frame size, across all interfaces.
@@ -142,7 +150,7 @@ int fm_get_max_frm()
 
 int fm_get_rx_extra_headroom()
 {
-	return fsl_fm_rx_extra_headroom;
+	return ALIGN(fsl_fm_rx_extra_headroom, 16);
 }
 
 static int __init fm_set_max_frm(char *str)
@@ -199,12 +207,13 @@ static int __init fm_set_rx_extra_headroom(char *str)
 		return 1;
 	}
 
-	if (fsl_fm_rx_extra_headroom < 0 ||
+	if (fsl_fm_rx_extra_headroom < FSL_FM_RX_EXTRA_HEADROOM_MIN ||
 		fsl_fm_rx_extra_headroom > FSL_FM_RX_EXTRA_HEADROOM_MAX) {
-		printk(KERN_WARNING "Invalid value for %s=<int> prop in "
+		printk(KERN_WARNING "Invalid value for %s=%d prop in "
 			"bootargs; will use the default "
 			"FSL_FM_RX_EXTRA_HEADROOM (%d) from Kconfig.\n",
 			FSL_FM_RX_EXTRA_HEADROOM_BOOTARG,
+			fsl_fm_rx_extra_headroom,
 			CONFIG_FSL_FM_RX_EXTRA_HEADROOM);
 		fsl_fm_rx_extra_headroom = CONFIG_FSL_FM_RX_EXTRA_HEADROOM;
 	}
@@ -457,6 +466,12 @@ static const struct qe_firmware *FindFmanMicrocode(void)
     /* Returning NULL here forces the reuse of the IRAM content */
     return NULL;
 }
+#define SVR_SECURITY_MASK    0x00080000
+#define SVR_PERSONALITY_MASK 0x0000FF00
+#define SVR_VER_IGNORE_MASK (SVR_SECURITY_MASK | SVR_PERSONALITY_MASK)
+#define SVR_B4860_REV1_VALUE 0x86800010
+#define SVR_B4860_REV2_VALUE 0x86800020
+
 
 static t_LnxWrpFmDev * ReadFmDevTreeNode (struct platform_device *of_dev)
 {
@@ -512,6 +527,7 @@ static t_LnxWrpFmDev * ReadFmDevTreeNode (struct platform_device *of_dev)
         return NULL;
     }
 
+
     p_LnxWrpFmDev->fmBaseAddr = 0;
     p_LnxWrpFmDev->fmPhysBaseAddr = res.start;
     p_LnxWrpFmDev->fmMemSize = res.end + 1 - res.start;
@@ -544,6 +560,13 @@ static t_LnxWrpFmDev * ReadFmDevTreeNode (struct platform_device *of_dev)
             p_LnxWrpFmDev->fmMuramBaseAddr = 0;
             p_LnxWrpFmDev->fmMuramPhysBaseAddr = res.start;
             p_LnxWrpFmDev->fmMuramMemSize = res.end + 1 - res.start;
+            {
+               uint32_t svr;
+                svr = mfspr(SPRN_SVR);
+
+                if ((svr & ~SVR_VER_IGNORE_MASK) == SVR_B4860_REV2_VALUE)
+                    p_LnxWrpFmDev->fmMuramMemSize = 0x80000;
+            }
         }
     }
 
@@ -1186,13 +1209,21 @@ void fm_port_unbind(struct fm_port *port)
 }
 EXPORT_SYMBOL(fm_port_unbind);
 
-void * fm_port_get_handle(struct fm_port *port)
+void *fm_port_get_handle(const struct fm_port *port)
 {
     t_LnxWrpFmPortDev   *p_LnxWrpFmPortDev = (t_LnxWrpFmPortDev*)port;
 
     return (void *)p_LnxWrpFmPortDev->h_Dev;
 }
 EXPORT_SYMBOL(fm_port_get_handle);
+
+u64 *fm_port_get_buffer_time_stamp(const struct fm_port *port,
+		const void *data)
+{
+	return FM_PORT_GetBufferTimeStamp(fm_port_get_handle(port),
+					  (void *)data);
+}
+EXPORT_SYMBOL(fm_port_get_buffer_time_stamp);
 
 void fm_port_get_base_addr(const struct fm_port *port, uint64_t *base_addr)
 {
@@ -1257,18 +1288,18 @@ EXPORT_SYMBOL(fm_get_tx_port_channel);
 int fm_port_enable (struct fm_port *port)
 {
     t_LnxWrpFmPortDev   *p_LnxWrpFmPortDev = (t_LnxWrpFmPortDev*)port;
+    t_Error err = FM_PORT_Enable(p_LnxWrpFmPortDev->h_Dev);
 
-    FM_PORT_Enable(p_LnxWrpFmPortDev->h_Dev);
-
-    return 0;
+    return GET_ERROR_TYPE(err);
 }
 EXPORT_SYMBOL(fm_port_enable);
 
-void fm_port_disable(struct fm_port *port)
+int fm_port_disable(struct fm_port *port)
 {
     t_LnxWrpFmPortDev   *p_LnxWrpFmPortDev = (t_LnxWrpFmPortDev*)port;
+    t_Error err = FM_PORT_Disable(p_LnxWrpFmPortDev->h_Dev);
 
-    FM_PORT_Disable(p_LnxWrpFmPortDev->h_Dev);
+    return GET_ERROR_TYPE(err);
 }
 EXPORT_SYMBOL(fm_port_disable);
 
@@ -1297,6 +1328,441 @@ int fm_port_del_rate_limit(struct fm_port *port)
 	return 0;
 }
 EXPORT_SYMBOL(fm_port_del_rate_limit);
+
+int fm_mac_set_exception(struct fm_mac_dev *fm_mac_dev,
+		e_FmMacExceptions exception, bool enable)
+{
+	int err;
+	int _errno;
+
+	err = FM_MAC_SetException(fm_mac_dev, exception, enable);
+
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_SetException() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_set_exception);
+
+int fm_mac_free(struct fm_mac_dev *fm_mac_dev)
+{
+	int err;
+	int _error;
+
+	err = FM_MAC_Free(fm_mac_dev);
+	_error = -GET_ERROR_TYPE(err);
+
+	if (unlikely(_error < 0))
+		pr_err("FM_MAC_Free() = 0x%08x\n", err);
+
+	return _error;
+}
+EXPORT_SYMBOL(fm_mac_free);
+
+struct fm_mac_dev *fm_mac_config(t_FmMacParams *params)
+{
+	struct fm_mac_dev *fm_mac_dev;
+
+	fm_mac_dev = FM_MAC_Config(params);
+	if (unlikely(fm_mac_dev == NULL))
+		pr_err("FM_MAC_Config() failed\n");
+
+	return fm_mac_dev;
+}
+EXPORT_SYMBOL(fm_mac_config);
+
+int fm_mac_config_max_frame_length(struct fm_mac_dev *fm_mac_dev,
+		int len)
+{
+	int err;
+	int _errno;
+
+	err = FM_MAC_ConfigMaxFrameLength(fm_mac_dev, len);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_ConfigMaxFrameLength() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_config_max_frame_length);
+
+int fm_mac_config_pad_and_crc(struct fm_mac_dev *fm_mac_dev, bool enable)
+{
+	int err;
+	int _errno;
+
+	err = FM_MAC_ConfigPadAndCrc(fm_mac_dev, enable);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_ConfigPadAndCrc() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_config_pad_and_crc);
+
+int fm_mac_config_half_duplex(struct fm_mac_dev *fm_mac_dev, bool enable)
+{
+	int err;
+	int _errno;
+
+	err = FM_MAC_ConfigHalfDuplex(fm_mac_dev, enable);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_ConfigHalfDuplex() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_config_half_duplex);
+
+int fm_mac_config_reset_on_init(struct fm_mac_dev *fm_mac_dev, bool enable)
+{
+	int err;
+	int _errno;
+
+	err = FM_MAC_ConfigResetOnInit(fm_mac_dev, enable);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_ConfigResetOnInit() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_config_reset_on_init);
+
+int fm_mac_init(struct fm_mac_dev *fm_mac_dev)
+{
+	int err;
+	int _errno;
+
+	err = FM_MAC_Init(fm_mac_dev);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_Init() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_init);
+
+int fm_mac_get_version(struct fm_mac_dev *fm_mac_dev, uint32_t *version)
+{
+	int err;
+	int _errno;
+
+	err = FM_MAC_GetVesrion(fm_mac_dev, version);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_GetVesrion() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_get_version);
+
+int fm_mac_enable(struct fm_mac_dev *fm_mac_dev)
+{
+	int	 _errno;
+	t_Error	 err;
+
+	err = FM_MAC_Enable(fm_mac_dev, e_COMM_MODE_RX_AND_TX);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_Enable() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_enable);
+
+int fm_mac_disable(struct fm_mac_dev *fm_mac_dev)
+{
+	int	 _errno;
+	t_Error	 err;
+
+	err = FM_MAC_Disable(fm_mac_dev, e_COMM_MODE_RX_AND_TX);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_Disable() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_disable);
+
+int fm_mac_set_promiscuous(struct fm_mac_dev *fm_mac_dev,
+		bool enable)
+{
+	int	_errno;
+	t_Error	err;
+
+	err = FM_MAC_SetPromiscuous(fm_mac_dev, enable);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_SetPromiscuous() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_set_promiscuous);
+
+int fm_mac_remove_hash_mac_addr(struct fm_mac_dev *fm_mac_dev,
+		t_EnetAddr *mac_addr)
+{
+	int	_errno;
+	t_Error	err;
+
+	err = FM_MAC_RemoveHashMacAddr(fm_mac_dev, mac_addr);
+	_errno = -GET_ERROR_TYPE(err);
+	if (_errno < 0) {
+		pr_err("FM_MAC_RemoveHashMacAddr() = 0x%08x\n", err);
+		return _errno;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(fm_mac_remove_hash_mac_addr);
+
+int fm_mac_add_hash_mac_addr(struct fm_mac_dev *fm_mac_dev,
+		t_EnetAddr *mac_addr)
+{
+	int	_errno;
+	t_Error	err;
+
+	err = FM_MAC_AddHashMacAddr(fm_mac_dev, mac_addr);
+	_errno = -GET_ERROR_TYPE(err);
+	if (_errno < 0) {
+		pr_err("FM_MAC_AddHashMacAddr() = 0x%08x\n", err);
+		return _errno;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(fm_mac_add_hash_mac_addr);
+
+int fm_mac_modify_mac_addr(struct fm_mac_dev *fm_mac_dev,
+					 uint8_t *addr)
+{
+	int	_errno;
+	t_Error err;
+
+	err = FM_MAC_ModifyMacAddr(fm_mac_dev, (t_EnetAddr *)addr);
+	_errno = -GET_ERROR_TYPE(err);
+	if (_errno < 0)
+		pr_err("FM_MAC_ModifyMacAddr() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_modify_mac_addr);
+
+int fm_mac_adjust_link(struct fm_mac_dev *fm_mac_dev,
+		bool link, int speed, bool duplex)
+{
+	int	 _errno;
+	t_Error	 err;
+
+	if (!link) {
+#if (DPAA_VERSION < 11)
+		FM_MAC_RestartAutoneg(fm_mac_dev);
+#endif
+		return 0;
+	}
+
+	err = FM_MAC_AdjustLink(fm_mac_dev, speed, duplex);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_AdjustLink() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_adjust_link);
+
+int fm_mac_enable_1588_time_stamp(struct fm_mac_dev *fm_mac_dev)
+{
+	int			 _errno;
+	t_Error			 err;
+
+	err = FM_MAC_Enable1588TimeStamp(fm_mac_dev);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_Enable1588TimeStamp() = 0x%08x\n", err);
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_enable_1588_time_stamp);
+
+int fm_mac_disable_1588_time_stamp(struct fm_mac_dev *fm_mac_dev)
+{
+	int			 _errno;
+	t_Error			 err;
+
+	err = FM_MAC_Disable1588TimeStamp(fm_mac_dev);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_MAC_Disable1588TimeStamp() = 0x%08x\n", err);
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_disable_1588_time_stamp);
+
+int fm_mac_set_rx_ignore_pause_frames(
+		struct fm_mac_dev *fm_mac_dev, bool en)
+{
+	int	_errno;
+	t_Error err;
+
+	/* if rx pause is enabled, do NOT ignore pause frames */
+	err = FM_MAC_SetRxIgnorePauseFrames(fm_mac_dev, !en);
+
+	_errno = -GET_ERROR_TYPE(err);
+	if (_errno < 0)
+		pr_err("FM_MAC_SetRxIgnorePauseFrames() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_set_rx_ignore_pause_frames);
+
+int fm_mac_set_tx_pause_frames(struct fm_mac_dev *fm_mac_dev,
+					     bool en)
+{
+	int	_errno;
+	t_Error err;
+
+	if (en)
+		err = FM_MAC_SetTxPauseFrames(fm_mac_dev,
+				TX_PAUSE_PRIO_DEFAULT,
+				TX_PAUSE_TIME_ENABLE,
+				TX_PAUSE_THRESH_DEFAULT);
+	else
+		err = FM_MAC_SetTxPauseFrames(fm_mac_dev,
+				TX_PAUSE_PRIO_DEFAULT,
+				TX_PAUSE_TIME_DISABLE,
+				TX_PAUSE_THRESH_DEFAULT);
+
+	_errno = -GET_ERROR_TYPE(err);
+	if (_errno < 0)
+		pr_err("FM_MAC_SetTxPauseFrames() = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_mac_set_tx_pause_frames);
+
+int fm_rtc_enable(struct fm *fm_dev)
+{
+	int			 _errno;
+	t_Error			 err;
+
+	err = FM_RTC_Enable(fm_get_rtc_handle(fm_dev), 0);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_Enable = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_enable);
+
+int fm_rtc_disable(struct fm *fm_dev)
+{
+	int			 _errno;
+	t_Error			 err;
+
+	err = FM_RTC_Disable(fm_get_rtc_handle(fm_dev));
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_Disable = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_disable);
+
+int fm_rtc_get_cnt(struct fm *fm_dev, uint64_t *ts)
+{
+	int _errno;
+	t_Error	err;
+
+	err = FM_RTC_GetCurrentTime(fm_get_rtc_handle(fm_dev), ts);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_GetCurrentTime = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_get_cnt);
+
+int fm_rtc_set_cnt(struct fm *fm_dev, uint64_t ts)
+{
+	int _errno;
+	t_Error	err;
+
+	err = FM_RTC_SetCurrentTime(fm_get_rtc_handle(fm_dev), ts);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_SetCurrentTime = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_set_cnt);
+
+int fm_rtc_get_drift(struct fm *fm_dev, uint32_t *drift)
+{
+	int _errno;
+	t_Error	err;
+
+	err = FM_RTC_GetFreqCompensation(fm_get_rtc_handle(fm_dev),
+			drift);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_GetFreqCompensation = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_get_drift);
+
+int fm_rtc_set_drift(struct fm *fm_dev, uint32_t drift)
+{
+	int _errno;
+	t_Error	err;
+
+	err = FM_RTC_SetFreqCompensation(fm_get_rtc_handle(fm_dev),
+			drift);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_SetFreqCompensation = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_set_drift);
+
+int fm_rtc_set_alarm(struct fm *fm_dev, uint32_t id,
+		uint64_t time)
+{
+	t_FmRtcAlarmParams alarm;
+	int _errno;
+	t_Error	err;
+
+	alarm.alarmId = id;
+	alarm.alarmTime = time;
+	alarm.f_AlarmCallback = NULL;
+	err = FM_RTC_SetAlarm(fm_get_rtc_handle(fm_dev),
+			&alarm);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_SetAlarm = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_set_alarm);
+
+int fm_rtc_set_fiper(struct fm *fm_dev, uint32_t id,
+		uint64_t fiper)
+{
+	t_FmRtcPeriodicPulseParams pp;
+	int _errno;
+	t_Error	err;
+
+	pp.periodicPulseId = id;
+	pp.periodicPulsePeriod = fiper;
+	pp.f_PeriodicPulseCallback = NULL;
+	err = FM_RTC_SetPeriodicPulse(fm_get_rtc_handle(fm_dev), &pp);
+	_errno = -GET_ERROR_TYPE(err);
+	if (unlikely(_errno < 0))
+		pr_err("FM_RTC_SetPeriodicPulse = 0x%08x\n", err);
+
+	return _errno;
+}
+EXPORT_SYMBOL(fm_rtc_set_fiper);
 
 void fm_mutex_lock(void)
 {

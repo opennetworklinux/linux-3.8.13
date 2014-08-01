@@ -30,6 +30,9 @@
  */
 
 #include "bman_private.h"
+#ifdef CONFIG_HOTPLUG_CPU
+#include <linux/cpu.h>
+#endif
 
 /*
  * Global variables of the max portal/pool number this bman version supported
@@ -49,6 +52,7 @@ static int num_shared_portals;
 static int shared_portals_idx;
 static LIST_HEAD(unused_pcfgs);
 static DEFINE_SPINLOCK(unused_pcfgs_lock);
+static void *affine_bportals[NR_CPUS];
 
 static int __init fsl_bpool_init(struct device_node *node)
 {
@@ -198,11 +202,34 @@ static struct bm_portal_config *get_pcfg(struct list_head *list)
 	return pcfg;
 }
 
+static struct bm_portal_config *get_pcfg_idx(struct list_head *list,
+					     uint32_t idx)
+{
+	struct bm_portal_config *pcfg;
+	if (list_empty(list))
+		return NULL;
+	list_for_each_entry(pcfg, list, list) {
+		if (pcfg->public_cfg.index == idx) {
+			list_del(&pcfg->list);
+			return pcfg;
+		}
+	}
+	return NULL;
+}
+
 struct bm_portal_config *bm_get_unused_portal(void)
+{
+	return bm_get_unused_portal_idx(QBMAN_ANY_PORTAL_IDX);
+}
+
+struct bm_portal_config *bm_get_unused_portal_idx(uint32_t idx)
 {
 	struct bm_portal_config *ret;
 	spin_lock(&unused_pcfgs_lock);
-	ret = get_pcfg(&unused_pcfgs);
+	if (idx == QBMAN_ANY_PORTAL_IDX)
+		ret = get_pcfg(&unused_pcfgs);
+	else
+		ret = get_pcfg_idx(&unused_pcfgs, idx);
 	spin_unlock(&unused_pcfgs_lock);
 	return ret;
 }
@@ -217,36 +244,32 @@ void bm_put_unused_portal(struct bm_portal_config *pcfg)
 static struct bman_portal *init_pcfg(struct bm_portal_config *pcfg)
 {
 	struct bman_portal *p;
-	struct cpumask oldmask = *tsk_cpus_allowed(current);
-	set_cpus_allowed_ptr(current, get_cpu_mask(pcfg->public_cfg.cpu));
 	p = bman_create_affine_portal(pcfg);
 	if (p) {
 #ifdef CONFIG_FSL_DPA_PIRQ_SLOW
-		bman_irqsource_add(BM_PIRQ_RCRI | BM_PIRQ_BSCN);
+		bman_p_irqsource_add(p, BM_PIRQ_RCRI | BM_PIRQ_BSCN);
 #endif
 		pr_info("Bman portal %sinitialised, cpu %d\n",
 			pcfg->public_cfg.is_shared ? "(shared) " : "",
 			pcfg->public_cfg.cpu);
+		affine_bportals[pcfg->public_cfg.cpu] = p;
 	} else
 		pr_crit("Bman portal failure on cpu %d\n",
 			pcfg->public_cfg.cpu);
-	set_cpus_allowed_ptr(current, &oldmask);
 	return p;
 }
 
 static void init_slave(int cpu)
 {
 	struct bman_portal *p;
-	struct cpumask oldmask = *tsk_cpus_allowed(current);
-	set_cpus_allowed_ptr(current, get_cpu_mask(cpu));
-	p = bman_create_affine_slave(shared_portals[shared_portals_idx++]);
+	p = bman_create_affine_slave(shared_portals[shared_portals_idx++], cpu);
 	if (!p)
 		pr_err("Bman slave portal failure on cpu %d\n", cpu);
 	else
 		pr_info("Bman portal %sinitialised, cpu %d\n", "(slave) ", cpu);
-	set_cpus_allowed_ptr(current, &oldmask);
 	if (shared_portals_idx >= num_shared_portals)
 		shared_portals_idx = 0;
+	affine_bportals[cpu] = p;
 }
 
 /* Bootarg "bportals=[...]" has the same syntax as "qportals=", and so the
@@ -269,6 +292,55 @@ static int __init parse_bportals(char *str)
 				     "bportals");
 }
 __setup("bportals=", parse_bportals);
+
+static void bman_offline_cpu(unsigned int cpu)
+{
+	struct bman_portal *p;
+	const struct bm_portal_config *pcfg;
+	p = (struct bman_portal *)affine_bportals[cpu];
+	if (p) {
+		pcfg = bman_get_bm_portal_config(p);
+		if (pcfg)
+			irq_set_affinity(pcfg->public_cfg.irq, cpumask_of(0));
+	}
+}
+
+#ifdef CONFIG_HOTPLUG_CPU
+static void bman_online_cpu(unsigned int cpu)
+{
+	struct bman_portal *p;
+	const struct bm_portal_config *pcfg;
+	p = (struct bman_portal *)affine_bportals[cpu];
+	if (p) {
+		pcfg = bman_get_bm_portal_config(p);
+		if (pcfg)
+			irq_set_affinity(pcfg->public_cfg.irq, cpumask_of(cpu));
+	}
+}
+
+static int __cpuinit bman_hotplug_cpu_callback(struct notifier_block *nfb,
+					unsigned long action, void *hcpu)
+{
+	unsigned int cpu = (unsigned long)hcpu;
+
+	switch (action) {
+	case CPU_ONLINE:
+	case CPU_ONLINE_FROZEN:
+		bman_online_cpu(cpu);
+		break;
+	case CPU_DOWN_PREPARE:
+	case CPU_DOWN_PREPARE_FROZEN:
+		bman_offline_cpu(cpu);
+	default:
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block bman_hotplug_cpu_notifier = {
+	.notifier_call = bman_hotplug_cpu_callback,
+};
+#endif /* CONFIG_HOTPLUG_CPU */
 
 /* Initialise the Bman driver. The meat of this function deals with portals. The
  * following describes the flow of portal-handling, the code "steps" refer to
@@ -297,7 +369,7 @@ __setup("bportals=", parse_bportals);
  *    which are selected in a round-robin fashion.
  * Any portal configs left unused are available for USDPAA allocation.
  */
-static __init int bman_init(void)
+__init int bman_init(void)
 {
 	struct cpumask slave_cpus;
 	struct cpumask unshared_cpus = *cpu_none_mask;
@@ -308,6 +380,7 @@ static __init int bman_init(void)
 	struct bm_portal_config *pcfg;
 	struct bman_portal *p;
 	int cpu, ret;
+	struct cpumask offline_cpus;
 
 	/* Initialise the Bman (CCSR) device */
 	for_each_compatible_node(dn, NULL, "fsl,bman") {
@@ -331,27 +404,29 @@ static __init int bman_init(void)
 			list_add_tail(&pcfg->list, &unused_pcfgs);
 	}
 	/* Step 2. */
-	for_each_cpu(cpu, &want_shared) {
-		pcfg = get_pcfg(&unused_pcfgs);
-		if (!pcfg)
-			break;
-		pcfg->public_cfg.cpu = cpu;
-		list_add_tail(&pcfg->list, &shared_pcfgs);
-		cpumask_set_cpu(cpu, &shared_cpus);
-	}
-	for_each_cpu(cpu, &want_unshared) {
-		if (cpumask_test_cpu(cpu, &shared_cpus))
-			continue;
-		pcfg = get_pcfg(&unused_pcfgs);
-		if (!pcfg)
-			break;
-		pcfg->public_cfg.cpu = cpu;
-		list_add_tail(&pcfg->list, &unshared_pcfgs);
-		cpumask_set_cpu(cpu, &unshared_cpus);
+	for_each_possible_cpu(cpu) {
+		if (cpumask_test_cpu(cpu, &want_shared)) {
+			pcfg = get_pcfg(&unused_pcfgs);
+			if (!pcfg)
+				break;
+			pcfg->public_cfg.cpu = cpu;
+			list_add_tail(&pcfg->list, &shared_pcfgs);
+			cpumask_set_cpu(cpu, &shared_cpus);
+		}
+		if (cpumask_test_cpu(cpu, &want_unshared)) {
+			if (cpumask_test_cpu(cpu, &shared_cpus))
+				continue;
+			pcfg = get_pcfg(&unused_pcfgs);
+			if (!pcfg)
+				break;
+			pcfg->public_cfg.cpu = cpu;
+			list_add_tail(&pcfg->list, &unshared_pcfgs);
+			cpumask_set_cpu(cpu, &unshared_cpus);
+		}
 	}
 	if (list_empty(&shared_pcfgs) && list_empty(&unshared_pcfgs)) {
 		/* Default, give an unshared portal to each online cpu */
-		for_each_online_cpu(cpu) {
+		for_each_possible_cpu(cpu) {
 			pcfg = get_pcfg(&unused_pcfgs);
 			if (!pcfg)
 				break;
@@ -361,7 +436,7 @@ static __init int bman_init(void)
 		}
 	}
 	/* Step 3. */
-	cpumask_andnot(&slave_cpus, cpu_online_mask, &shared_cpus);
+	cpumask_andnot(&slave_cpus, cpu_possible_mask, &shared_cpus);
 	cpumask_andnot(&slave_cpus, &slave_cpus, &unshared_cpus);
 	if (cpumask_empty(&slave_cpus)) {
 		/* No sharing required */
@@ -404,6 +479,20 @@ static __init int bman_init(void)
 		for_each_cpu(cpu, &slave_cpus)
 			init_slave(cpu);
 	pr_info("Bman portals initialised\n");
+	cpumask_andnot(&offline_cpus, cpu_possible_mask, cpu_online_mask);
+	for_each_cpu(cpu, &offline_cpus)
+		bman_offline_cpu(cpu);
+#ifdef CONFIG_HOTPLUG_CPU
+	register_hotcpu_notifier(&bman_hotplug_cpu_notifier);
+#endif
+	return 0;
+}
+
+__init int bman_resource_init(void)
+{
+	struct device_node *dn;
+	int ret;
+
 	/* Initialise BPID allocation ranges */
 	for_each_compatible_node(dn, NULL, "fsl,bpid-range") {
 		ret = fsl_bpid_range_init(dn);
@@ -412,4 +501,3 @@ static __init int bman_init(void)
 	}
 	return 0;
 }
-subsys_initcall(bman_init);

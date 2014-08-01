@@ -1,7 +1,7 @@
 /*
  * P2020 RDB-PC Device Tree Source stub (no addresses or top-level ranges)
  *
- * Copyright 2011 Freescale Semiconductor Inc.
+ * Copyright 2011, 2013 Freescale Semiconductor Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -56,15 +56,15 @@
 		};
 
 		partition@80000 {
-			/* 3.5 MB for Linux Kernel Image */
-			reg = <0x00080000 0x00380000>;
+			/* 4.5 MB for Linux Kernel Image */
+			reg = <0x00080000 0x00480000>;
 			label = "NOR Linux Kernel Image";
 		};
 
-		partition@400000 {
-			/* 11MB for JFFS2 based Root file System */
-			reg = <0x00400000 0x00b00000>;
-			label = "NOR JFFS2 Root File System";
+		partition@500000 {
+			/* 10MB for Root file System */
+			reg = <0x00500000 0x00a00000>;
+			label = "NOR Root File System";
 		};
 
 		partition@f00000 {

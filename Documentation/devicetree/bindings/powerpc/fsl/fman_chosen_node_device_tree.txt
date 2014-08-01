@@ -120,7 +120,11 @@ PROPERTIES
       Usage: optional
       Value type: <prop-encoded-array>
       Definition: Specifies the number of profiles for this port (first value)
-        and the dfault virtual port eelative id (second value).
+        and the dfault virtual port relative id (second value). Note that the
+        kernel FMan driver automatically initializes the default VSP (using
+        the configuration from the Linux dpaa Ethernet Driver of the equivalent
+        port) while the rest of the VSPs should be initialized by the user 
+        (using the appropriate IOCTLs).
         For more information please refer to the FMan User's guide
 
   - errors-to-discard

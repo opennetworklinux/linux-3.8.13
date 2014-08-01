@@ -1,7 +1,7 @@
 /*
  * P1021 RDB Device Tree Source stub (no addresses or top-level ranges)
  *
- * Copyright 2012 Freescale Semiconductor Inc.
+ * Copyright 2012-2013 Freescale Semiconductor Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -56,15 +56,15 @@
 		};
 
 		partition@80000 {
-			/* 3.5 MB for Linux Kernel Image */
-			reg = <0x00080000 0x00380000>;
+			/* 4.5 MB for Linux Kernel Image */
+			reg = <0x00080000 0x00480000>;
 			label = "NOR Linux Kernel Image";
 		};
 
-		partition@400000 {
-			/* 10.75MB for JFFS2 based Root file System */
-			reg = <0x00400000 0x00ac0000>;
-			label = "NOR JFFS2 Root File System";
+		partition@500000 {
+			/* 9.75MB for Root file System */
+			reg = <0x00500000 0x009c0000>;
+			label = "NOR Root File System";
 		};
 
 		partition@ec0000 {

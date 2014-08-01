@@ -31,6 +31,10 @@ struct platform_device;
 #define PIWAR_WRITE_SNOOP	0x00005000
 #define PIWAR_SZ_MASK          0x0000003f
 
+#define PCI_FSL_PM_CTRL		0x48
+#define PEX_PMCR_PTOMR		0x1
+#define PEX_PME_MES_DR_ENL23_SHIFT	13
+
 /* PCI/PCI Express outbound window reg */
 struct pci_outbound_window_regs {
 	__be32	potar;	/* 0x.0 - Outbound translation address register */

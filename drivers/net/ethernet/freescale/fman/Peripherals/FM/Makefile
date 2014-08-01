@@ -12,7 +12,7 @@ EXTRA_CFLAGS += -I$(NCSW_FM_INC)
 
 obj-y		+= fsl-ncsw-PFM1.o
 
-fsl-ncsw-PFM1-objs	:=   fm.o fm_muram.o
+fsl-ncsw-PFM1-objs	:=   fm.o fm_muram.o fman.o
 
 obj-y		+= MAC/
 obj-y		+= Pcd/

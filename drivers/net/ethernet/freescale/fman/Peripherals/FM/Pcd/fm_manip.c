@@ -1366,7 +1366,7 @@ t_Error FmPcdRegisterReassmPort(t_Handle h_FmPcd, t_Handle h_IpReasmCommonPramTb
         case (1):
             RETURN_ERROR(MAJOR, E_NO_MEMORY, ("failed to allocate TNUM"));
         case (2):
-            RETURN_ERROR(MAJOR, E_NO_MEMORY, ("failed to allocate internal buffer"));
+            RETURN_ERROR(MAJOR, E_NO_MEMORY, ("failed to allocate internal buffer from the HC-Port"));
         case (3):
             RETURN_ERROR(MAJOR, E_INVALID_VALUE, ("'Disable Timeout Task' with invalid IPRCPT"));
         case (4):
@@ -1631,34 +1631,34 @@ static t_Error UpdateInitIpReasm(t_Handle       h_FmPcd,
 
     if (p_Manip->updateParams)
     {
-        if ((!(p_Manip->updateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS))) ||
-            ((p_Manip->shadowUpdateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS))))
+        if ((!(p_Manip->updateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK))) ||
+            ((p_Manip->shadowUpdateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK))))
             RETURN_ERROR(MAJOR, E_INVALID_STATE, ("in this stage parameters from Port has not be updated"));
 
         fmPortGetSetCcParams.setCcParams.type = 0;
-        fmPortGetSetCcParams.getCcParams.type = p_Manip->updateParams;
+        fmPortGetSetCcParams.getCcParams.type = p_Manip->updateParams | FM_REV;
         if ((err = FmPortGetSetCcParams(h_FmPort, &fmPortGetSetCcParams)) != E_OK)
             RETURN_ERROR(MAJOR, err, NO_MSG);
-        if (fmPortGetSetCcParams.getCcParams.type & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS))
+        if (fmPortGetSetCcParams.getCcParams.type & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK | FM_REV))
             RETURN_ERROR(MAJOR, E_INVALID_STATE, ("offset of the data wasn't configured previously"));
     }
     else if (validate)
     {
-        if ((!(p_Manip->shadowUpdateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS))) ||
-            ((p_Manip->updateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS))))
+        if ((!(p_Manip->shadowUpdateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK))) ||
+            ((p_Manip->updateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK))))
             RETURN_ERROR(MAJOR, E_INVALID_STATE, ("in this stage parameters from Port has be updated"));
 
         fmPortGetSetCcParams.setCcParams.type = 0;
         fmPortGetSetCcParams.getCcParams.type = p_Manip->shadowUpdateParams;
         if ((err = FmPortGetSetCcParams(h_FmPort, &fmPortGetSetCcParams)) != E_OK)
             RETURN_ERROR(MAJOR, err, NO_MSG);
-        if (fmPortGetSetCcParams.getCcParams.type & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS))
+        if (fmPortGetSetCcParams.getCcParams.type & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK))
             RETURN_ERROR(MAJOR, E_INVALID_STATE, ("offset of the data wasn't configured previously"));
     }
 
     if (p_Manip->updateParams)
     {
-        if (p_Manip->updateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS))
+        if (p_Manip->updateParams & (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK))
         {
             t_FmPcd     *p_FmPcd = (t_FmPcd *)h_FmPcd;
             uint8_t     *p_Ptr, i, totalNumOfTnums;
@@ -1693,8 +1693,8 @@ static t_Error UpdateInitIpReasm(t_Handle       h_FmPcd,
                        ((uint32_t)(XX_VirtToPhys(UINT_TO_PTR(p_Manip->ipReassmParams.internalBufferPoolManagementIndexAddr)) - p_FmPcd->physicalMuramBase));
             WRITE_UINT32(p_Manip->ipReassmParams.p_IpReassCommonTbl->internalBufferManagement, tmpReg32);
 
-            p_Manip->updateParams &= ~(NUM_OF_TASKS | NUM_OF_EXTRA_TASKS);
-            p_Manip->shadowUpdateParams |= (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS);
+            p_Manip->updateParams &= ~(NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK);
+            p_Manip->shadowUpdateParams |= (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK);
         }
     }
 
@@ -1710,12 +1710,6 @@ static t_Error UpdateInitIpReasm(t_Handle       h_FmPcd,
     }
 
 #if (DPAA_VERSION >= 11)
-    memset(&fmPortGetSetCcParams, 0, sizeof(t_FmPortGetSetCcParams));
-    fmPortGetSetCcParams.setCcParams.type = 0;
-    fmPortGetSetCcParams.getCcParams.type = FM_REV;
-    if ((err = FmPortGetSetCcParams(h_FmPort, &fmPortGetSetCcParams)) != E_OK)
-        RETURN_ERROR(MAJOR, err, NO_MSG);
-
     if (fmPortGetSetCcParams.getCcParams.revInfo.majorRev >= 6)
     {
         if ((err = FmPortSetGprFunc(h_FmPort, e_FM_PORT_GPR_MURAM_PAGE, (void**)&p_ParamsPage)) != E_OK)
@@ -1737,6 +1731,12 @@ static t_Error UpdateInitIpReasm(t_Handle       h_FmPcd,
             tmpReg32 |= FmPcdKgGetSchemeId(p_Manip->ipReassmParams.h_Ipv6Scheme);
             WRITE_UINT32(p_ParamsPage->iprIpv6Nia, tmpReg32);
         }
+    }
+#else
+    if (fmPortGetSetCcParams.getCcParams.revInfo.majorRev < 6)
+    {
+        WRITE_UINT32(p_Manip->ipReassmParams.p_IpReassCommonTbl->discardMask,
+                     fmPortGetSetCcParams.getCcParams.discardMask);
     }
 #endif /* (DPAA_VERSION >= 11) */
 
@@ -2561,7 +2561,7 @@ static t_Error FillReassmManipParams(t_FmPcdManip *p_Manip, bool ipv4)
 
     /* Sets the second Ad register (matchTblPtr) - Buffer pool ID (BPID for V2) and Scatter/Gather table offset*/
     /* mark the Scatter/Gather table offset to be set later on when the port will be known */
-    p_Manip->updateParams = (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS);
+    p_Manip->updateParams = (NUM_OF_TASKS | NUM_OF_EXTRA_TASKS | DISCARD_MASK);
 
 #if (DPAA_VERSION == 10)
     tmpReg32 = (uint32_t)(p_Manip->ipReassmParams.sgBpid << 8);
@@ -4142,7 +4142,7 @@ t_Error FM_PCD_ManipNodeDelete(t_Handle h_ManipNode)
         FmPcdManipUpdateOwner(p_Manip->h_NextManip, FALSE);
     }
 
-    if (p_Manip->p_Hmct && MANIP_IS_UNIFIED_FIRST(p_Manip))
+    if (p_Manip->p_Hmct && (MANIP_IS_UNIFIED_FIRST(p_Manip) || !MANIP_IS_UNIFIED(p_Manip)))
         FM_MURAM_FreeMem(((t_FmPcd *)p_Manip->h_FmPcd)->h_FmMuram, p_Manip->p_Hmct);
 
     if (p_Manip->h_Spinlock)

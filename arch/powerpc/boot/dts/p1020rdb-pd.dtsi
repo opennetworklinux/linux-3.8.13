@@ -48,14 +48,14 @@
 		};
 
 		partition@20000 {
-			/* 3.875 MB for Linux Kernel Image */
-			reg = <0x00020000 0x003e0000>;
+			/* 5.875 MB for Linux Kernel Image */
+			reg = <0x00020000 0x005e0000>;
 			label = "NOR Linux Kernel Image";
 		};
 
-		partition@400000 {
-			/* 58MB for Root file System */
-			reg = <0x00400000 0x03a00000>;
+		partition@600000 {
+			/* 56MB for Root file System */
+			reg = <0x00600000 0x03800000>;
 			label = "NOR Root File System";
 		};
 

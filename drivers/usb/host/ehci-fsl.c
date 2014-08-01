@@ -182,6 +182,12 @@ static int usb_hcd_fsl_probe(const struct hc_driver *driver,
 	if (pdata->have_sysif_regs && pdata->controller_ver < FSL_USB_VER_1_6)
 		setbits32(hcd->regs + FSL_SOC_USB_CTRL, 0x4);
 
+	/* Enable phy before reset for USB Controller version 2.5 */
+	if (pdata->controller_ver ==  FSL_USB_VER_2_5) {
+		writel_be(CTRL_UTMI_PHY_EN, hcd->regs + FSL_SOC_USB_CTRL);
+		writel(PORT_PTS_UTMI, hcd->regs + FSL_SOC_USB_PORTSC1);
+	}
+
 	/* Don't need to set host mode here. It will be done by tdi_reset() */
 
 	retval = usb_add_hcd(hcd, irq, IRQF_SHARED | IRQF_NO_SUSPEND);

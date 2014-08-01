@@ -310,6 +310,17 @@ typedef struct
     uint32_t            numOfStatsFLRs;
     uint32_t            countersArraySize;
 
+    bool                isHashBucket;               /**< Valid for match table node that is a bucket of a hash table only */
+    t_Handle            h_MissStatsCounters;        /**< Valid for hash table node and match table that is a bucket;
+                                                         Holds the statistics counters allocated by the hash table and
+                                                         are shared by all hash table buckets; */
+    t_Handle            h_PrivMissStatsCounters;    /**< Valid for match table node that is a bucket of a hash table only;
+                                                         Holds the statistics counters that were allocated for this node
+                                                         and replaced by the shared counters (allocated by the hash table); */
+    bool                statsEnForMiss;             /**< Valid for hash table node only; TRUE is statistics are currently
+                                                         enabled for hash 'miss', FALSE otherwise; This parameter effects the
+                                                         returned statistics count to user, statistics AD always present for 'miss'
+                                                         for all hash buckets; */
     bool                glblMaskUpdated;
     t_Handle            p_GlblMask;
     bool                lclMask;
@@ -383,7 +394,6 @@ typedef struct
 } t_FmPcdCcTree;
 
 
-bool        FmPcdManipIsManipNode(t_Handle h_Ad);
 t_Error     FmPcdCcNodeTreeTryLock(t_Handle h_FmPcd,t_Handle h_FmPcdCcNode, t_List *p_List);
 void        FmPcdCcNodeTreeReleaseLock(t_Handle h_FmPcd, t_List *p_List);
 t_Error     FmPcdUpdateCcShadow (t_FmPcd *p_FmPcd, uint32_t size, uint32_t align);

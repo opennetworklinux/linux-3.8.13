@@ -89,12 +89,16 @@ void sdhci_get_of_property(struct platform_device *pdev)
 
 		if (of_device_is_compatible(np, "fsl,t4240-esdhc")) {
 			host->quirks2 |= SDHCI_QUIRK2_LONG_TIME_CMD_COMPLETE_IRQ;
-			host->quirks2 |= SDHCI_QUIRK2_CIRCUIT_SUPPORT_VS33;
 			host->quirks2 |= SDHCI_QUIRK2_FORCE_CMD13_DETECT_CARD;
 			host->quirks |= SDHCI_QUIRK_BROKEN_ADMA;
 		}
 
+		if (of_device_is_compatible(np, "fsl,p5020-esdhc") ||
+			of_device_is_compatible(np, "fsl,p5040-esdhc"))
+			host->quirks2 |= SDHCI_QUIRK2_LONG_TIME_CMD_COMPLETE_IRQ;
+
 		if (of_device_is_compatible(np, "fsl,p5040-esdhc") ||
+			of_device_is_compatible(np, "fsl,p5020-esdhc") ||
 			of_device_is_compatible(np, "fsl,p4080-esdhc") ||
 			of_device_is_compatible(np, "fsl,p1020-esdhc"))
 			host->quirks &= ~SDHCI_QUIRK_BROKEN_CARD_DETECTION;
@@ -208,13 +212,16 @@ int sdhci_pltfm_register(struct platform_device *pdev,
 			 struct sdhci_pltfm_data *pdata)
 {
 	struct sdhci_host *host;
+	struct device_node *np;
 	int ret = 0;
 
+	np = pdev->dev.of_node;
 	host = sdhci_pltfm_init(pdev, pdata);
 	if (IS_ERR(host))
 		return PTR_ERR(host);
 
 	sdhci_get_of_property(pdev);
+	mmc_of_parse_voltage(np, &host->ocr_mask);
 
 	ret = sdhci_add_host(host);
 	if (ret)

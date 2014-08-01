@@ -40,6 +40,8 @@
 
 /* MAS registers bit definitions */
 
+#define MAS0_ATSEL		0x80000000
+#define MAS0_ATSEL_SHIFT	31
 #define MAS0_TLBSEL_MASK	0x30000000
 #define MAS0_TLBSEL_SHIFT	28
 #define MAS0_TLBSEL(x)		(((x) << MAS0_TLBSEL_SHIFT) & MAS0_TLBSEL_MASK)
@@ -54,9 +56,11 @@
 #define MAS0_WQ_CLR_RSRV       	0x00002000
 
 #define MAS1_VALID		0x80000000
+#define MAS1_VALID_SHIFT	31
 #define MAS1_IPROT		0x40000000
 #define MAS1_TID(x)		(((x) << 16) & 0x3FFF0000)
 #define MAS1_IND		0x00002000
+#define MAS1_IND_SHIFT		13
 #define MAS1_TS			0x00001000
 #define MAS1_TSIZE_MASK		0x00000f80
 #define MAS1_TSIZE_SHIFT	7
@@ -90,8 +94,10 @@
 #define MAS3_SPSIZE		0x0000003e
 #define MAS3_SPSIZE_SHIFT	1
 
+#define MAS4_TLBSEL_MASK	MAS0_TLBSEL_MASK
 #define MAS4_TLBSELD(x) 	MAS0_TLBSEL(x)
 #define MAS4_INDD		0x00008000	/* Default IND */
+#define MAS4_INDD_SHIFT		15
 #define MAS4_TSIZED(x)		MAS1_TSIZE(x)
 #define MAS4_X0D		0x00000040
 #define MAS4_X1D		0x00000020
@@ -218,6 +224,12 @@
 #define TLBILX_T_CLASS2			6
 #define TLBILX_T_CLASS3			7
 
+/* LRATCFG bits */
+#define LRATCFG_ASSOC		0xFF000000
+#define LRATCFG_LASIZE		0x00FE0000
+#define LRATCFG_LPID		0x00002000
+#define LRATCFG_NENTRY 		0x00000FFF
+
 #ifndef __ASSEMBLY__
 
 extern unsigned int tlbcam_index;
@@ -277,6 +289,15 @@ extern unsigned long linear_map_top;
  * return 1, indicating that the tlb requires preloading.
  */
 #define HUGETLB_NEED_PRELOAD
+
+void book3e_tlb_lock(void);
+void book3e_tlb_unlock(void);
+#else
+static inline void book3e_tlb_lock(void)
+{}
+
+static inline void book3e_tlb_unlock(void)
+{}
 #endif
 
 #endif /* !__ASSEMBLY__ */

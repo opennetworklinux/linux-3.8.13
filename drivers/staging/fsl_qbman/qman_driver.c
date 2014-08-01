@@ -31,8 +31,10 @@
 
 #include "qman_private.h"
 
-#include <linux/iommu.h>
 #include <asm/smp.h>	/* hard_smp_processor_id() if !CONFIG_SMP */
+#ifdef CONFIG_HOTPLUG_CPU
+#include <linux/cpu.h>
+#endif
 
 /* Global variable containing revision id (even on non-control plane systems
  * where CCSR isn't available) */
@@ -44,7 +46,10 @@ u16 qm_channel_caam = QMAN_CHANNEL_CAAM;
 EXPORT_SYMBOL(qm_channel_caam);
 u16 qm_channel_pme = QMAN_CHANNEL_PME;
 EXPORT_SYMBOL(qm_channel_pme);
+u16 qm_channel_dce = QMAN_CHANNEL_DCE;
+EXPORT_SYMBOL(qm_channel_dce);
 u16 qman_portal_max;
+EXPORT_SYMBOL(qman_portal_max);
 
 u32 qman_clk;
 struct qm_ceetm qman_ceetms[QMAN_CEETM_MAX];
@@ -291,8 +296,8 @@ void qman_get_ip_revision(struct device_node *dn)
 			continue;
 		if (of_device_is_compatible(dn, "fsl,qman-portal-1.0") ||
 			of_device_is_compatible(dn, "fsl,qman-portal-1.0.0")) {
-			ip_rev = QMAN_REV10;
-			qman_portal_max = 10;
+			pr_err("QMAN rev1.0 on P4080 rev1 is not supported!\n");
+			BUG_ON(1);
 		} else if (of_device_is_compatible(dn, "fsl,qman-portal-1.1") ||
 			of_device_is_compatible(dn, "fsl,qman-portal-1.1.0")) {
 			ip_rev = QMAN_REV11;
@@ -454,8 +459,23 @@ static struct qm_portal_config *get_pcfg(struct list_head *list)
 	return pcfg;
 }
 
+static struct qm_portal_config *get_pcfg_idx(struct list_head *list, u32 idx)
+{
+	struct qm_portal_config *pcfg;
+	if (list_empty(list))
+		return NULL;
+	list_for_each_entry(pcfg, list, list) {
+		if (pcfg->public_cfg.index == idx) {
+			list_del(&pcfg->list);
+			return pcfg;
+		}
+	}
+	return NULL;
+}
+
 static void portal_set_cpu(struct qm_portal_config *pcfg, int cpu)
 {
+#ifdef CONFIG_FSL_PAMU
 	int ret;
 	int window_count = 1;
 	struct iommu_domain_geometry geom_attr;
@@ -487,6 +507,7 @@ static void portal_set_cpu(struct qm_portal_config *pcfg, int cpu)
 	}
 	stash_attr.cpu = cpu;
 	stash_attr.cache = IOMMU_ATTR_CACHE_L1;
+	stash_attr.window = ~(u32)0;
 	ret = iommu_domain_set_attr(pcfg->iommu_domain, DOMAIN_ATTR_PAMU_STASH,
 				    &stash_attr);
 	if (ret < 0) {
@@ -516,6 +537,7 @@ static void portal_set_cpu(struct qm_portal_config *pcfg, int cpu)
 	}
 
 _no_iommu:
+#endif
 #ifdef CONFIG_FSL_QMAN_CONFIG
 	if (qman_set_sdest(pcfg->public_cfg.channel, cpu))
 #endif
@@ -523,17 +545,22 @@ _no_iommu:
 
 	return;
 
+#ifdef CONFIG_FSL_PAMU
 _iommu_detach_device:
 	iommu_detach_device(pcfg->iommu_domain, NULL);
 _iommu_domain_free:
 	iommu_domain_free(pcfg->iommu_domain);
+#endif
 }
 
-struct qm_portal_config *qm_get_unused_portal(void)
+struct qm_portal_config *qm_get_unused_portal_idx(u32 idx)
 {
 	struct qm_portal_config *ret;
 	spin_lock(&unused_pcfgs_lock);
-	ret = get_pcfg(&unused_pcfgs);
+	if (idx == QBMAN_ANY_PORTAL_IDX)
+		ret = get_pcfg(&unused_pcfgs);
+	else
+		ret = get_pcfg_idx(&unused_pcfgs, idx);
 	spin_unlock(&unused_pcfgs_lock);
 	/* Bind stashing LIODNs to the CPU we are currently executing on, and
 	 * set the portal to use the stashing request queue corresonding to the
@@ -548,6 +575,11 @@ struct qm_portal_config *qm_get_unused_portal(void)
 	return ret;
 }
 
+struct qm_portal_config *qm_get_unused_portal()
+{
+	return qm_get_unused_portal_idx(QBMAN_ANY_PORTAL_IDX);
+}
+
 void qm_put_unused_portal(struct qm_portal_config *pcfg)
 {
 	spin_lock(&unused_pcfgs_lock);
@@ -558,10 +590,9 @@ void qm_put_unused_portal(struct qm_portal_config *pcfg)
 static struct qman_portal *init_pcfg(struct qm_portal_config *pcfg)
 {
 	struct qman_portal *p;
-	struct cpumask oldmask = *tsk_cpus_allowed(current);
 
-	portal_set_cpu(pcfg, pcfg->public_cfg.cpu);
-	set_cpus_allowed_ptr(current, get_cpu_mask(pcfg->public_cfg.cpu));
+	pcfg->iommu_domain = NULL;
+	portal_set_cpu(pcfg, get_hard_smp_processor_id(pcfg->public_cfg.cpu));
 	p = qman_create_affine_portal(pcfg, NULL);
 	if (p) {
 		u32 irq_sources = 0;
@@ -573,14 +604,13 @@ static struct qman_portal *init_pcfg(struct qm_portal_config *pcfg)
 #ifdef CONFIG_FSL_DPA_PIRQ_FAST
 		irq_sources |= QM_PIRQ_DQRI;
 #endif
-		qman_irqsource_add(irq_sources);
+		qman_p_irqsource_add(p, irq_sources);
 		pr_info("Qman portal %sinitialised, cpu %d\n",
 			pcfg->public_cfg.is_shared ? "(shared) " : "",
 			pcfg->public_cfg.cpu);
 	} else
 		pr_crit("Qman portal failure on cpu %d\n",
 			pcfg->public_cfg.cpu);
-	set_cpus_allowed_ptr(current, &oldmask);
 	return p;
 }
 
@@ -589,7 +619,7 @@ static void init_slave(int cpu)
 	struct qman_portal *p;
 	struct cpumask oldmask = *tsk_cpus_allowed(current);
 	set_cpus_allowed_ptr(current, get_cpu_mask(cpu));
-	p = qman_create_affine_slave(shared_portals[shared_portals_idx++]);
+	p = qman_create_affine_slave(shared_portals[shared_portals_idx++], cpu);
 	if (!p)
 		pr_err("Qman slave portal failure on cpu %d\n", cpu);
 	else
@@ -609,7 +639,84 @@ static int __init parse_qportals(char *str)
 }
 __setup("qportals=", parse_qportals);
 
-static __init int qman_init(void)
+static void qman_portal_update_sdest(const struct qm_portal_config *pcfg,
+							unsigned int cpu)
+{
+	struct iommu_stash_attribute stash_attr;
+	int ret;
+
+	if (pcfg->iommu_domain) {
+		stash_attr.cpu = cpu;
+		stash_attr.cache = IOMMU_ATTR_CACHE_L1;
+		stash_attr.window = ~(u32)0;
+		ret = iommu_domain_set_attr(pcfg->iommu_domain,
+				DOMAIN_ATTR_PAMU_STASH, &stash_attr);
+		if (ret < 0) {
+			pr_err("Failed to update pamu stash setting\n");
+			return;
+		}
+	}
+#ifdef CONFIG_FSL_QMAN_CONFIG
+	if (qman_set_sdest(pcfg->public_cfg.channel, cpu))
+#endif
+		pr_warning("Failed to update portal's stash request queue\n");
+}
+
+static void qman_offline_cpu(unsigned int cpu)
+{
+	struct qman_portal *p;
+	const struct qm_portal_config *pcfg;
+	p = (struct qman_portal *)affine_portals[cpu];
+	if (p) {
+		pcfg = qman_get_qm_portal_config(p);
+		if (pcfg) {
+			irq_set_affinity(pcfg->public_cfg.irq, cpumask_of(0));
+			qman_portal_update_sdest(pcfg, 0);
+		}
+	}
+}
+
+#ifdef CONFIG_HOTPLUG_CPU
+static void qman_online_cpu(unsigned int cpu)
+{
+	struct qman_portal *p;
+	const struct qm_portal_config *pcfg;
+	p = (struct qman_portal *)affine_portals[cpu];
+	if (p) {
+		pcfg = qman_get_qm_portal_config(p);
+		if (pcfg) {
+			irq_set_affinity(pcfg->public_cfg.irq, cpumask_of(cpu));
+			qman_portal_update_sdest(pcfg,
+					get_hard_smp_processor_id(cpu));
+		}
+	}
+}
+
+static int __cpuinit qman_hotplug_cpu_callback(struct notifier_block *nfb,
+				unsigned long action, void *hcpu)
+{
+	unsigned int cpu = (unsigned long)hcpu;
+
+	switch (action) {
+	case CPU_ONLINE:
+	case CPU_ONLINE_FROZEN:
+		qman_online_cpu(cpu);
+		break;
+	case CPU_DOWN_PREPARE:
+	case CPU_DOWN_PREPARE_FROZEN:
+		qman_offline_cpu(cpu);
+	default:
+		break;
+	}
+	return NOTIFY_OK;
+}
+
+static struct notifier_block qman_hotplug_cpu_notifier = {
+	.notifier_call = qman_hotplug_cpu_callback,
+};
+#endif /* CONFIG_HOTPLUG_CPU */
+
+__init int qman_init(void)
 {
 	struct cpumask slave_cpus;
 	struct cpumask unshared_cpus = *cpu_none_mask;
@@ -621,6 +728,7 @@ static __init int qman_init(void)
 	struct qman_portal *p;
 	int cpu, ret;
 	const u32 *clk;
+	struct cpumask offline_cpus;
 
 	/* Initialise the Qman (CCSR) device */
 	for_each_compatible_node(dn, NULL, "fsl,qman") {
@@ -650,6 +758,15 @@ static __init int qman_init(void)
 		qm_channel_pme = QMAN_CHANNEL_PME_REV3;
 	}
 
+	/*
+	 * Parse the ceetm node to get how many ceetm instances are supported
+	 * on the current silicon. num_ceetms must be confirmed before portals
+	 * are intiailized.
+	 */
+	num_ceetms = 0;
+	for_each_compatible_node(dn, NULL, "fsl,qman-ceetm")
+		num_ceetms++;
+
 	/* Parse pool channels into the SDQCR mask. (Must happen before portals
 	 * are initialised.) */
 	for_each_compatible_node(dn, NULL, "fsl,pool-channel-range") {
@@ -658,6 +775,7 @@ static __init int qman_init(void)
 			return ret;
 	}
 
+	memset(affine_portals, 0, sizeof(void *) * num_possible_cpus());
 	/* Initialise portals. See bman_driver.c for comments */
 	for_each_compatible_node(dn, NULL, "fsl,qman-portal") {
 		if (!of_device_is_available(dn))
@@ -668,26 +786,18 @@ static __init int qman_init(void)
 			list_add_tail(&pcfg->list, &unused_pcfgs);
 		}
 	}
-	for_each_cpu(cpu, &want_shared) {
-		pcfg = get_pcfg(&unused_pcfgs);
-		if (!pcfg)
-			break;
-		pcfg->public_cfg.cpu = cpu;
-		list_add_tail(&pcfg->list, &shared_pcfgs);
-		cpumask_set_cpu(cpu, &shared_cpus);
-	}
-	for_each_cpu(cpu, &want_unshared) {
-		if (cpumask_test_cpu(cpu, &shared_cpus))
-			continue;
-		pcfg = get_pcfg(&unused_pcfgs);
-		if (!pcfg)
-			break;
-		pcfg->public_cfg.cpu = cpu;
-		list_add_tail(&pcfg->list, &unshared_pcfgs);
-		cpumask_set_cpu(cpu, &unshared_cpus);
-	}
-	if (list_empty(&shared_pcfgs) && list_empty(&unshared_pcfgs)) {
-		for_each_online_cpu(cpu) {
+	for_each_possible_cpu(cpu) {
+		if (cpumask_test_cpu(cpu, &want_shared)) {
+			pcfg = get_pcfg(&unused_pcfgs);
+			if (!pcfg)
+				break;
+			pcfg->public_cfg.cpu = cpu;
+			list_add_tail(&pcfg->list, &shared_pcfgs);
+			cpumask_set_cpu(cpu, &shared_cpus);
+		}
+		if (cpumask_test_cpu(cpu, &want_unshared)) {
+			if (cpumask_test_cpu(cpu, &shared_cpus))
+				continue;
 			pcfg = get_pcfg(&unused_pcfgs);
 			if (!pcfg)
 				break;
@@ -696,7 +806,17 @@ static __init int qman_init(void)
 			cpumask_set_cpu(cpu, &unshared_cpus);
 		}
 	}
-	cpumask_andnot(&slave_cpus, cpu_online_mask, &shared_cpus);
+	if (list_empty(&shared_pcfgs) && list_empty(&unshared_pcfgs)) {
+		for_each_possible_cpu(cpu) {
+			pcfg = get_pcfg(&unused_pcfgs);
+			if (!pcfg)
+				break;
+			pcfg->public_cfg.cpu = cpu;
+			list_add_tail(&pcfg->list, &unshared_pcfgs);
+			cpumask_set_cpu(cpu, &unshared_cpus);
+		}
+	}
+	cpumask_andnot(&slave_cpus, cpu_possible_mask, &shared_cpus);
 	cpumask_andnot(&slave_cpus, &slave_cpus, &unshared_cpus);
 	if (cpumask_empty(&slave_cpus)) {
 		if (!list_empty(&shared_pcfgs)) {
@@ -732,6 +852,20 @@ static __init int qman_init(void)
 		for_each_cpu(cpu, &slave_cpus)
 			init_slave(cpu);
 	pr_info("Qman portals initialised\n");
+	cpumask_andnot(&offline_cpus, cpu_possible_mask, cpu_online_mask);
+	for_each_cpu(cpu, &offline_cpus)
+		qman_offline_cpu(cpu);
+#ifdef CONFIG_HOTPLUG_CPU
+	register_hotcpu_notifier(&qman_hotplug_cpu_notifier);
+#endif
+	return 0;
+}
+
+__init int qman_resource_init(void)
+{
+	struct device_node *dn;
+	int ret;
+
 	/* Initialise FQID allocation ranges */
 	for_each_compatible_node(dn, NULL, "fsl,fqid-range") {
 		ret = fsl_fqid_range_init(dn);
@@ -753,13 +887,10 @@ static __init int qman_init(void)
 	}
 
 	/* Parse CEETM */
-	num_ceetms = 0;
 	for_each_compatible_node(dn, NULL, "fsl,qman-ceetm") {
 		ret = fsl_ceetm_init(dn);
-		num_ceetms++;
 		if (ret)
 			return ret;
 	}
 	return 0;
 }
-subsys_initcall(qman_init);

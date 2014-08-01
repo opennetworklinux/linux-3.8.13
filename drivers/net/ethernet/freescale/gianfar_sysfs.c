@@ -375,6 +375,9 @@ static ssize_t gfar_show_recycle(struct device *dev,
 	for_each_possible_cpu(cpu) {
 		struct gfar_priv_recycle_local *local;
 
+		if (!rec->local)
+			break;
+
 		local = per_cpu_ptr(rec->local, cpu);
 		pr_info("local: CPU#%d: recycled skbs %d, reused skbs %d\n",
 			cpu, local->recycle_cnt, local->reuse_cnt);

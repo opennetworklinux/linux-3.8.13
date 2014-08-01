@@ -2,7 +2,7 @@
  * CAAM/SEC 4.x driver backend
  * Private/internal definitions between modules
  *
- * Copyright 2008-2011 Freescale Semiconductor, Inc.
+ * Copyright 2008-2012 Freescale Semiconductor, Inc.
  *
  */
 
@@ -43,6 +43,7 @@ struct caam_jrentry_info {
 /* Private sub-storage for a single JobR */
 struct caam_drv_private_jr {
 	struct device *parentdev;	/* points back to controller dev */
+	struct platform_device *jr_pdev;/* points to platform device for JR */
 	int ridx;
 	struct caam_job_ring __iomem *rregs;	/* JobR's register space */
 	struct napi_struct __percpu *irqtask;
@@ -90,12 +91,22 @@ struct caam_drv_private {
 	u8 qi_present;		/* Nonzero if QI present in device */
 	int secvio_irq;		/* Security violation interrupt number */
 
+	int era;		/* SEC Era */
+
 	/* which jr allocated to scatterlist crypto */
 	atomic_t tfm_count ____cacheline_aligned;
 	/* list of registered crypto algorithms (mk generic context handle?) */
 	struct list_head alg_list;
 	/* list of registered hash algorithms (mk generic context handle?) */
 	struct list_head hash_list;
+	/* list of registered pkc algorithms */
+	struct list_head pkc_list;
+
+#define	RNG4_MAX_HANDLES 2
+	/* RNG4 block */
+	u32 rng4_sh_init;	/* This bitmap shows which of the State
+				   Handles of the RNG4 block are initialized
+				   by this driver */
 
 	/*
 	 * debugfs entries for developer view into driver/device

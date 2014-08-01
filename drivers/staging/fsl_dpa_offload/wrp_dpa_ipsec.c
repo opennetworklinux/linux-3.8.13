@@ -60,6 +60,9 @@ static const struct file_operations dpa_ipsec_fops = {
 };
 
 static int dpa_ipsec_cdev_major = -1;
+static struct class  *ipsec_class;
+static struct device *ipsec_dev;
+
 static long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 				   unsigned long args);
 
@@ -140,6 +143,7 @@ static void compat_copy_sa_params(struct dpa_ipsec_sa_params *sa_prm,
 	sa_prm->hdr_upd_flags = sa_compat_prm->hdr_upd_flags;
 	sa_prm->sa_wqid = sa_compat_prm->sa_wqid;
 	sa_prm->sa_bpid = sa_compat_prm->sa_bpid;
+	sa_prm->sa_bufsize = sa_compat_prm->sa_bufsize;
 	sa_prm->enable_stats = sa_compat_prm->enable_stats;
 	sa_prm->sa_dir = sa_compat_prm->sa_dir;
 
@@ -263,7 +267,7 @@ static int compat_alloc_plcr_params(struct dpa_cls_tbl_action	*kparam,
 				sizeof(struct dpa_cls_tbl_policer_params),
 				GFP_KERNEL);
 		if (!kparam->enq_params.policer_params) {
-			pr_err("Error alloc CLS POL param\n");
+			log_err("Error alloc CLS POL param\n");
 			return -ENOMEM;
 		}
 	}
@@ -280,14 +284,14 @@ static int copy_policer_params(struct dpa_cls_tbl_action *cls_action)
 	    cls_action->enq_params.policer_params != NULL) {
 		policer_params = kmalloc(sizeof(*policer_params), GFP_KERNEL);
 		if (!policer_params) {
-			pr_err("Error alloc CLS POL param\n");
+			log_err("Error alloc CLS POL param\n");
 			err = -ENOMEM;
 			goto clean_policer_params;
 		}
 		if (copy_from_user(policer_params,
 				  cls_action->enq_params.policer_params,
 				  sizeof(*policer_params))) {
-			pr_err("Error - copy CLS POL param\n");
+			log_err("Error - copy CLS POL param\n");
 			err = -EINVAL;
 			goto clean_policer_params;
 		}
@@ -354,13 +358,13 @@ static int do_copy_sa_params(struct dpa_ipsec_sa_params *prm, void *args)
 			out_ip_hdr = kmalloc(sa_out_prm->ip_hdr_size,
 					     GFP_KERNEL);
 			if (!out_ip_hdr) {
-				pr_err("Error - alloc SA out hdr\n");
+				log_err("Error - alloc SA out hdr\n");
 				return -ENOMEM;
 			}
 			if (copy_from_user(out_ip_hdr,
 					   sa_out_prm->outer_ip_header,
 					   sa_out_prm->ip_hdr_size)) {
-				pr_err("Error - copy SA out hdr\n");
+				log_err("Error - copy SA out hdr\n");
 				err = -EINVAL;
 				goto free_create_copied_sa_mem;
 			}
@@ -369,14 +373,14 @@ static int do_copy_sa_params(struct dpa_ipsec_sa_params *prm, void *args)
 		if (sa_out_prm->outer_udp_header) {
 			out_udp_hdr = kmalloc(UDP_HDR_SIZE, GFP_KERNEL);
 			if (!out_udp_hdr) {
-				pr_err("Error - alloc SA out udp hdr\n");
+				log_err("Error - alloc SA out udp hdr\n");
 				err = -ENOMEM;
 				goto free_create_copied_sa_mem;
 			}
 			if (copy_from_user(out_udp_hdr,
 					   sa_out_prm->outer_udp_header,
 					   UDP_HDR_SIZE)) {
-				pr_err("Error - copy SA out udp hdr\n");
+				log_err("Error - copy SA out udp hdr\n");
 				err = -EINVAL;
 				goto free_create_copied_sa_mem;
 			}
@@ -385,7 +389,7 @@ static int do_copy_sa_params(struct dpa_ipsec_sa_params *prm, void *args)
 		if (sa_out_prm->init_vector) {
 			sa_out_iv = kmalloc(sizeof(*sa_out_iv), GFP_KERNEL);
 			if (!sa_out_iv) {
-				pr_err("Error - alloc SA out IV struct\n");
+				log_err("Error - alloc SA out IV struct\n");
 				err = -ENOMEM;
 				goto free_create_copied_sa_mem;
 			}
@@ -398,7 +402,7 @@ static int do_copy_sa_params(struct dpa_ipsec_sa_params *prm, void *args)
 				err = -EINVAL;
 #endif
 			if (err < 0) {
-				pr_err("Error - copy SA out IV struct\n");
+				log_err("Error - copy SA out IV struct\n");
 				kfree(sa_out_iv);
 				return err;
 			}
@@ -410,13 +414,13 @@ static int do_copy_sa_params(struct dpa_ipsec_sa_params *prm, void *args)
 
 			iv_array = kmalloc(sa_out_iv->length, GFP_KERNEL);
 			if (!iv_array) {
-				pr_err("Error - alloc SA out IV array\n");
+				log_err("Error - alloc SA out IV array\n");
 				err = -ENOMEM;
 				goto free_create_copied_sa_mem;
 			}
 			if (copy_from_user(iv_array, sa_out_iv->init_vector,
 					   sa_out_iv->length)) {
-				pr_err("Error - copy SA out IV array\n");
+				log_err("Error - copy SA out IV array\n");
 				err = -EINVAL;
 				goto free_create_copied_sa_mem;
 			}
@@ -433,13 +437,13 @@ copy_crypto_keys:
 	if (crypto_params->auth_key) {
 		auth_key = kmalloc(crypto_params->auth_key_len, GFP_KERNEL);
 		if (!auth_key) {
-			pr_err("Couldn't allocate memory for SA auth key\n");
+			log_err("Couldn't allocate memory for SA auth key\n");
 			err = -ENOMEM;
 			goto free_create_sa_keys_mem;
 		}
 		if (copy_from_user(auth_key, crypto_params->auth_key,
 				   crypto_params->auth_key_len)) {
-			pr_err("Could not copy SA auth key!\n");
+			log_err("Could not copy SA auth key!\n");
 			err = -EINVAL;
 			goto free_create_sa_keys_mem;
 		}
@@ -449,13 +453,13 @@ copy_crypto_keys:
 	if (crypto_params->cipher_key) {
 		cipher_key = kmalloc(crypto_params->cipher_key_len, GFP_KERNEL);
 		if (!cipher_key) {
-			pr_err("Couldn't allocate memory for SA cipher key\n");
+			log_err("Couldn't allocate memory for SA cipher key\n");
 			err = -ENOMEM;
 			goto free_create_sa_keys_mem;
 		}
 		if (copy_from_user(cipher_key, crypto_params->cipher_key,
 				   crypto_params->cipher_key_len)) {
-			pr_err("Could not copy SA auth key!\n");
+			log_err("Could not copy SA auth key!\n");
 			err = -EINVAL;
 			goto free_create_sa_keys_mem;
 		}
@@ -490,13 +494,13 @@ static int do_init_ioctl(struct ioc_dpa_ipsec_params *kprm)
 	if (kprm->dpa_ipsec_params.fqid_range) {
 		fqid_range = kmalloc(sizeof(*fqid_range), GFP_KERNEL);
 		if (!fqid_range) {
-			pr_err("FQID range allocation failed!\n");
+			log_err("FQID range allocation failed!\n");
 			return -EINVAL;
 		}
 		if (copy_from_user(fqid_range,
 				   kprm->dpa_ipsec_params.fqid_range,
 				   sizeof(*fqid_range))) {
-			pr_err("Could not copy FQID range params!\n");
+			log_err("Could not copy FQID range params!\n");
 			err = -EINVAL;
 			goto free_ipsec_init_mem;
 		}
@@ -506,7 +510,7 @@ static int do_init_ioctl(struct ioc_dpa_ipsec_params *kprm)
 	/* Translate FM_PCD file descriptor */
 	fm_pcd_file = fcheck((unsigned long)kprm->dpa_ipsec_params.fm_pcd);
 	if (!fm_pcd_file) {
-		pr_err("Could not acquire PCD handle\n");
+		log_err("Could not acquire PCD handle\n");
 		err = -EINVAL;
 		goto free_ipsec_init_mem;
 	}
@@ -529,7 +533,7 @@ static int do_create_sa_ioctl(void *args)
 	int err = 0;
 
 	if (copy_from_user(&prm, args, sizeof(prm))) {
-		pr_err("Could not copy SA parameters\n");
+		log_err("Could not copy SA parameters\n");
 		return -EINVAL;
 	}
 
@@ -557,7 +561,7 @@ static int do_create_sa_ioctl(void *args)
 		goto free_create_sa_mem;
 
 	if (copy_to_user((void *)args, &prm, sizeof(prm))) {
-		pr_err("Could not copy to user the SA ID\n");
+		log_err("Could not copy to user the SA ID\n");
 		err = -EINVAL;
 	}
 
@@ -575,7 +579,7 @@ static int do_create_sa_compat_ioctl(void *args)
 	int err = 0;
 
 	if (copy_from_user(&compat_prm, args, sizeof(compat_prm))) {
-		pr_err("Could not copy SA parameters\n");
+		log_err("Could not copy SA parameters\n");
 		return -EINVAL;
 	}
 
@@ -615,7 +619,7 @@ static int do_create_sa_compat_ioctl(void *args)
 	compat_prm.sa_id = prm.sa_id;
 
 	if (copy_to_user((void *)args, &compat_prm, sizeof(compat_prm))) {
-		pr_err("Could not copy to user the SA ID\n");
+		log_err("Could not copy to user the SA ID\n");
 		err = -EINVAL;
 	}
 
@@ -632,7 +636,7 @@ static int do_sa_rekey_ioctl(void *args)
 	int err = 0;
 
 	if (copy_from_user(&prm, args, sizeof(prm))) {
-		pr_err("Could not copy SA rekeying params\n");
+		log_err("Could not copy SA rekeying params\n");
 		return -EINVAL;
 	}
 
@@ -647,7 +651,7 @@ static int do_sa_rekey_ioctl(void *args)
 		goto free_rekey_sa_mem;
 
 	if (copy_to_user((void *)args, &prm, sizeof(prm))) {
-		pr_err("Could not copy to user new SA ID\n");
+		log_err("Could not copy to user new SA ID\n");
 		err = -EINVAL;
 	}
 
@@ -665,7 +669,7 @@ static int do_sa_rekey_compat_ioctl(void *args)
 	int err = 0;
 
 	if (copy_from_user(&compat_prm, args, sizeof(compat_prm))) {
-		pr_err("Could not copy SA rekeying params\n");
+		log_err("Could not copy SA rekeying params\n");
 		return -EINVAL;
 	}
 	compat_copy_dpa_ipsec_rekey_sa(&prm, &compat_prm);
@@ -682,7 +686,7 @@ static int do_sa_rekey_compat_ioctl(void *args)
 
 	compat_prm.new_sa_id = prm.new_sa_id;
 	if (copy_to_user((void *)args, &compat_prm, sizeof(compat_prm))) {
-		pr_err("Could not copy to user new SA ID\n");
+		log_err("Could not copy to user new SA ID\n");
 		err = -EINVAL;
 	}
 
@@ -701,7 +705,7 @@ static int do_add_rem_policy_ioctl(void *args, bool add_pol)
 	if (copy_from_user(&prm,
 			   (struct ioc_dpa_ipsec_add_rem_policy *)args,
 			   sizeof(prm))) {
-		pr_err("Could not copy parameters\n");
+		log_err("Could not copy parameters\n");
 		return -EINVAL;
 	}
 
@@ -733,7 +737,7 @@ static int do_add_rem_policy_compat_ioctl(void *args, bool add_pol)
 	if (copy_from_user(&uprm,
 		   (struct ioc_compat_dpa_ipsec_add_rem_policy *)args,
 		    sizeof(uprm))) {
-		pr_err("Could not copy parameters\n");
+		log_err("Could not copy parameters\n");
 		return -EINVAL;
 	}
 
@@ -770,12 +774,12 @@ static int do_sa_get_policies_ioctl(void *args)
 	int sa_id, num_pol = 0, err = 0, i;
 
 	if (copy_from_user(&prm, args, sizeof(prm))) {
-		pr_err("Could not copy params for policy retrieval\n");
+		log_err("Could not copy params for policy retrieval\n");
 		return -EINVAL;
 	}
 
 	if (prm.sa_id < 0) {
-		pr_err("Invalid input SA id\n");
+		log_err("Invalid input SA id\n");
 		return -EINVAL;
 	}
 
@@ -783,14 +787,14 @@ static int do_sa_get_policies_ioctl(void *args)
 	if (!prm.policy_params) {
 		err = dpa_ipsec_sa_get_policies(sa_id, NULL, &num_pol);
 		if (err < 0) {
-			pr_err("Get policies count failed\n");
+			log_err("Get policies count failed\n");
 			return err;
 		}
 
 		prm.num_pol = num_pol;
 
 		if (copy_to_user(args, &prm, sizeof(prm))) {
-			pr_err("Cannot copy policy count to user\n");
+			log_err("Cannot copy policy count to user\n");
 			return -EINVAL;
 		}
 		return 0;
@@ -798,33 +802,33 @@ static int do_sa_get_policies_ioctl(void *args)
 
 	num_pol = prm.num_pol;
 	if (num_pol <= 0) {
-		pr_err("Invalid number of policies for SA ID# %d\n", sa_id);
+		log_err("Invalid number of policies for SA ID# %d\n", sa_id);
 		return -EINVAL;
 	}
 
 	policy_params =	kzalloc(num_pol * sizeof(*policy_params), GFP_KERNEL);
 	if (!policy_params) {
-		pr_err("Could not allocate memory for policy array\n");
+		log_err("Could not allocate memory for policy array\n");
 		return -ENOMEM;
 	}
 
 	err = dpa_ipsec_sa_get_policies(sa_id, policy_params, &num_pol);
 	if (err < 0 && err != -EAGAIN) {
-		pr_err("Could not retrieve SA policies\n");
+		log_err("Could not retrieve SA policies\n");
 		goto err_pol_cleanup;
 	} else if (err == -EAGAIN)
-		pr_err("Not all SA policies could be retrieved\n");
+		log_err("Not all SA policies could be retrieved\n");
 
 	kplcr = kzalloc(num_pol * sizeof(*kplcr), GFP_KERNEL);
 	if (!kplcr) {
-		pr_err("Could not allocate memory for policer array\n");
+		log_err("Could not allocate memory for policer array\n");
 		err = -ENOMEM;
 		goto err_pol_cleanup;
 	}
 
 	uplcr = kzalloc(num_pol * sizeof(*uplcr), GFP_KERNEL);
 	if (!uplcr) {
-		pr_err("Could not allocate memory for policer array\n");
+		log_err("Could not allocate memory for policer array\n");
 		err = -ENOMEM;
 		goto err_pol_cleanup;
 	}
@@ -846,14 +850,14 @@ static int do_sa_get_policies_ioctl(void *args)
 
 	if (copy_to_user(prm.policy_params, policy_params,
 			 num_pol * sizeof(*policy_params))) {
-		pr_err("Could not return policy parameters\n");
+		log_err("Could not return policy parameters\n");
 		err = -EINVAL;
 	}
 
 	for (i = 0; i < num_pol; i++) {
 		if (uplcr[i] && kplcr[i]) {
 			if (copy_to_user(uplcr[i], kplcr[i], sizeof(**uplcr))) {
-				pr_err("Could not return policy parameters\n");
+				log_err("Could not return policy parameters\n");
 				err = -EINVAL;
 			}
 		}
@@ -888,13 +892,13 @@ static int do_sa_get_policies_compat_ioctl(void *args)
 	int i, sa_id, num_pol, err = 0;
 
 	if (copy_from_user(&compat_prm, args, sizeof(compat_prm))) {
-		pr_err("Could not copy params for policy retrieval\n");
+		log_err("Could not copy params for policy retrieval\n");
 		return -EINVAL;
 	}
 	compat_copy_dpa_ipsec_get_pols(&prm, &compat_prm);
 
 	if (prm.sa_id < 0) {
-		pr_err("Invalid input SA id\n");
+		log_err("Invalid input SA id\n");
 		return -EINVAL;
 	}
 
@@ -902,7 +906,7 @@ static int do_sa_get_policies_compat_ioctl(void *args)
 	if (!prm.policy_params) {
 		err = dpa_ipsec_sa_get_policies(sa_id, NULL, &num_pol);
 		if (err < 0) {
-			pr_err("Get policies count failed\n");
+			log_err("Get policies count failed\n");
 			return err;
 		}
 
@@ -910,7 +914,7 @@ static int do_sa_get_policies_compat_ioctl(void *args)
 
 		compat_prm.num_pol = prm.num_pol;
 		if (copy_to_user(args, &compat_prm, sizeof(compat_prm))) {
-				pr_err("Cannot copy policy count to user\n");
+				log_err("Cannot copy policy count to user\n");
 				return -EINVAL;
 		}
 		return 0;
@@ -918,27 +922,27 @@ static int do_sa_get_policies_compat_ioctl(void *args)
 
 	num_pol = prm.num_pol;
 	if (num_pol <= 0) {
-		pr_err("Invalid number of policies for SA ID# %d\n", sa_id);
+		log_err("Invalid number of policies for SA ID# %d\n", sa_id);
 		return -EINVAL;
 	}
 
 	policy_params =	kzalloc(num_pol * sizeof(*policy_params), GFP_KERNEL);
 	if (!policy_params) {
-		pr_err("Could not allocate memory for policy array\n");
+		log_err("Could not allocate memory for policy array\n");
 		return -ENOMEM;
 	}
 
 	err = dpa_ipsec_sa_get_policies(sa_id, policy_params, &num_pol);
 	if (err < 0 && err != -EAGAIN) {
-		pr_err("Could not retrieve SA policies\n");
+		log_err("Could not retrieve SA policies\n");
 		goto err_pol_cleanup;
 	} else if (err == -EAGAIN)
-		pr_err("Not all SA policies could be retrieved\n");
+		log_err("Not all SA policies could be retrieved\n");
 
 	compat_pol_params = kzalloc(num_pol * sizeof(*compat_pol_params),
 				    GFP_KERNEL);
 	if (!compat_pol_params) {
-		pr_err("Could not allocate memory for compat policy array!\n");
+		log_err("Could not allocate memory for compat policy array!\n");
 		kfree(policy_params);
 		return -ENOMEM;
 	}
@@ -946,14 +950,14 @@ static int do_sa_get_policies_compat_ioctl(void *args)
 	/* Allocate memory to store the array of policy objects */
 	pol = kzalloc(sizeof(*pol) * num_pol, GFP_KERNEL);
 	if (!pol) {
-		pr_err("No more memory for array of policies\n");
+		log_err("No more memory for array of policies\n");
 		err = -ENOMEM;
 		goto err_pol_cleanup;
 	}
 
 	if (copy_from_user(pol, compat_ptr(compat_prm.policy_params),
 			  (sizeof(*pol) * num_pol))) {
-		pr_err("Could not copy array of objects\n");
+		log_err("Could not copy array of objects\n");
 		err = -EBUSY;
 		goto err_pol_cleanup;
 	}
@@ -976,7 +980,7 @@ static int do_sa_get_policies_compat_ioctl(void *args)
 	}
 	if (copy_to_user(prm.policy_params, compat_pol_params,
 			 num_pol * sizeof(*compat_pol_params))) {
-		pr_err("Could not return policy parameters\n");
+		log_err("Could not return policy parameters\n");
 		err = -EINVAL;
 	}
 
@@ -1004,12 +1008,12 @@ static int do_sa_modify_ioctl(unsigned long args, int *sa_id,
 	if (copy_from_user(&prm,
 			   (struct ioc_dpa_ipsec_sa_modify_prm *)args,
 			   sizeof(prm))) {
-		pr_err("Could not copy from user modify parameters\n");
+		log_err("Could not copy from user modify parameters\n");
 		return -EINVAL;
 	}
 
 	if (prm.sa_id < 0) {
-		pr_err("Invalid input SA id\n");
+		log_err("Invalid input SA id\n");
 		return -EINVAL;
 	}
 
@@ -1021,14 +1025,14 @@ static int do_sa_modify_ioctl(unsigned long args, int *sa_id,
 		mprm->crypto_params.cipher_key =
 			kmalloc(crypto_prm->cipher_key_len, GFP_KERNEL);
 		if (!mprm->crypto_params.cipher_key) {
-			pr_err("Allocation failed for cipher key\n");
+			log_err("Allocation failed for cipher key\n");
 			return -ENOMEM;
 		}
 
 		mprm->crypto_params.auth_key =
 			kmalloc(crypto_prm->auth_key_len, GFP_KERNEL);
 		if (!mprm->crypto_params.auth_key) {
-			pr_err("Allocation failed for authentication key\n");
+			log_err("Allocation failed for authentication key\n");
 			return -ENOMEM;
 		}
 
@@ -1056,12 +1060,12 @@ static int do_sa_modify_ioctl_compat(unsigned long args, int *sa_id,
 	if (copy_from_user(&prm,
 			   (struct ioc_compat_dpa_ipsec_sa_modify_prm *)args,
 			   sizeof(prm))) {
-		pr_err("Could not copy from user modify parameters\n");
+		log_err("Could not copy from user modify parameters\n");
 		return -EINVAL;
 	}
 
 	if (prm.sa_id < 0) {
-		pr_err("Invalid input SA id\n");
+		log_err("Invalid input SA id\n");
 		return -EINVAL;
 	}
 
@@ -1073,14 +1077,14 @@ static int do_sa_modify_ioctl_compat(unsigned long args, int *sa_id,
 		mprm->crypto_params.cipher_key =
 			kmalloc(crypto_prm->cipher_key_len, GFP_KERNEL);
 		if (!mprm->crypto_params.cipher_key) {
-			pr_err("Allocation failed for cipher key\n");
+			log_err("Allocation failed for cipher key\n");
 			return -ENOMEM;
 		}
 
 		mprm->crypto_params.auth_key =
 			kmalloc(crypto_prm->auth_key_len, GFP_KERNEL);
 		if (!mprm->crypto_params.auth_key) {
-			pr_err("Allocation failed for authentication key\n");
+			log_err("Allocation failed for authentication key\n");
 			return -ENOMEM;
 		}
 
@@ -1108,9 +1112,29 @@ int wrp_dpa_ipsec_init(void)
 	dpa_ipsec_cdev_major =
 	    register_chrdev(0, DPA_IPSEC_CDEV, &dpa_ipsec_fops);
 	if (dpa_ipsec_cdev_major < 0) {
-		pr_err("Could not register Dpa IPSec character device\n");
+		log_err("Could not register Dpa IPSec character device\n");
 		return dpa_ipsec_cdev_major;
 	}
+
+	ipsec_class = class_create(THIS_MODULE, DPA_IPSEC_CDEV);
+	if (IS_ERR(ipsec_class)) {
+		log_err("Cannot create DPA IPsec class device\n");
+		unregister_chrdev(dpa_ipsec_cdev_major, DPA_IPSEC_CDEV);
+		dpa_ipsec_cdev_major = -1;
+		return PTR_ERR(ipsec_class);
+	}
+
+	ipsec_dev = device_create(ipsec_class, NULL,
+				  MKDEV(dpa_ipsec_cdev_major, 0), NULL,
+				  DPA_IPSEC_CDEV);
+	if (IS_ERR(ipsec_dev)) {
+		log_err("Cannot create DPA IPsec device\n");
+		class_destroy(ipsec_class);
+		unregister_chrdev(dpa_ipsec_cdev_major, DPA_IPSEC_CDEV);
+		dpa_ipsec_cdev_major = -1;
+		return PTR_ERR(ipsec_dev);
+	}
+
 	return 0;
 }
 
@@ -1119,8 +1143,12 @@ int wrp_dpa_ipsec_exit(void)
 {
 	if (dpa_ipsec_cdev_major < 0)
 		return 0;
+
+	device_destroy(ipsec_class, MKDEV(dpa_ipsec_cdev_major, 0));
+	class_destroy(ipsec_class);
 	unregister_chrdev(dpa_ipsec_cdev_major, DPA_IPSEC_CDEV);
 	dpa_ipsec_cdev_major = -1;
+
 	return 0;
 }
 
@@ -1162,7 +1190,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 
 		/* Copy parameters from user-space */
 		if (copy_from_user(&kprm, (void *)args, sizeof(kprm))) {
-			pr_err("Could not copy DPA IPSec init parameters\n");
+			log_err("Could not copy DPA IPSec init parameters\n");
 			return -EINVAL;
 		}
 
@@ -1171,7 +1199,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 			return ret;
 
 		if (copy_to_user((void *)args, &kprm, sizeof(kprm))) {
-			pr_err("Could not copy to user the ID\n");
+			log_err("Could not copy to user the ID\n");
 			return -EINVAL;
 		}
 		break;
@@ -1180,7 +1208,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 	case DPA_IPSEC_IOC_FREE: {
 		int dpa_ipsec_id;
 		if (copy_from_user(&dpa_ipsec_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy parameters\n");
+			log_err("Could not copy parameters\n");
 			return -EINVAL;
 		}
 		ret = dpa_ipsec_free(dpa_ipsec_id);
@@ -1195,7 +1223,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 	case DPA_IPSEC_IOC_REMOVE_SA: {
 		int sa_id;
 		if (copy_from_user(&sa_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy parameters\n");
+			log_err("Could not copy parameters\n");
 			return -EINVAL;
 		}
 		ret = dpa_ipsec_remove_sa(sa_id);
@@ -1221,7 +1249,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 		int dpa_ipsec_id;
 
 		if (copy_from_user(&dpa_ipsec_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy parameters\n");
+			log_err("Could not copy parameters\n");
 			return -EINVAL;
 		}
 
@@ -1238,7 +1266,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 		int sa_id;
 
 		if (copy_from_user(&sa_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy SA id\n");
+			log_err("Could not copy SA id\n");
 			return -EINVAL;
 		}
 
@@ -1250,7 +1278,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 		int sa_id;
 
 		if (copy_from_user(&sa_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy SA id\n");
+			log_err("Could not copy SA id\n");
 			return -EINVAL;
 		}
 
@@ -1264,24 +1292,41 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 		if (copy_from_user(&prm,
 				   (struct ioc_dpa_ipsec_sa_get_stats *)args,
 				   sizeof(prm))) {
-			pr_err("Could not copy from user stats params\n");
+			log_err("Could not copy from user stats params\n");
 			return -EINVAL;
 		}
 
 		if (prm.sa_id < 0) {
-			pr_err("Invalid input SA id\n");
+			log_err("Invalid input SA id\n");
 			return -EINVAL;
 		}
 
 		ret = dpa_ipsec_sa_get_stats(prm.sa_id, &prm.sa_stats);
 		if (ret < 0) {
-			pr_err("Getting stats failed\n");
+			log_err("Getting stats failed\n");
 			break;
 		}
 
 		if (copy_to_user((struct ioc_dpa_ipsec_sa_get_stats *)args,
 				 &prm, sizeof(prm))) {
-			pr_err("Could not copy stats to user\n");
+			log_err("Could not copy stats to user\n");
+			return -EINVAL;
+		}
+		break;
+	}
+
+	case DPA_IPSEC_IOC_GET_STATS: {
+		struct dpa_ipsec_stats ipsec_stats;
+
+		ret = dpa_ipsec_get_stats(&ipsec_stats);
+		if (ret < 0) {
+			log_err("Getting stats failed\n");
+			break;
+		}
+
+		if (copy_to_user((struct dpa_ipsec_stats *)args,
+				 &ipsec_stats, sizeof(ipsec_stats))) {
+			log_err("Could not copy stats to user\n");
 			return -EINVAL;
 		}
 		break;
@@ -1298,7 +1343,7 @@ long wrp_dpa_ipsec_do_ioctl(struct file *filp, unsigned int cmd,
 
 		ret = dpa_ipsec_sa_modify(sa_id, &modify_prm);
 		if (IS_ERR_VALUE(ret))
-			pr_err("Modifying SA %d failed\n", sa_id);
+			log_err("Modifying SA %d failed\n", sa_id);
 free:
 		if (modify_prm.type == DPA_IPSEC_SA_MODIFY_CRYPTO) {
 			kfree(modify_prm.crypto_params.cipher_key);
@@ -1306,8 +1351,52 @@ free:
 		}
 		break;
 	}
+
+	case DPA_IPSEC_IOC_SA_REQUEST_SEQ_NUMBER: {
+		int sa_id;
+
+		if (copy_from_user(&sa_id, (int *)args, sizeof(int))) {
+			log_err("Could not copy SA id\n");
+			return -EINVAL;
+		}
+
+		ret = dpa_ipsec_sa_request_seq_number(sa_id);
+		break;
+	}
+
+	case DPA_IPSEC_IOC_SA_GET_SEQ_NUMBER: {
+		struct ioc_dpa_ipsec_sa_get_seq_num prm;
+
+		if (copy_from_user(&prm,
+				   (struct ioc_dpa_ipsec_sa_get_seq_num *)args,
+				   sizeof(prm))) {
+			log_err("Could not copy from user stats params\n");
+			return -EINVAL;
+		}
+
+		if (prm.sa_id < 0) {
+			log_err("Invalid input SA id\n");
+			return -EINVAL;
+		}
+
+		ret = dpa_ipsec_sa_get_seq_number(prm.sa_id, &prm.seq);
+		if (ret < 0) {
+			log_err("Get SEQ number for SA %d failed\n", prm.sa_id);
+			break;
+		}
+
+		if (copy_to_user((struct ioc_dpa_ipsec_sa_get_seq_num *)args,
+				 &prm, sizeof(prm))) {
+			log_err("Could not copy SEQ number to user for SA %d\n",
+				prm.sa_id);
+			return -EINVAL;
+		}
+		break;
+	}
+
 	default:
-		pr_err("Invalid DPA IPsec ioctl\n");
+		log_err("Invalid DPA IPsec ioctl (0x%x)\n", cmd);
+		ret = -EINVAL;
 		break;
 	}
 
@@ -1326,7 +1415,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 		struct ioc_compat_dpa_ipsec_params uprm;
 
 		if (copy_from_user(&uprm, (void *)args, sizeof(uprm))) {
-			pr_err("Could not copy DPA IPSec init parameters\n");
+			log_err("Could not copy DPA IPSec init parameters\n");
 			return -EINVAL;
 		}
 		compat_copy_dpa_ipsec_init(&kprm, &uprm);
@@ -1337,7 +1426,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 
 		uprm.dpa_ipsec_id = kprm.dpa_ipsec_id;
 		if (copy_to_user((void *)args, &uprm, sizeof(uprm))) {
-			pr_err("Could not copy to user the DPA IPSec ID\n");
+			log_err("Could not copy to user the DPA IPSec ID\n");
 			return -EINVAL;
 		}
 		break;
@@ -1346,7 +1435,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 	case DPA_IPSEC_IOC_FREE: {
 		int dpa_ipsec_id;
 		if (copy_from_user(&dpa_ipsec_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy parameters\n");
+			log_err("Could not copy parameters\n");
 			return -EINVAL;
 		}
 		ret = dpa_ipsec_free(dpa_ipsec_id);
@@ -1361,7 +1450,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 	case DPA_IPSEC_IOC_REMOVE_SA: {
 		int sa_id;
 		if (copy_from_user(&sa_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy parameters\n");
+			log_err("Could not copy parameters\n");
 			return -EINVAL;
 		}
 		ret = dpa_ipsec_remove_sa(sa_id);
@@ -1388,7 +1477,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 
 		if (copy_from_user(&dpa_ipsec_id,
 				    (int *)args, sizeof(int))) {
-			pr_err("Could not copy parameters\n");
+			log_err("Could not copy parameters\n");
 			return -EINVAL;
 		}
 
@@ -1405,7 +1494,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 		int sa_id;
 
 		if (copy_from_user(&sa_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy SA id\n");
+			log_err("Could not copy SA id\n");
 			return -EINVAL;
 		}
 
@@ -1417,7 +1506,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 		int sa_id;
 
 		if (copy_from_user(&sa_id, (int *)args, sizeof(int))) {
-			pr_err("Could not copy SA id\n");
+			log_err("Could not copy SA id\n");
 			return -EINVAL;
 		}
 
@@ -1431,27 +1520,44 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 		if (copy_from_user(&prm,
 				(struct ioc_dpa_ipsec_sa_get_stats *)args,
 				sizeof(prm))) {
-			pr_err("Could not copy from user stats params\n");
+			log_err("Could not copy from user stats params\n");
 			return -EINVAL;
 		}
 
 		if (prm.sa_id < 0) {
-			pr_err("Invalid input SA id\n");
+			log_err("Invalid input SA id\n");
 			return -EINVAL;
 		}
 
 		ret = dpa_ipsec_sa_get_stats(prm.sa_id, &prm.sa_stats);
 		if (ret < 0) {
-			pr_err("Getting stats failed\n");
+			log_err("Getting stats failed\n");
 			break;
 		}
 
 		if (copy_to_user((struct ioc_dpa_ipsec_sa_get_stats *)args,
 				 &prm, sizeof(prm))) {
-			pr_err("Could not copy stats to user\n");
+			log_err("Could not copy stats to user\n");
 			return -EINVAL;
 		}
 
+		break;
+	}
+
+	case DPA_IPSEC_IOC_GET_STATS: {
+		struct dpa_ipsec_stats ipsec_stats;
+
+		ret = dpa_ipsec_get_stats(&ipsec_stats);
+		if (ret < 0) {
+			log_err("Getting stats failed\n");
+			break;
+		}
+
+		if (copy_to_user((struct dpa_ipsec_stats *)args,
+				 &ipsec_stats, sizeof(ipsec_stats))) {
+			log_err("Could not copy stats to user\n");
+			return -EINVAL;
+		}
 		break;
 	}
 
@@ -1465,7 +1571,7 @@ long wrp_dpa_ipsec_do_compat_ioctl(struct file *filp, unsigned int cmd,
 
 		ret = dpa_ipsec_sa_modify(sa_id, &modify_prm);
 		if (IS_ERR_VALUE(ret))
-			pr_err("Modifying SA %d failed\n", sa_id);
+			log_err("Modifying SA %d failed\n", sa_id);
 free:
 		if (modify_prm.type == DPA_IPSEC_SA_MODIFY_CRYPTO) {
 			kfree(modify_prm.crypto_params.cipher_key);
@@ -1475,7 +1581,8 @@ free:
 		break;
 	}
 	default:
-		pr_err("Invalid DPA IPsec ioctl\n");
+		log_err("Invalid DPA IPsec ioctl (0x%x)\n", cmd);
+		ret = -EINVAL;
 		break;
 	}
 

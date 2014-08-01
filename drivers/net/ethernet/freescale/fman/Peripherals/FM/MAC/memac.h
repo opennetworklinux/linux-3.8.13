@@ -43,7 +43,7 @@
 #include "error_ext.h"
 #include "list_ext.h"
 
-#include "memac_mii_acc.h"
+#include "fsl_fman_memac_mii_acc.h"
 #include "fm_mac.h"
 #include "fsl_fman_memac.h"
 
@@ -66,7 +66,7 @@ typedef struct
     t_FmMacControllerDriver     fmMacControllerDriver;               /**< Upper Mac control block */
     t_Handle                    h_App;                               /**< Handle to the upper layer application  */
     struct memac_regs           *p_MemMap;                           /**< Pointer to MAC memory mapped registers */
-    t_MemacMiiAccessMemMap      *p_MiiMemMap;                        /**< Pointer to MII memory mapped registers */
+    struct memac_mii_access_mem_map *p_MiiMemMap;                        /**< Pointer to MII memory mapped registers */
     uint64_t                    addr;                                /**< MAC address of device */
     e_EnetMode                  enetMode;                            /**< Ethernet physical interface  */
     t_FmMacExceptionCallback    *f_Exception;

@@ -1192,6 +1192,10 @@ static void DeleteNode(t_FmPcdCcNode *p_CcNode)
         p_CcNode->h_Spinlock = NULL;
     }
 
+    /* Restore the original counters pointer instead of the mutual pointer (mutual to all hash buckets) */
+    if (p_CcNode->isHashBucket && (p_CcNode->statisticsMode != e_FM_PCD_CC_STATS_MODE_NONE))
+        p_CcNode->keyAndNextEngineParams[p_CcNode->numOfKeys].p_StatsObj->h_StatsCounters = p_CcNode->h_PrivMissStatsCounters;
+
     /* Releasing all currently used statistics objects, including 'miss' entry */
     for (i = 0; i < p_CcNode->numOfKeys + 1; i++)
         if (p_CcNode->keyAndNextEngineParams[i].p_StatsObj)
@@ -1200,7 +1204,6 @@ static void DeleteNode(t_FmPcdCcNode *p_CcNode)
     if (!LIST_IsEmpty(&p_CcNode->availableStatsLst))
     {
         t_Handle    h_FmMuram = FmPcdGetMuramHandle(p_CcNode->h_FmPcd);
-
         ASSERT_COND(h_FmMuram);
 
         FreeStatObjects(&p_CcNode->availableStatsLst, h_FmMuram);
@@ -1490,7 +1493,7 @@ t_Error ValidateNextEngineParams(t_Handle                   h_FmPcd,
         (p_FmPcdCcNextEngineParams->statisticsEn))
         RETURN_ERROR(MAJOR, E_CONFLICT,
                      ("Statistics are requested for a key, but statistics mode was set"
-                      "to 'NONE' upon initialization of this match table"));
+                      "to 'NONE' upon initialization"));
 
     switch (p_FmPcdCcNextEngineParams->nextEngine)
     {
@@ -2222,9 +2225,26 @@ static t_Error UpdateGblMask(t_FmPcdCcNode *p_CcNode,
         (keySize <= 4) &&
         !p_CcNode->lclMask)
     {
-        memcpy(p_CcNode->p_GlblMask, p_Mask, (sizeof(uint8_t))*keySize);
-        p_CcNode->glblMaskUpdated = TRUE;
-        p_CcNode->glblMaskSize = 4;
+        if (p_CcNode->parseCode &&
+            (p_CcNode->parseCode != CC_PC_FF_TCI1) &&
+            (p_CcNode->parseCode != CC_PC_FF_TCI2) &&
+            (p_CcNode->parseCode != CC_PC_FF_MPLS1) &&
+            (p_CcNode->parseCode != CC_PC_FF_MPLS_LAST) &&
+            (p_CcNode->parseCode != CC_PC_FF_IPV4IPTOS_TC1) &&
+            (p_CcNode->parseCode != CC_PC_FF_IPV4IPTOS_TC2) &&
+            (p_CcNode->parseCode != CC_PC_FF_IPTOS_IPV6TC1_IPV6FLOW1) &&
+            (p_CcNode->parseCode != CC_PC_FF_IPDSCP) &&
+            (p_CcNode->parseCode != CC_PC_FF_IPTOS_IPV6TC2_IPV6FLOW2) )
+        {
+            p_CcNode->glblMaskSize = 0;
+            p_CcNode->lclMask = TRUE;
+        }
+        else
+        {
+            memcpy(p_CcNode->p_GlblMask, p_Mask, (sizeof(uint8_t))*keySize);
+            p_CcNode->glblMaskUpdated = TRUE;
+            p_CcNode->glblMaskSize = 4;
+        }
     }
     else if (p_Mask &&
              (keySize <= 4) &&
@@ -3397,13 +3417,18 @@ static t_Error ValidateAndCalcStatsParams(t_FmPcdCcNode        *p_CcNode,
                                           uint32_t             *p_NumOfRanges,
                                           uint32_t             *p_CountersArraySize)
 {
-    e_FmPcdCcStatsMode   statisticsMode = p_CcNode->statisticsMode;
+    e_FmPcdCcStatsMode  statisticsMode = p_CcNode->statisticsMode;
+    uint32_t            i;
 
     UNUSED(p_CcNodeParam);
 
     switch (statisticsMode)
     {
         case e_FM_PCD_CC_STATS_MODE_NONE:
+            for (i = 0; i < p_CcNode->numOfKeys; i++)
+                if (p_CcNodeParam->keysParams.keyParams[i].ccNextEngineParams.statisticsEn)
+                    RETURN_ERROR(MAJOR, E_INVALID_VALUE,
+                                 ("Statistics cannot be enabled for key %d when statistics mode was set to 'NONE'", i));
             return E_OK;
 
         case e_FM_PCD_CC_STATS_MODE_FRAME:
@@ -3983,9 +4008,6 @@ static t_Error MatchTableGetKeyStatistics(t_FmPcdCcNode           *p_CcNode,
     if (p_CcNode->statisticsMode == e_FM_PCD_CC_STATS_MODE_NONE)
         RETURN_ERROR(MAJOR, E_INVALID_STATE, ("Statistics were not enabled for this match table"));
 
-    if (keyIndex >= p_CcNode->numOfKeys)
-        RETURN_ERROR(MAJOR, E_INVALID_STATE, ("The provided keyIndex exceeds the number of keys in this match table"));
-
     if (!p_CcNode->keyAndNextEngineParams[keyIndex].p_StatsObj)
         RETURN_ERROR(MAJOR, E_INVALID_STATE, ("Statistics were not enabled for this key"));
 
@@ -4009,6 +4031,552 @@ static t_Error MatchTableGetKeyStatistics(t_FmPcdCcNode           *p_CcNode,
 
     return E_OK;
 }
+
+static t_Error MatchTableSet(t_Handle h_FmPcd, t_FmPcdCcNode *p_CcNode, t_FmPcdCcNodeParams *p_CcNodeParam)
+{
+    t_FmPcd                 *p_FmPcd = (t_FmPcd *) h_FmPcd;
+    t_FmPcdCcNode           *p_FmPcdCcNextNode;
+    t_Error                 err = E_OK;
+    uint32_t                tmp, keySize;
+    bool                    glblMask = FALSE;
+    t_FmPcdCcKeyParams      *p_KeyParams;
+    t_Handle                h_FmMuram, p_KeysMatchTblTmp, p_AdTableTmp;
+#if (DPAA_VERSION >= 11)
+    t_Handle                h_StatsFLRs;
+#endif /* (DPAA_VERSION >= 11) */
+    bool                    fullField = FALSE;
+    ccPrivateInfo_t         icCode = CC_PRIVATE_INFO_NONE;
+    bool                    isKeyTblAlloc, fromIc = FALSE;
+    uint32_t                matchTableSize, adTableSize;
+    t_CcNodeInformation     ccNodeInfo, *p_CcInformation;
+    t_FmPcdStatsObj         *p_StatsObj;
+    t_FmPcdCcStatsParams    statsParams = {0};
+    t_Handle                h_Manip;
+
+    ASSERT_COND(h_FmPcd);
+    ASSERT_COND(p_CcNode);
+    ASSERT_COND(p_CcNodeParam);
+
+    p_CcNode->p_GlblMask = (t_Handle)XX_Malloc(CC_GLBL_MASK_SIZE * sizeof(uint8_t));
+    memset(p_CcNode->p_GlblMask, 0, CC_GLBL_MASK_SIZE * sizeof(uint8_t));
+
+    p_CcNode->h_FmPcd           = h_FmPcd;
+    p_CcNode->numOfKeys         = p_CcNodeParam->keysParams.numOfKeys;
+    p_CcNode->maxNumOfKeys      = p_CcNodeParam->keysParams.maxNumOfKeys;
+    p_CcNode->maskSupport       = p_CcNodeParam->keysParams.maskSupport;
+    p_CcNode->statisticsMode    = p_CcNodeParam->keysParams.statisticsMode;
+
+    /* For backward compatibility - even if statistics mode is nullified,
+       we'll fix it to frame mode so we can support per-key request for
+       statistics using 'statisticsEn' in next engine parameters */
+    if (!p_CcNode->maxNumOfKeys &&
+        (p_CcNode->statisticsMode == e_FM_PCD_CC_STATS_MODE_NONE))
+        p_CcNode->statisticsMode = e_FM_PCD_CC_STATS_MODE_FRAME;
+
+    h_FmMuram = FmPcdGetMuramHandle(h_FmPcd);
+    if (!h_FmMuram)
+        RETURN_ERROR(MAJOR, E_INVALID_HANDLE, ("FM MURAM"));
+
+    INIT_LIST(&p_CcNode->ccPrevNodesLst);
+    INIT_LIST(&p_CcNode->ccTreeIdLst);
+    INIT_LIST(&p_CcNode->ccTreesLst);
+    INIT_LIST(&p_CcNode->availableStatsLst);
+
+    p_CcNode->h_Spinlock = XX_InitSpinlock();
+    if (!p_CcNode->h_Spinlock)
+    {
+        DeleteNode(p_CcNode);
+        RETURN_ERROR(MAJOR, E_NO_MEMORY, ("CC node spinlock"));
+    }
+
+    if ((p_CcNodeParam->extractCcParams.type == e_FM_PCD_EXTRACT_BY_HDR) &&
+        ((p_CcNodeParam->extractCcParams.extractByHdr.hdr == HEADER_TYPE_IPv4) ||
+        (p_CcNodeParam->extractCcParams.extractByHdr.hdr == HEADER_TYPE_IPv6)) &&
+        (p_CcNodeParam->extractCcParams.extractByHdr.type == e_FM_PCD_EXTRACT_FULL_FIELD) &&
+        ((p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField.ipv6 == NET_HEADER_FIELD_IPv6_HOP_LIMIT) ||
+        (p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField.ipv4 == NET_HEADER_FIELD_IPv4_TTL)))
+    {
+        err = Ipv4TtlOrIpv6HopLimitCheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
+        glblMask = FALSE;
+    }
+    else if ((p_CcNodeParam->extractCcParams.type == e_FM_PCD_EXTRACT_NON_HDR) &&
+             ((p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_KEY) ||
+              (p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_HASH) ||
+              (p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_FLOW_ID)))
+    {
+        if ((p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_FLOW_ID) &&
+            (p_CcNodeParam->extractCcParams.extractNonHdr.offset != 0))
+        {
+            DeleteNode(p_CcNode);
+            RETURN_ERROR(MAJOR, E_INVALID_VALUE,
+                         ("In the case of the extraction from e_FM_PCD_EXTRACT_FROM_FLOW_ID offset has to be 0"));
+        }
+
+        icCode = IcDefineCode(p_CcNodeParam);
+        fromIc = TRUE;
+        if (icCode == CC_PRIVATE_INFO_NONE)
+        {
+            DeleteNode(p_CcNode);
+            RETURN_ERROR(MAJOR, E_INVALID_STATE,
+                         ("user asked extraction from IC and field in internal context or action wasn't initialized in the right way"));
+        }
+
+        if ((icCode == CC_PRIVATE_INFO_IC_DEQ_FQID_INDEX_LOOKUP) ||
+            (icCode == CC_PRIVATE_INFO_IC_HASH_INDEX_LOOKUP))
+        {
+            err = IcHashIndexedCheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
+            glblMask = TRUE;
+        }
+        else
+        {
+            err = CheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
+            if (p_CcNode->glblMaskSize)
+                glblMask = TRUE;
+        }
+    }
+    else
+    {
+        err = CheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
+        if (p_CcNode->glblMaskSize)
+            glblMask = TRUE;
+    }
+
+    if (err)
+    {
+        DeleteNode(p_CcNode);
+        RETURN_ERROR(MAJOR, err, NO_MSG);
+    }
+
+    switch (p_CcNodeParam->extractCcParams.type)
+    {
+        case (e_FM_PCD_EXTRACT_BY_HDR):
+            switch (p_CcNodeParam->extractCcParams.extractByHdr.type)
+            {
+                case (e_FM_PCD_EXTRACT_FULL_FIELD):
+                    p_CcNode->parseCode =
+                        GetFullFieldParseCode(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
+                                              p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex,
+                                              p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField);
+                    GetSizeHeaderField(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
+                                       p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex,
+                                       p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField,
+                                       &p_CcNode->sizeOfExtraction);
+                    fullField = TRUE;
+                    if ((p_CcNode->parseCode != CC_PC_FF_TCI1) &&
+                        (p_CcNode->parseCode != CC_PC_FF_TCI2) &&
+                        (p_CcNode->parseCode != CC_PC_FF_MPLS1) &&
+                        (p_CcNode->parseCode != CC_PC_FF_MPLS_LAST) &&
+                        (p_CcNode->parseCode != CC_PC_FF_IPV4IPTOS_TC1) &&
+                        (p_CcNode->parseCode != CC_PC_FF_IPV4IPTOS_TC2) &&
+                        (p_CcNode->parseCode != CC_PC_FF_IPTOS_IPV6TC1_IPV6FLOW1) &&
+                        (p_CcNode->parseCode != CC_PC_FF_IPDSCP) &&
+                        (p_CcNode->parseCode != CC_PC_FF_IPTOS_IPV6TC2_IPV6FLOW2) &&
+                        glblMask)
+                    {
+                        glblMask = FALSE;
+                        p_CcNode->glblMaskSize = 4;
+                        p_CcNode->lclMask = TRUE;
+                    }
+                    break;
+
+                case (e_FM_PCD_EXTRACT_FROM_HDR):
+                    p_CcNode->sizeOfExtraction = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromHdr.size;
+                    p_CcNode->offset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromHdr.offset;
+                    p_CcNode->userOffset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromHdr.offset;
+                    p_CcNode->parseCode =
+                        GetPrParseCode(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
+                                       p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex,
+                                       p_CcNode->offset,glblMask,
+                                       &p_CcNode->prsArrayOffset);
+                    break;
+
+                case (e_FM_PCD_EXTRACT_FROM_FIELD):
+                    p_CcNode->offset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.offset;
+                    p_CcNode->userOffset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.offset;
+                    p_CcNode->sizeOfExtraction = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.size;
+                    p_CcNode->parseCode =
+                        GetFieldParseCode(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
+                                          p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.field,
+                                          p_CcNode->offset,
+                                          &p_CcNode->prsArrayOffset,
+                                          p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex);
+                    break;
+
+                default:
+                    DeleteNode(p_CcNode);
+                    RETURN_ERROR(MAJOR, E_INVALID_SELECTION, NO_MSG);
+            }
+            break;
+
+        case (e_FM_PCD_EXTRACT_NON_HDR):
+            /* get the field code for the generic extract */
+            p_CcNode->sizeOfExtraction = p_CcNodeParam->extractCcParams.extractNonHdr.size;
+            p_CcNode->offset = p_CcNodeParam->extractCcParams.extractNonHdr.offset;
+            p_CcNode->userOffset = p_CcNodeParam->extractCcParams.extractNonHdr.offset;
+            p_CcNode->parseCode =
+                GetGenParseCode(h_FmPcd,
+                                p_CcNodeParam->extractCcParams.extractNonHdr.src,
+                                p_CcNode->offset,
+                                glblMask,
+                                &p_CcNode->prsArrayOffset,
+                                fromIc,icCode);
+
+            if (p_CcNode->parseCode == CC_PC_GENERIC_IC_HASH_INDEXED)
+            {
+                if ((p_CcNode->offset + p_CcNode->sizeOfExtraction) > 8)
+                {
+                     DeleteNode(p_CcNode);
+                     RETURN_ERROR(MAJOR, E_INVALID_SELECTION,("when node of the type CC_PC_GENERIC_IC_HASH_INDEXED offset + size can not be bigger then size of HASH 64 bits (8 bytes)"));
+                }
+            }
+            if ((p_CcNode->parseCode == CC_PC_GENERIC_IC_GMASK) ||
+                (p_CcNode->parseCode == CC_PC_GENERIC_IC_HASH_INDEXED))
+            {
+                p_CcNode->offset +=  p_CcNode->prsArrayOffset;
+                p_CcNode->prsArrayOffset = 0;
+            }
+            break;
+
+       default:
+            DeleteNode(p_CcNode);
+            RETURN_ERROR(MAJOR, E_INVALID_SELECTION, NO_MSG);
+    }
+
+    if (p_CcNode->parseCode == CC_PC_ILLEGAL)
+    {
+        DeleteNode(p_CcNode);
+        RETURN_ERROR(MAJOR, E_INVALID_VALUE, ("illegal extraction type"));
+    }
+
+    if ((p_CcNode->sizeOfExtraction > FM_PCD_MAX_SIZE_OF_KEY) ||
+        !p_CcNode->sizeOfExtraction)
+    {
+        DeleteNode(p_CcNode);
+        RETURN_ERROR(MAJOR, E_INVALID_VALUE, ("sizeOfExatrction can not be greater than 56 and not 0"));
+    }
+
+    if (p_CcNodeParam->keysParams.keySize != p_CcNode->sizeOfExtraction)
+    {
+        DeleteNode(p_CcNode);
+        RETURN_ERROR(MAJOR, E_INVALID_VALUE, ("keySize has to be equal to sizeOfExtraction"));
+    }
+
+    p_CcNode->userSizeOfExtraction = p_CcNode->sizeOfExtraction;
+
+    if (!glblMask)
+        memset(p_CcNode->p_GlblMask, 0xff, CC_GLBL_MASK_SIZE  * sizeof(uint8_t));
+
+    err = CheckAndSetManipParamsWithCcNodeParams(p_CcNode);
+    if (err != E_OK)
+    {
+        DeleteNode(p_CcNode);
+        RETURN_ERROR(MAJOR, E_INVALID_VALUE, ("keySize has to be equal to sizeOfExtraction"));
+    }
+
+    /* Calculating matching table entry size by rounding up the user-defined size of extraction to valid entry size */
+    GetCcExtractKeySize(p_CcNode->sizeOfExtraction, &p_CcNode->ccKeySizeAccExtraction);
+
+    /* If local mask is used, it is stored next to each key in the keys match table */
+    if (p_CcNode->lclMask)
+        keySize = (uint32_t)(2 * p_CcNode->ccKeySizeAccExtraction);
+    else
+        keySize = p_CcNode->ccKeySizeAccExtraction;
+
+    /* Update CC shadow with maximal size required by this node */
+    if (p_CcNode->maxNumOfKeys)
+    {
+        err = CalcAndUpdateCcShadow(p_CcNode,
+                                    isKeyTblAlloc,
+                                    &matchTableSize,
+                                    &adTableSize);
+        if (err != E_OK)
+        {
+            DeleteNode(p_CcNode);
+            RETURN_ERROR(MAJOR, err, NO_MSG);
+        }
+
+        p_CcNode->keysMatchTableMaxSize = matchTableSize;
+
+        if (p_CcNode->statisticsMode != e_FM_PCD_CC_STATS_MODE_NONE)
+        {
+            err = AllocStatsObjs(p_CcNode);
+            if (err != E_OK)
+            {
+                DeleteNode(p_CcNode);
+                RETURN_ERROR(MAJOR, err, NO_MSG);
+            }
+        }
+
+        /* If manipulation will be initialized before this node, it will use the table
+           descriptor in the AD table of previous node and this node will need an extra
+           AD as his table descriptor. */
+        p_CcNode->h_TmpAd = (t_Handle)FM_MURAM_AllocMem(h_FmMuram,
+                                                     FM_PCD_CC_AD_ENTRY_SIZE,
+                                                     FM_PCD_CC_AD_TABLE_ALIGN);
+        if (!p_CcNode->h_TmpAd)
+        {
+            DeleteNode(p_CcNode);
+            RETURN_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC action descriptor"));
+        }
+    }
+    else
+    {
+        matchTableSize = (uint32_t)(keySize * sizeof(uint8_t) * (p_CcNode->numOfKeys + 1));
+        adTableSize    = (uint32_t)(FM_PCD_CC_AD_ENTRY_SIZE * (p_CcNode->numOfKeys + 1));
+    }
+
+#if (DPAA_VERSION >= 11)
+    switch (p_CcNode->statisticsMode)
+    {
+
+        case e_FM_PCD_CC_STATS_MODE_RMON:
+            /* If RMON statistics or RMON conditional statistics modes are requested,
+               allocate frame length ranges array */
+            p_CcNode->h_StatsFLRs =
+                    FM_MURAM_AllocMem(h_FmMuram,
+                                      (uint32_t)(p_CcNode->numOfStatsFLRs) * FM_PCD_CC_STATS_FLR_SIZE,
+                                      FM_PCD_CC_AD_TABLE_ALIGN);
+
+            if (!p_CcNode->h_StatsFLRs)
+            {
+                DeleteNode(p_CcNode);
+                RETURN_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC frame length ranges array"));
+            }
+
+            /* Initialize using value received from the user */
+            for (tmp = 0; tmp < p_CcNode->numOfStatsFLRs; tmp++)
+            {
+                h_StatsFLRs = PTR_MOVE(p_CcNode->h_StatsFLRs, tmp * FM_PCD_CC_STATS_FLR_SIZE);
+
+                Mem2IOCpy32(h_StatsFLRs,
+                            &(p_CcNodeParam->keysParams.frameLengthRanges[tmp]),
+                            FM_PCD_CC_STATS_FLR_SIZE);
+            }
+            break;
+
+        default:
+            break;
+    }
+#endif /* (DPAA_VERSION >= 11) */
+
+
+    /* Allocate keys match table. Not required for some CC nodes, for example for IPv4 TTL
+       identification, IPv6 hop count identification, etc. */
+    if (isKeyTblAlloc)
+    {
+        p_CcNode->h_KeysMatchTable =
+            (t_Handle)FM_MURAM_AllocMem(h_FmMuram,
+                                        matchTableSize,
+                                        FM_PCD_CC_KEYS_MATCH_TABLE_ALIGN);
+        if (!p_CcNode->h_KeysMatchTable)
+        {
+            DeleteNode(p_CcNode);
+            RETURN_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC node key match table"));
+        }
+        IOMemSet32((uint8_t *)p_CcNode->h_KeysMatchTable,
+                   0,
+                   matchTableSize);
+    }
+
+    /* Allocate action descriptors table */
+    p_CcNode->h_AdTable =
+        (t_Handle)FM_MURAM_AllocMem(h_FmMuram,
+                                    adTableSize,
+                                    FM_PCD_CC_AD_TABLE_ALIGN);
+    if (!p_CcNode->h_AdTable)
+    {
+        DeleteNode(p_CcNode);
+        RETURN_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC node action descriptors table"));
+    }
+    IOMemSet32((uint8_t *)p_CcNode->h_AdTable, 0, adTableSize);
+
+    p_KeysMatchTblTmp = p_CcNode->h_KeysMatchTable;
+    p_AdTableTmp      = p_CcNode->h_AdTable;
+
+    /* For each key, create the key and the next step AD */
+    for (tmp = 0; tmp < p_CcNode->numOfKeys; tmp++)
+    {
+        p_KeyParams = &p_CcNodeParam->keysParams.keyParams[tmp];
+
+        if (p_KeysMatchTblTmp)
+        {
+            /* Copy the key */
+            Mem2IOCpy32((void*)p_KeysMatchTblTmp, p_KeyParams->p_Key, p_CcNode->sizeOfExtraction);
+
+            /* Copy the key mask or initialize it to 0xFF..F */
+            if (p_CcNode->lclMask && p_KeyParams->p_Mask)
+            {
+                Mem2IOCpy32(PTR_MOVE(p_KeysMatchTblTmp,
+                                     p_CcNode->ccKeySizeAccExtraction),     /* User's size of extraction rounded up to a valid matching table entry size */
+                            p_KeyParams->p_Mask,
+                            p_CcNode->sizeOfExtraction);           /* Exact size of extraction as received from the user */
+            }
+            else if (p_CcNode->lclMask)
+            {
+                IOMemSet32(PTR_MOVE(p_KeysMatchTblTmp,
+                                    p_CcNode->ccKeySizeAccExtraction),     /* User's size of extraction rounded up to a valid matching table entry size */
+                           0xff,
+                           p_CcNode->sizeOfExtraction);           /* Exact size of extraction as received from the user */
+            }
+
+            p_KeysMatchTblTmp = PTR_MOVE(p_KeysMatchTblTmp, keySize * sizeof(uint8_t));
+        }
+
+        /* Create the next action descriptor in the match table */
+        if (p_KeyParams->ccNextEngineParams.statisticsEn)
+        {
+            p_StatsObj = GetStatsObj(p_CcNode);
+            ASSERT_COND(p_StatsObj);
+
+            statsParams.h_StatsAd = p_StatsObj->h_StatsAd;
+            statsParams.h_StatsCounters = p_StatsObj->h_StatsCounters;
+#if (DPAA_VERSION >= 11)
+            statsParams.h_StatsFLRs = p_CcNode->h_StatsFLRs;
+
+#endif /* (DPAA_VERSION >= 11) */
+            NextStepAd(p_AdTableTmp,
+                       &statsParams,
+                       &p_KeyParams->ccNextEngineParams,
+                       p_FmPcd);
+
+            p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = p_StatsObj;
+        }
+        else
+        {
+            NextStepAd(p_AdTableTmp,
+                       NULL,
+                       &p_KeyParams->ccNextEngineParams,
+                       p_FmPcd);
+
+            p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = NULL;
+        }
+
+        p_AdTableTmp = PTR_MOVE(p_AdTableTmp, FM_PCD_CC_AD_ENTRY_SIZE);
+    }
+
+    /* Update next engine for the 'miss' entry */
+    if (p_CcNodeParam->keysParams.ccNextEngineParamsForMiss.statisticsEn)
+    {
+        p_StatsObj = GetStatsObj(p_CcNode);
+        ASSERT_COND(p_StatsObj);
+
+        /* All 'bucket' nodes of a hash table should share the same statistics counters,
+           allocated by the hash table. So, if this node is a bucket of a hash table,
+           we'll replace the locally allocated counters with the shared counters. */
+        if (p_CcNode->isHashBucket)
+        {
+            ASSERT_COND(p_CcNode->h_MissStatsCounters);
+
+            /* Store original counters pointer and replace it with mutual preallocated pointer */
+            p_CcNode->h_PrivMissStatsCounters = p_StatsObj->h_StatsCounters;
+            p_StatsObj->h_StatsCounters = p_CcNode->h_MissStatsCounters;
+        }
+
+        statsParams.h_StatsAd = p_StatsObj->h_StatsAd;
+        statsParams.h_StatsCounters = p_StatsObj->h_StatsCounters;
+#if (DPAA_VERSION >= 11)
+        statsParams.h_StatsFLRs = p_CcNode->h_StatsFLRs;
+
+#endif /* (DPAA_VERSION >= 11) */
+
+        NextStepAd(p_AdTableTmp,
+                   &statsParams,
+                   &p_CcNodeParam->keysParams.ccNextEngineParamsForMiss,
+                   p_FmPcd);
+
+        p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = p_StatsObj;
+    }
+    else
+    {
+        NextStepAd(p_AdTableTmp,
+                   NULL,
+                   &p_CcNodeParam->keysParams.ccNextEngineParamsForMiss,
+                   p_FmPcd);
+
+        p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = NULL;
+    }
+
+    /* This parameter will be used to initialize the "key length" field in the action descriptor
+       that points to this node and it should be 0 for full field extraction */
+    if (fullField == TRUE)
+        p_CcNode->sizeOfExtraction = 0;
+
+    for (tmp = 0; tmp < MIN(p_CcNode->numOfKeys + 1, CC_MAX_NUM_OF_KEYS); tmp++)
+    {
+        if (p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.nextEngine == e_FM_PCD_CC)
+        {
+            p_FmPcdCcNextNode = (t_FmPcdCcNode*)p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.params.ccParams.h_CcNode;
+            p_CcInformation = FindNodeInfoInReleventLst(&p_FmPcdCcNextNode->ccPrevNodesLst,
+                                                        (t_Handle)p_CcNode,
+                                                        p_FmPcdCcNextNode->h_Spinlock);
+            if (!p_CcInformation)
+            {
+                memset(&ccNodeInfo, 0, sizeof(t_CcNodeInformation));
+                ccNodeInfo.h_CcNode = (t_Handle)p_CcNode;
+                ccNodeInfo.index = 1;
+                EnqueueNodeInfoToRelevantLst(&p_FmPcdCcNextNode->ccPrevNodesLst,
+                                             &ccNodeInfo,
+                                             p_FmPcdCcNextNode->h_Spinlock);
+            }
+            else
+                p_CcInformation->index++;
+
+            if (p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.h_Manip)
+            {
+                h_Manip = p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.h_Manip;
+                p_CcInformation = FindNodeInfoInReleventLst(FmPcdManipGetNodeLstPointedOnThisManip(h_Manip),
+                                                             (t_Handle)p_CcNode,
+                                                             FmPcdManipGetSpinlock(h_Manip));
+                if (!p_CcInformation)
+                {
+                     memset(&ccNodeInfo, 0, sizeof(t_CcNodeInformation));
+                     ccNodeInfo.h_CcNode = (t_Handle)p_CcNode;
+                     ccNodeInfo.index = 1;
+                     EnqueueNodeInfoToRelevantLst(FmPcdManipGetNodeLstPointedOnThisManip(h_Manip),
+                                                  &ccNodeInfo,
+                                                  FmPcdManipGetSpinlock(h_Manip));
+                }
+                else
+                    p_CcInformation->index++;
+            }
+        }
+    }
+
+    p_AdTableTmp = p_CcNode->h_AdTable;
+
+    if (!FmPcdLockTryLockAll(h_FmPcd))
+    {
+        FM_PCD_MatchTableDelete((t_Handle)p_CcNode);
+        DBG(TRACE, ("FmPcdLockTryLockAll failed"));
+        return ERROR_CODE(E_BUSY);
+    }
+
+    /* Required action for each next engine */
+    for (tmp = 0; tmp < MIN(p_CcNode->numOfKeys + 1, CC_MAX_NUM_OF_KEYS); tmp++)
+    {
+        if (p_CcNode->keyAndNextEngineParams[tmp].requiredAction)
+        {
+            err = SetRequiredAction(h_FmPcd,
+                                    p_CcNode->keyAndNextEngineParams[tmp].requiredAction,
+                                    &p_CcNode->keyAndNextEngineParams[tmp],
+                                    p_AdTableTmp,
+                                    1,
+                                    NULL);
+            if (err)
+            {
+                FmPcdLockUnlockAll(h_FmPcd);
+                FM_PCD_MatchTableDelete((t_Handle)p_CcNode);
+                RETURN_ERROR(MAJOR, err, NO_MSG);
+            }
+            p_AdTableTmp = PTR_MOVE(p_AdTableTmp, FM_PCD_CC_AD_ENTRY_SIZE);
+        }
+    }
+
+    FmPcdLockUnlockAll(h_FmPcd);
+
+    return E_OK;
+}
+/************************** End of static functions **************************/
 
 
 /*****************************************************************************/
@@ -4255,7 +4823,6 @@ t_Error FmPcdCcTreeAddIPR(t_Handle  h_FmPcd,
 
     return E_OK;
 }
-
 
 t_Handle FmPcdCcTreeGetSavedManipParams(t_Handle h_FmTree)
 {
@@ -5383,26 +5950,11 @@ t_Error FM_PCD_CcRootModifyNextEngine(t_Handle                  h_CcTree,
 
 t_Handle FM_PCD_MatchTableSet(t_Handle h_FmPcd, t_FmPcdCcNodeParams *p_CcNodeParam)
 {
-    t_FmPcd                 *p_FmPcd = (t_FmPcd *) h_FmPcd;
-    t_FmPcdCcNode           *p_CcNode, *p_FmPcdCcNextNode;
-    t_Error                 err = E_OK;
-    uint32_t                tmp, keySize;
-    bool                    glblMask = FALSE;
-    t_FmPcdCcKeyParams      *p_KeyParams;
-    t_Handle                h_FmMuram, p_KeysMatchTblTmp, p_AdTableTmp;
-#if (DPAA_VERSION >= 11)
-    t_Handle                h_StatsFLRs;
-#endif /* (DPAA_VERSION >= 11) */
-    bool                    fullField = FALSE;
-    ccPrivateInfo_t         icCode = CC_PRIVATE_INFO_NONE;
-    bool                    isKeyTblAlloc, fromIc = FALSE;
-    uint32_t                matchTableSize, adTableSize;
-    t_CcNodeInformation     ccNodeInfo, *p_CcInformation;
-    t_FmPcdStatsObj         *p_StatsObj;
-    t_FmPcdCcStatsParams    statsParams = {0};
-    t_Handle                h_Manip;
+    t_FmPcdCcNode   *p_CcNode;
+    t_Error         err;
 
-    SANITY_CHECK_RETURN_VALUE(h_FmPcd,E_INVALID_HANDLE,NULL);
+    SANITY_CHECK_RETURN_VALUE(h_FmPcd, E_INVALID_HANDLE, NULL);
+    SANITY_CHECK_RETURN_VALUE(p_CcNodeParam, E_NULL_POINTER, NULL);
 
     p_CcNode = (t_FmPcdCcNode*)XX_Malloc(sizeof(t_FmPcdCcNode));
     if (!p_CcNode)
@@ -5412,529 +5964,21 @@ t_Handle FM_PCD_MatchTableSet(t_Handle h_FmPcd, t_FmPcdCcNodeParams *p_CcNodePar
     }
     memset(p_CcNode, 0, sizeof(t_FmPcdCcNode));
 
-    p_CcNode->p_GlblMask = (t_Handle)XX_Malloc(CC_GLBL_MASK_SIZE * sizeof(uint8_t));
-    memset(p_CcNode->p_GlblMask, 0, CC_GLBL_MASK_SIZE * sizeof(uint8_t));
+    err = MatchTableSet(h_FmPcd, p_CcNode, p_CcNodeParam);
 
-    p_CcNode->h_FmPcd           = h_FmPcd;
-    p_CcNode->numOfKeys         = p_CcNodeParam->keysParams.numOfKeys;
-    p_CcNode->maxNumOfKeys      = p_CcNodeParam->keysParams.maxNumOfKeys;
-    p_CcNode->maskSupport       = p_CcNodeParam->keysParams.maskSupport;
-    p_CcNode->statisticsMode    = p_CcNodeParam->keysParams.statisticsMode;
-
-    /* For backward compatibility - even if statistics mode is nullified,
-       we'll fix it to frame mode so we can support per-key request for
-       statistics using 'statisticsEn' in next engine parameters */
-    if (!p_CcNode->maxNumOfKeys &&
-        (p_CcNode->statisticsMode == e_FM_PCD_CC_STATS_MODE_NONE))
-        p_CcNode->statisticsMode = e_FM_PCD_CC_STATS_MODE_FRAME;
-
-    h_FmMuram = FmPcdGetMuramHandle(h_FmPcd);
-    if (!h_FmMuram)
+    switch (GET_ERROR_TYPE(err))
     {
-        REPORT_ERROR(MAJOR, E_INVALID_HANDLE, ("FM MURAM"));
-        return NULL;
-    }
-
-    INIT_LIST(&p_CcNode->ccPrevNodesLst);
-    INIT_LIST(&p_CcNode->ccTreeIdLst);
-    INIT_LIST(&p_CcNode->ccTreesLst);
-    INIT_LIST(&p_CcNode->availableStatsLst);
-
-    p_CcNode->h_Spinlock = XX_InitSpinlock();
-    if (!p_CcNode->h_Spinlock)
-    {
-        DeleteNode(p_CcNode);
-        REPORT_ERROR(MAJOR, E_NO_MEMORY, ("CC node spinlock"));
-        return NULL;
-    }
-
-    if ((p_CcNodeParam->extractCcParams.type == e_FM_PCD_EXTRACT_BY_HDR) &&
-        ((p_CcNodeParam->extractCcParams.extractByHdr.hdr == HEADER_TYPE_IPv4) ||
-        (p_CcNodeParam->extractCcParams.extractByHdr.hdr == HEADER_TYPE_IPv6)) &&
-        (p_CcNodeParam->extractCcParams.extractByHdr.type == e_FM_PCD_EXTRACT_FULL_FIELD) &&
-        ((p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField.ipv6 == NET_HEADER_FIELD_IPv6_HOP_LIMIT) ||
-        (p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField.ipv4 == NET_HEADER_FIELD_IPv4_TTL)))
-    {
-        err = Ipv4TtlOrIpv6HopLimitCheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
-        glblMask = FALSE;
-    }
-    else if ((p_CcNodeParam->extractCcParams.type == e_FM_PCD_EXTRACT_NON_HDR) &&
-             ((p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_KEY) ||
-              (p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_HASH) ||
-              (p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_FLOW_ID)))
-    {
-        if ((p_CcNodeParam->extractCcParams.extractNonHdr.src == e_FM_PCD_EXTRACT_FROM_FLOW_ID) &&
-            (p_CcNodeParam->extractCcParams.extractNonHdr.offset != 0))
-        {
-            REPORT_ERROR(MAJOR, E_INVALID_VALUE,
-                         ("In the case of the extraction from e_FM_PCD_EXTRACT_FROM_FLOW_ID offset has to be 0"));
-            return NULL;
-        }
-
-        icCode = IcDefineCode(p_CcNodeParam);
-        fromIc = TRUE;
-        if (icCode == CC_PRIVATE_INFO_NONE)
-        {
-            REPORT_ERROR(MAJOR, E_INVALID_STATE,
-                         ("user asked extraction from IC and field in internal context or action wasn't initialized in the right way"));
-            return NULL;
-        }
-
-        if ((icCode == CC_PRIVATE_INFO_IC_DEQ_FQID_INDEX_LOOKUP) ||
-            (icCode == CC_PRIVATE_INFO_IC_HASH_INDEX_LOOKUP))
-        {
-            err = IcHashIndexedCheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
-            glblMask = TRUE;
-        }
-        else
-        {
-            err = CheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
-            if (p_CcNode->glblMaskSize)
-                glblMask = TRUE;
-        }
-    }
-    else
-    {
-        err = CheckParams(h_FmPcd, p_CcNodeParam, p_CcNode, &isKeyTblAlloc);
-        if (p_CcNode->glblMaskSize)
-            glblMask = TRUE;
-    }
-
-    if (err)
-    {
-        DeleteNode(p_CcNode);
-        REPORT_ERROR(MAJOR, err, NO_MSG);
-        return NULL;
-    }
-
-    switch (p_CcNodeParam->extractCcParams.type)
-    {
-        case (e_FM_PCD_EXTRACT_BY_HDR):
-            switch (p_CcNodeParam->extractCcParams.extractByHdr.type)
-            {
-                case (e_FM_PCD_EXTRACT_FULL_FIELD):
-                    p_CcNode->parseCode =
-                        GetFullFieldParseCode(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
-                                              p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex,
-                                              p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField);
-                    GetSizeHeaderField(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
-                                       p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex,
-                                       p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fullField,
-                                       &p_CcNode->sizeOfExtraction);
-                    fullField = TRUE;
-                    if ((p_CcNode->parseCode != CC_PC_FF_TCI1) &&
-                        (p_CcNode->parseCode != CC_PC_FF_TCI2) &&
-                        (p_CcNode->parseCode != CC_PC_FF_MPLS1) &&
-                        (p_CcNode->parseCode != CC_PC_FF_MPLS1) &&
-                        (p_CcNode->parseCode != CC_PC_FF_IPV4IPTOS_TC1) &&
-                        (p_CcNode->parseCode != CC_PC_FF_IPV4IPTOS_TC2) &&
-                        (p_CcNode->parseCode != CC_PC_FF_IPTOS_IPV6TC1_IPV6FLOW1) &&
-                        (p_CcNode->parseCode != CC_PC_FF_IPDSCP) &&
-                        (p_CcNode->parseCode != CC_PC_FF_IPTOS_IPV6TC2_IPV6FLOW2) &&
-                        glblMask)
-                    {
-                        glblMask = FALSE;
-                        p_CcNode->glblMaskSize = 4;
-                        p_CcNode->lclMask = TRUE;
-                    }
-                    break;
-
-                case (e_FM_PCD_EXTRACT_FROM_HDR):
-                    p_CcNode->sizeOfExtraction = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromHdr.size;
-                    p_CcNode->offset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromHdr.offset;
-                    p_CcNode->userOffset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromHdr.offset;
-                    p_CcNode->parseCode =
-                        GetPrParseCode(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
-                                       p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex,
-                                       p_CcNode->offset,glblMask,
-                                       &p_CcNode->prsArrayOffset);
-                    break;
-
-                case (e_FM_PCD_EXTRACT_FROM_FIELD):
-                    p_CcNode->offset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.offset;
-                    p_CcNode->userOffset = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.offset;
-                    p_CcNode->sizeOfExtraction = p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.size;
-                    p_CcNode->parseCode =
-                        GetFieldParseCode(p_CcNodeParam->extractCcParams.extractByHdr.hdr,
-                                          p_CcNodeParam->extractCcParams.extractByHdr.extractByHdrType.fromField.field,
-                                          p_CcNode->offset,
-                                          &p_CcNode->prsArrayOffset,
-                                          p_CcNodeParam->extractCcParams.extractByHdr.hdrIndex);
-                    break;
-
-                default:
-                    DeleteNode(p_CcNode);
-                    REPORT_ERROR(MAJOR, E_INVALID_SELECTION, NO_MSG);
-                    return NULL;
-            }
+        case E_OK:
             break;
 
-        case (e_FM_PCD_EXTRACT_NON_HDR):
-            /* get the field code for the generic extract */
-            p_CcNode->sizeOfExtraction = p_CcNodeParam->extractCcParams.extractNonHdr.size;
-            p_CcNode->offset = p_CcNodeParam->extractCcParams.extractNonHdr.offset;
-            p_CcNode->userOffset = p_CcNodeParam->extractCcParams.extractNonHdr.offset;
-            p_CcNode->parseCode =
-                GetGenParseCode(h_FmPcd,
-                                p_CcNodeParam->extractCcParams.extractNonHdr.src,
-                                p_CcNode->offset,
-                                glblMask,
-                                &p_CcNode->prsArrayOffset,
-                                fromIc,icCode);
-
-            if (p_CcNode->parseCode == CC_PC_GENERIC_IC_HASH_INDEXED)
-            {
-                if ((p_CcNode->offset + p_CcNode->sizeOfExtraction) > 8)
-                {
-                     DeleteNode(p_CcNode);
-                     REPORT_ERROR(MAJOR, E_INVALID_SELECTION,("when node of the type CC_PC_GENERIC_IC_HASH_INDEXED offset + size can not be bigger then size of HASH 64 bits (8 bytes)"));
-                     return NULL;
-                }
-            }
-            if ((p_CcNode->parseCode == CC_PC_GENERIC_IC_GMASK) ||
-                (p_CcNode->parseCode == CC_PC_GENERIC_IC_HASH_INDEXED))
-            {
-                p_CcNode->offset +=  p_CcNode->prsArrayOffset;
-                p_CcNode->prsArrayOffset = 0;
-            }
-            break;
-
-       default:
-            DeleteNode(p_CcNode);
-            REPORT_ERROR(MAJOR, E_INVALID_SELECTION, NO_MSG);
+        case E_BUSY:
+            DBG(TRACE, ("E_BUSY error"));
             return NULL;
-    }
-
-    if (p_CcNode->parseCode == CC_PC_ILLEGAL)
-    {
-        DeleteNode(p_CcNode);
-        REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("illegal extraction type"));
-        return NULL;
-    }
-
-    if ((p_CcNode->sizeOfExtraction > FM_PCD_MAX_SIZE_OF_KEY) ||
-        !p_CcNode->sizeOfExtraction)
-    {
-        DeleteNode(p_CcNode);
-        REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("sizeOfExatrction can not be greater than 56 and not 0"));
-        return NULL;
-    }
-
-    if (p_CcNodeParam->keysParams.keySize != p_CcNode->sizeOfExtraction)
-    {
-        DeleteNode(p_CcNode);
-        REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("keySize has to be equal to sizeOfExtraction"));
-        return NULL;
-    }
-
-    p_CcNode->userSizeOfExtraction = p_CcNode->sizeOfExtraction;
-
-    if (!glblMask)
-        memset(p_CcNode->p_GlblMask, 0xff, CC_GLBL_MASK_SIZE  * sizeof(uint8_t));
-
-    err = CheckAndSetManipParamsWithCcNodeParams(p_CcNode);
-    if (err != E_OK)
-    {
-        DeleteNode(p_CcNode);
-        REPORT_ERROR(MAJOR, E_INVALID_VALUE, ("keySize has to be equal to sizeOfExtraction"));
-        return NULL;
-    }
-
-    /* Calculating matching table entry size by rounding up the user-defined size of extraction to valid entry size */
-    GetCcExtractKeySize(p_CcNode->sizeOfExtraction, &p_CcNode->ccKeySizeAccExtraction);
-
-    /* If local mask is used, it is stored next to each key in the keys match table */
-    if (p_CcNode->lclMask)
-        keySize = (uint32_t)(2 * p_CcNode->ccKeySizeAccExtraction);
-    else
-        keySize = p_CcNode->ccKeySizeAccExtraction;
-
-    /* Update CC shadow with maximal size required by this node */
-    if (p_CcNode->maxNumOfKeys)
-    {
-        err = CalcAndUpdateCcShadow(p_CcNode,
-                                    isKeyTblAlloc,
-                                    &matchTableSize,
-                                    &adTableSize);
-        if (err != E_OK)
-        {
-            DeleteNode(p_CcNode);
-            REPORT_ERROR(MAJOR, err, NO_MSG);
-            return NULL;
-        }
-
-        p_CcNode->keysMatchTableMaxSize = matchTableSize;
-
-        if (p_CcNode->statisticsMode != e_FM_PCD_CC_STATS_MODE_NONE)
-        {
-            err = AllocStatsObjs(p_CcNode);
-            if (err != E_OK)
-            {
-                DeleteNode(p_CcNode);
-                REPORT_ERROR(MAJOR, err, NO_MSG);
-                return NULL;
-            }
-        }
-
-        /* If manipulation will be initialized before this node, it will use the table
-           descriptor in the AD table of previous node and this node will need an extra
-           AD as his table descriptor. */
-        p_CcNode->h_TmpAd = (t_Handle)FM_MURAM_AllocMem(h_FmMuram,
-                                                     FM_PCD_CC_AD_ENTRY_SIZE,
-                                                     FM_PCD_CC_AD_TABLE_ALIGN);
-        if (!p_CcNode->h_TmpAd)
-        {
-            DeleteNode(p_CcNode);
-            REPORT_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC action descriptor"));
-            return NULL;
-        }
-    }
-    else
-    {
-        matchTableSize = (uint32_t)(keySize * sizeof(uint8_t) * (p_CcNode->numOfKeys + 1));
-        adTableSize    = (uint32_t)(FM_PCD_CC_AD_ENTRY_SIZE * (p_CcNode->numOfKeys + 1));
-    }
-
-#if (DPAA_VERSION >= 11)
-    switch (p_CcNode->statisticsMode)
-    {
-
-        case e_FM_PCD_CC_STATS_MODE_RMON:
-            /* If RMON statistics or RMON conditional statistics modes are requested,
-               allocate frame length ranges array */
-            p_CcNode->h_StatsFLRs =
-                    FM_MURAM_AllocMem(h_FmMuram,
-                                      (uint32_t)(p_CcNode->numOfStatsFLRs) * FM_PCD_CC_STATS_FLR_SIZE,
-                                      FM_PCD_CC_AD_TABLE_ALIGN);
-
-            if (!p_CcNode->h_StatsFLRs)
-            {
-                DeleteNode(p_CcNode);
-                REPORT_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC frame length ranges array"));
-                return NULL;
-            }
-
-            /* Initialize using value received from the user */
-            for (tmp = 0; tmp < p_CcNode->numOfStatsFLRs; tmp++)
-            {
-                h_StatsFLRs = PTR_MOVE(p_CcNode->h_StatsFLRs, tmp * FM_PCD_CC_STATS_FLR_SIZE);
-
-                Mem2IOCpy32(h_StatsFLRs,
-                            &(p_CcNodeParam->keysParams.frameLengthRanges[tmp]),
-                            FM_PCD_CC_STATS_FLR_SIZE);
-            }
-            break;
 
         default:
-            break;
-    }
-#endif /* (DPAA_VERSION >= 11) */
-
-
-    /* Allocate keys match table. Not required for some CC nodes, for example for IPv4 TTL
-       identification, IPv6 hop count identification, etc. */
-    if (isKeyTblAlloc)
-    {
-        p_CcNode->h_KeysMatchTable =
-            (t_Handle)FM_MURAM_AllocMem(h_FmMuram,
-                                        matchTableSize,
-                                        FM_PCD_CC_KEYS_MATCH_TABLE_ALIGN);
-        if (!p_CcNode->h_KeysMatchTable)
-        {
-            DeleteNode(p_CcNode);
-            REPORT_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC node key match table"));
+            REPORT_ERROR(MAJOR, err, NO_MSG);
             return NULL;
-        }
-        IOMemSet32((uint8_t *)p_CcNode->h_KeysMatchTable,
-                   0,
-                   matchTableSize);
     }
-
-    /* Allocate action descriptors table */
-    p_CcNode->h_AdTable =
-        (t_Handle)FM_MURAM_AllocMem(h_FmMuram,
-                                    adTableSize,
-                                    FM_PCD_CC_AD_TABLE_ALIGN);
-    if (!p_CcNode->h_AdTable)
-    {
-        DeleteNode(p_CcNode);
-        REPORT_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for CC node action descriptors table"));
-        return NULL;
-    }
-    IOMemSet32((uint8_t *)p_CcNode->h_AdTable, 0, adTableSize);
-
-    p_KeysMatchTblTmp = p_CcNode->h_KeysMatchTable;
-    p_AdTableTmp      = p_CcNode->h_AdTable;
-
-    /* For each key, create the key and the next step AD */
-    for (tmp = 0; tmp < p_CcNode->numOfKeys; tmp++)
-    {
-        p_KeyParams = &p_CcNodeParam->keysParams.keyParams[tmp];
-
-        if (p_KeysMatchTblTmp)
-        {
-            /* Copy the key */
-            Mem2IOCpy32((void*)p_KeysMatchTblTmp, p_KeyParams->p_Key, p_CcNode->sizeOfExtraction);
-
-            /* Copy the key mask or initialize it to 0xFF..F */
-            if (p_CcNode->lclMask && p_KeyParams->p_Mask)
-            {
-                Mem2IOCpy32(PTR_MOVE(p_KeysMatchTblTmp,
-                                     p_CcNode->ccKeySizeAccExtraction),     /* User's size of extraction rounded up to a valid matching table entry size */
-                            p_KeyParams->p_Mask,
-                            p_CcNode->sizeOfExtraction);           /* Exact size of extraction as received from the user */
-            }
-            else if (p_CcNode->lclMask)
-            {
-                IOMemSet32(PTR_MOVE(p_KeysMatchTblTmp,
-                                    p_CcNode->ccKeySizeAccExtraction),     /* User's size of extraction rounded up to a valid matching table entry size */
-                           0xff,
-                           p_CcNode->sizeOfExtraction);           /* Exact size of extraction as received from the user */
-            }
-
-            p_KeysMatchTblTmp = PTR_MOVE(p_KeysMatchTblTmp, keySize * sizeof(uint8_t));
-        }
-
-        /* Create the next action descriptor in the match table */
-        if (p_KeyParams->ccNextEngineParams.statisticsEn)
-        {
-            p_StatsObj = GetStatsObj(p_CcNode);
-            ASSERT_COND(p_StatsObj);
-
-            statsParams.h_StatsAd = p_StatsObj->h_StatsAd;
-            statsParams.h_StatsCounters = p_StatsObj->h_StatsCounters;
-#if (DPAA_VERSION >= 11)
-            statsParams.h_StatsFLRs = p_CcNode->h_StatsFLRs;
-
-#endif /* (DPAA_VERSION >= 11) */
-            NextStepAd(p_AdTableTmp,
-                       &statsParams,
-                       &p_KeyParams->ccNextEngineParams,
-                       p_FmPcd);
-
-            p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = p_StatsObj;
-        }
-        else
-        {
-            NextStepAd(p_AdTableTmp,
-                       NULL,
-                       &p_KeyParams->ccNextEngineParams,
-                       p_FmPcd);
-
-            p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = NULL;
-        }
-
-        p_AdTableTmp = PTR_MOVE(p_AdTableTmp, FM_PCD_CC_AD_ENTRY_SIZE);
-    }
-
-    /* Update next engine for the 'miss' entry */
-    if (p_CcNodeParam->keysParams.ccNextEngineParamsForMiss.statisticsEn)
-    {
-        p_StatsObj = GetStatsObj(p_CcNode);
-        ASSERT_COND(p_StatsObj);
-
-        statsParams.h_StatsAd = p_StatsObj->h_StatsAd;
-        statsParams.h_StatsCounters = p_StatsObj->h_StatsCounters;
-#if (DPAA_VERSION >= 11)
-        statsParams.h_StatsFLRs = p_CcNode->h_StatsFLRs;
-
-#endif /* (DPAA_VERSION >= 11) */
-
-        NextStepAd(p_AdTableTmp,
-                   &statsParams,
-                   &p_CcNodeParam->keysParams.ccNextEngineParamsForMiss,
-                   p_FmPcd);
-
-        p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = p_StatsObj;
-    }
-    else
-    {
-        NextStepAd(p_AdTableTmp,
-                   NULL,
-                   &p_CcNodeParam->keysParams.ccNextEngineParamsForMiss,
-                   p_FmPcd);
-
-        p_CcNode->keyAndNextEngineParams[tmp].p_StatsObj = NULL;
-    }
-
-    /* This parameter will be used to initialize the "key length" field in the action descriptor
-       that points to this node and it should be 0 for full field extraction */
-    if (fullField == TRUE)
-        p_CcNode->sizeOfExtraction = 0;
-
-    for (tmp = 0; tmp < MIN(p_CcNode->numOfKeys + 1, CC_MAX_NUM_OF_KEYS); tmp++)
-    {
-        if (p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.nextEngine == e_FM_PCD_CC)
-        {
-            p_FmPcdCcNextNode = (t_FmPcdCcNode*)p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.params.ccParams.h_CcNode;
-            p_CcInformation = FindNodeInfoInReleventLst(&p_FmPcdCcNextNode->ccPrevNodesLst,
-                                                        (t_Handle)p_CcNode,
-                                                        p_FmPcdCcNextNode->h_Spinlock);
-            if (!p_CcInformation)
-            {
-                memset(&ccNodeInfo, 0, sizeof(t_CcNodeInformation));
-                ccNodeInfo.h_CcNode = (t_Handle)p_CcNode;
-                ccNodeInfo.index = 1;
-                EnqueueNodeInfoToRelevantLst(&p_FmPcdCcNextNode->ccPrevNodesLst,
-                                             &ccNodeInfo,
-                                             p_FmPcdCcNextNode->h_Spinlock);
-            }
-            else
-                p_CcInformation->index++;
-
-            if (p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.h_Manip)
-            {
-                h_Manip = p_CcNode->keyAndNextEngineParams[tmp].nextEngineParams.h_Manip;
-                p_CcInformation = FindNodeInfoInReleventLst(FmPcdManipGetNodeLstPointedOnThisManip(h_Manip),
-                                                             (t_Handle)p_CcNode,
-                                                             FmPcdManipGetSpinlock(h_Manip));
-                if (!p_CcInformation)
-                {
-                     memset(&ccNodeInfo, 0, sizeof(t_CcNodeInformation));
-                     ccNodeInfo.h_CcNode = (t_Handle)p_CcNode;
-                     ccNodeInfo.index = 1;
-                     EnqueueNodeInfoToRelevantLst(FmPcdManipGetNodeLstPointedOnThisManip(h_Manip),
-                                                  &ccNodeInfo,
-                                                  FmPcdManipGetSpinlock(h_Manip));
-                }
-                else
-                    p_CcInformation->index++;
-            }
-        }
-    }
-
-    p_AdTableTmp = p_CcNode->h_AdTable;
-
-    if (!FmPcdLockTryLockAll(h_FmPcd))
-    {
-        FM_PCD_MatchTableDelete((t_Handle)p_CcNode);
-        DBG(TRACE, ("FmPcdLockTryLockAll failed"));
-        return NULL;
-    }
-
-    /* Required action for each next engine */
-    for (tmp = 0; tmp < MIN(p_CcNode->numOfKeys + 1, CC_MAX_NUM_OF_KEYS); tmp++)
-    {
-        if (p_CcNode->keyAndNextEngineParams[tmp].requiredAction)
-        {
-            err = SetRequiredAction(h_FmPcd,
-                                    p_CcNode->keyAndNextEngineParams[tmp].requiredAction,
-                                    &p_CcNode->keyAndNextEngineParams[tmp],
-                                    p_AdTableTmp,
-                                    1,
-                                    NULL);
-            if (err)
-            {
-                FmPcdLockUnlockAll(h_FmPcd);
-                FM_PCD_MatchTableDelete((t_Handle)p_CcNode);
-                REPORT_ERROR(MAJOR, err, NO_MSG);
-                return NULL;
-            }
-            p_AdTableTmp = PTR_MOVE(p_AdTableTmp, FM_PCD_CC_AD_ENTRY_SIZE);
-        }
-    }
-
-    FmPcdLockUnlockAll(h_FmPcd);
 
     return p_CcNode;
 }
@@ -6536,9 +6580,36 @@ t_Error FM_PCD_MatchTableGetKeyStatistics(t_Handle                  h_CcNode,
 
     intFlags = XX_LockIntrSpinlock(p_CcNode->h_Spinlock);
 
+    if (keyIndex >= p_CcNode->numOfKeys)
+        RETURN_ERROR(MAJOR, E_INVALID_STATE, ("The provided keyIndex exceeds the number of keys in this match table"));
+
     err = MatchTableGetKeyStatistics(p_CcNode,
                                      keyIndex,
                                      p_KeyStatistics);
+
+    XX_UnlockIntrSpinlock(p_CcNode->h_Spinlock, intFlags);
+
+    if (err != E_OK)
+        RETURN_ERROR(MAJOR, err, NO_MSG);
+
+    return E_OK;
+}
+
+t_Error FM_PCD_MatchTableGetMissStatistics(t_Handle                  h_CcNode,
+                                           t_FmPcdCcKeyStatistics    *p_MissStatistics)
+{
+    t_FmPcdCcNode       *p_CcNode = (t_FmPcdCcNode *)h_CcNode;
+    uint32_t            intFlags;
+    t_Error             err;
+
+    SANITY_CHECK_RETURN_ERROR(h_CcNode, E_INVALID_HANDLE);
+    SANITY_CHECK_RETURN_ERROR(p_MissStatistics, E_NULL_POINTER);
+
+    intFlags = XX_LockIntrSpinlock(p_CcNode->h_Spinlock);
+
+    err = MatchTableGetKeyStatistics(p_CcNode,
+                                     p_CcNode->numOfKeys,
+                                     p_MissStatistics);
 
     XX_UnlockIntrSpinlock(p_CcNode->h_Spinlock, intFlags);
 
@@ -6571,6 +6642,8 @@ t_Error FM_PCD_MatchTableFindNGetKeyStatistics(t_Handle                 h_CcNode
         RETURN_ERROR(MAJOR, err, ("The received key and mask pair was not found in the "
                                   "match table of the provided node"));
     }
+
+    ASSERT_COND(keyIndex < p_CcNode->numOfKeys);
 
     err = MatchTableGetKeyStatistics(p_CcNode,
                                      keyIndex,
@@ -6624,10 +6697,13 @@ t_Handle FM_PCD_HashTableSet(t_Handle h_FmPcd, t_FmPcdHashTableParams *p_Param)
 {
     t_FmPcdCcNode           *p_CcNodeHashTbl;
     t_FmPcdCcNodeParams     *p_IndxHashCcNodeParam, *p_ExactMatchCcNodeParam;
-    t_Handle                h_CcNode;
+    t_FmPcdCcNode           *p_CcNode;
+    t_Handle                h_MissStatsCounters = NULL;
     t_FmPcdCcKeyParams      *p_HashKeyParams;
     int                     i;
     uint16_t                numOfSets, numOfWays, countMask, onesCount = 0;
+    bool                    statsEnForMiss = FALSE;
+    t_Error                 err;
 
     SANITY_CHECK_RETURN_VALUE(h_FmPcd, E_INVALID_HANDLE, NULL);
     SANITY_CHECK_RETURN_VALUE(p_Param, E_NULL_POINTER, NULL);
@@ -6684,6 +6760,28 @@ t_Handle FM_PCD_HashTableSet(t_Handle h_FmPcd, t_FmPcdHashTableParams *p_Param)
     if (p_Param->maxNumOfKeys % numOfSets)
         DBG(INFO, ("'maxNumOfKeys' is not a multiple of hash number of ways, so number of ways will be rounded up"));
 
+    if ((p_Param->statisticsMode == e_FM_PCD_CC_STATS_MODE_FRAME) ||
+        (p_Param->statisticsMode == e_FM_PCD_CC_STATS_MODE_BYTE_AND_FRAME))
+    {
+        /* Allocating a statistics counters table that will be used by all
+           'miss' entries of the hash table */
+        h_MissStatsCounters = (t_Handle)FM_MURAM_AllocMem(FmPcdGetMuramHandle(h_FmPcd),
+                                                          2 * FM_PCD_CC_STATS_COUNTER_SIZE,
+                                                          FM_PCD_CC_AD_TABLE_ALIGN);
+        if (!h_MissStatsCounters)
+        {
+            REPORT_ERROR(MAJOR, E_NO_MEMORY, ("MURAM allocation for statistics table for hash miss"));
+            return NULL;
+        }
+        memset(h_MissStatsCounters, 0, (2 * FM_PCD_CC_STATS_COUNTER_SIZE));
+
+        /* Always enable statistics for 'miss', so that a statistics AD will be
+           initialized from the start. We'll store the requested 'statistics enable'
+           value and it will be used when statistics are read by the user. */
+        statsEnForMiss = p_Param->ccNextEngineParamsForMiss.statisticsEn;
+        p_Param->ccNextEngineParamsForMiss.statisticsEn = TRUE;
+    }
+
     /* Building exact-match node params, will be used to create the hash buckets */
     p_ExactMatchCcNodeParam->extractCcParams.type = e_FM_PCD_EXTRACT_NON_HDR;
 
@@ -6703,19 +6801,31 @@ t_Handle FM_PCD_HashTableSet(t_Handle h_FmPcd, t_FmPcdHashTableParams *p_Param)
 
     for (i = 0; i < numOfSets; i++)
     {
-        h_CcNode = FM_PCD_MatchTableSet(h_FmPcd, p_ExactMatchCcNodeParam);
-        if (!h_CcNode)
+        /* Each exact-match node will be marked as a 'bucket' and provided with a pointer to statistics counters,
+           to be used for 'miss' entry statistics */
+        p_CcNode = (t_FmPcdCcNode *)XX_Malloc(sizeof(t_FmPcdCcNode));
+        if (!p_CcNode)
+            break;
+        memset(p_CcNode, 0, sizeof(t_FmPcdCcNode));
+
+        p_CcNode->isHashBucket = TRUE;
+        p_CcNode->h_MissStatsCounters = h_MissStatsCounters;
+
+        err = MatchTableSet(h_FmPcd, p_CcNode, p_ExactMatchCcNodeParam);
+        if (err)
             break;
 
         p_HashKeyParams[i].ccNextEngineParams.nextEngine               = e_FM_PCD_CC;
         p_HashKeyParams[i].ccNextEngineParams.statisticsEn             = FALSE;
-        p_HashKeyParams[i].ccNextEngineParams.params.ccParams.h_CcNode = h_CcNode;
+        p_HashKeyParams[i].ccNextEngineParams.params.ccParams.h_CcNode = p_CcNode;
     }
 
     if (i < numOfSets)
     {
         for (i = i-1; i >=0; i--)
             FM_PCD_MatchTableDelete(p_HashKeyParams[i].ccNextEngineParams.params.ccParams.h_CcNode);
+
+        FM_MURAM_FreeMem(FmPcdGetMuramHandle(h_FmPcd), h_MissStatsCounters);
 
         REPORT_ERROR(MAJOR, E_NULL_POINTER, NO_MSG);
         XX_Free(p_IndxHashCcNodeParam);
@@ -6738,10 +6848,17 @@ t_Handle FM_PCD_HashTableSet(t_Handle h_FmPcd, t_FmPcdHashTableParams *p_Param)
     p_IndxHashCcNodeParam->keysParams.keySize        = 2;
 
     p_CcNodeHashTbl = FM_PCD_MatchTableSet(h_FmPcd, p_IndxHashCcNodeParam);
- 
+
     if (p_CcNodeHashTbl)
         p_CcNodeHashTbl->kgHashShift = p_Param->kgHashShift;
- 
+
+    /* Storing the allocated counters for buckets 'miss' in the hash table
+       and is statistics for miss wre enabled. */
+    p_CcNodeHashTbl->h_MissStatsCounters = h_MissStatsCounters;
+    p_CcNodeHashTbl->statsEnForMiss = statsEnForMiss;
+
+    XX_Print("Hash 0x%x: 0x%x\n", p_CcNodeHashTbl, h_MissStatsCounters);
+
     XX_Free(p_IndxHashCcNodeParam);
     XX_Free(p_ExactMatchCcNodeParam);
 
@@ -6751,12 +6868,14 @@ t_Handle FM_PCD_HashTableSet(t_Handle h_FmPcd, t_FmPcdHashTableParams *p_Param)
 t_Error FM_PCD_HashTableDelete(t_Handle h_HashTbl)
 {
     t_FmPcdCcNode   *p_HashTbl = (t_FmPcdCcNode *)h_HashTbl;
-    t_Handle        *p_HashBuckets;
+    t_Handle        h_FmPcd;
+    t_Handle        *p_HashBuckets, h_MissStatsCounters;
     uint16_t        i, numOfBuckets;
     t_Error         err;
 
     SANITY_CHECK_RETURN_ERROR(p_HashTbl, E_INVALID_HANDLE);
 
+    /* Store all hash buckets before the hash is freed */
     numOfBuckets = p_HashTbl->numOfKeys;
 
     p_HashBuckets = (t_Handle *)XX_Malloc(numOfBuckets * sizeof(t_Handle));
@@ -6766,13 +6885,22 @@ t_Error FM_PCD_HashTableDelete(t_Handle h_HashTbl)
     for (i = 0; i < numOfBuckets; i++)
         p_HashBuckets[i] = p_HashTbl->keyAndNextEngineParams[i].nextEngineParams.params.ccParams.h_CcNode;
 
+    h_FmPcd = p_HashTbl->h_FmPcd;
+    h_MissStatsCounters = p_HashTbl->h_MissStatsCounters;
+
+    /* Free the hash */
     err = FM_PCD_MatchTableDelete(p_HashTbl);
 
+    /* Free each hash bucket */
     for (i = 0; i < numOfBuckets; i++)
         err |= FM_PCD_MatchTableDelete(p_HashBuckets[i]);
 
     if (err)
         RETURN_ERROR(MAJOR, err, NO_MSG);
+
+    /* Free statistics counters for 'miss', id these were allocated */
+    if (h_MissStatsCounters)
+        FM_MURAM_FreeMem(FmPcdGetMuramHandle(h_FmPcd), h_MissStatsCounters);
 
     XX_Free(p_HashBuckets);
 
@@ -6879,10 +7007,28 @@ t_Error FM_PCD_HashTableModifyMissNextEngine(t_Handle                  h_HashTbl
     t_FmPcdCcNode   *p_HashTbl = (t_FmPcdCcNode *)h_HashTbl;
     t_Handle        h_HashBucket;
     uint8_t         i;
+    bool            nullifyMissStats = FALSE;
     t_Error         err;
 
     SANITY_CHECK_RETURN_ERROR(h_HashTbl, E_INVALID_HANDLE);
     SANITY_CHECK_RETURN_ERROR(p_FmPcdCcNextEngineParams, E_NULL_POINTER);
+
+    if ((!p_HashTbl->h_MissStatsCounters) && (p_FmPcdCcNextEngineParams->statisticsEn))
+        RETURN_ERROR(MAJOR, E_CONFLICT,
+                             ("Statistics are requested for a key, but statistics mode was set"
+                              "to 'NONE' upon initialization"));
+
+    if (p_HashTbl->h_MissStatsCounters)
+    {
+        if ((!p_HashTbl->statsEnForMiss) && (p_FmPcdCcNextEngineParams->statisticsEn))
+            nullifyMissStats = TRUE;
+
+        if ((p_HashTbl->statsEnForMiss) && (!p_FmPcdCcNextEngineParams->statisticsEn))
+        {
+            p_HashTbl->statsEnForMiss = FALSE;
+            p_FmPcdCcNextEngineParams->statisticsEn = TRUE;
+        }
+    }
 
     for (i = 0; i < p_HashTbl->numOfKeys; i++)
     {
@@ -6892,6 +7038,13 @@ t_Error FM_PCD_HashTableModifyMissNextEngine(t_Handle                  h_HashTbl
                                                     p_FmPcdCcNextEngineParams);
         if (err)
             RETURN_ERROR(MAJOR, err, NO_MSG);
+    }
+
+    if (nullifyMissStats)
+    {
+        memset(p_HashTbl->h_MissStatsCounters, 0, (2 * FM_PCD_CC_STATS_COUNTER_SIZE));
+        memset(p_HashTbl->h_MissStatsCounters, 0, (2 * FM_PCD_CC_STATS_COUNTER_SIZE));
+        p_HashTbl->statsEnForMiss = TRUE;
     }
 
     return E_OK;
@@ -6946,4 +7099,22 @@ t_Error FM_PCD_HashTableFindNGetKeyStatistics(t_Handle                 h_HashTbl
                                                   p_Key,
                                                   NULL,
                                                   p_KeyStatistics);
+}
+
+t_Error FM_PCD_HashTableGetMissStatistics(t_Handle                 h_HashTbl,
+                                          t_FmPcdCcKeyStatistics   *p_MissStatistics)
+{
+    t_FmPcdCcNode   *p_HashTbl = (t_FmPcdCcNode *)h_HashTbl;
+    t_Handle        h_HashBucket;
+
+    SANITY_CHECK_RETURN_ERROR(p_HashTbl, E_INVALID_HANDLE);
+    SANITY_CHECK_RETURN_ERROR(p_MissStatistics, E_NULL_POINTER);
+
+    if (!p_HashTbl->statsEnForMiss)
+        RETURN_ERROR(MAJOR, E_INVALID_STATE, ("Statistics were not enabled for miss"));
+
+    h_HashBucket = p_HashTbl->keyAndNextEngineParams[0].nextEngineParams.params.ccParams.h_CcNode;
+
+    return FM_PCD_MatchTableGetMissStatistics(h_HashBucket,
+                                              p_MissStatistics);
 }

@@ -820,14 +820,11 @@ static t_Error TgecInit(t_Handle h_Tgec)
 #endif /* FM_10G_REM_N_LCL_FLT_EX_10GMAC_ERRATA_SW005 */
 
 #ifdef FM_TX_ECC_FRMS_ERRATA_10GMAC_A004
-    if (p_Tgec->fmMacControllerDriver.fmRevInfo.majorRev <= 6 /*fixed for rev3 */)
+    if (!p_Tgec->p_TgecDriverParam->skip_fman11_workaround &&
+        ((err = TgecTxEccWorkaround(p_Tgec)) != E_OK))
     {
-        if (!p_Tgec->p_TgecDriverParam->skip_fman11_workaround &&
-            ((err = TgecTxEccWorkaround(p_Tgec)) != E_OK))
-        {
-            FreeInitResources(p_Tgec);
-            REPORT_ERROR(MINOR, err, ("TgecTxEccWorkaround FAILED"));
-        }
+        FreeInitResources(p_Tgec);
+        REPORT_ERROR(MINOR, err, ("TgecTxEccWorkaround FAILED"));
     }
 #endif /* FM_TX_ECC_FRMS_ERRATA_10GMAC_A004 */
 

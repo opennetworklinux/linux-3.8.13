@@ -27,6 +27,9 @@
 #define AT803X_MMD_ACCESS_CONTROL		0x0D
 #define AT803X_MMD_ACCESS_CONTROL_DATA		0x0E
 #define AT803X_FUNC_DATA			0x4003
+#define AT803X_INER		0x0012
+#define AT803X_INER_INIT	0xec00
+#define AT803X_INSR		0x0013
 
 MODULE_DESCRIPTION("Atheros 803x PHY driver");
 MODULE_AUTHOR("Matus Ujhelyi");
@@ -102,10 +105,32 @@ static int at803x_config_init(struct phy_device *phydev)
 
 	/* enable WOL */
 	at803x_set_wol_mac_addr(phydev);
-	status = phy_write(phydev, AT803X_INTR_ENABLE, AT803X_WOL_ENABLE);
+	status = phy_write(phydev, AT803X_INTR_ENABLE,
+			   AT803X_WOL_ENABLE | AT803X_INER_INIT);
 	status = phy_read(phydev, AT803X_INTR_STATUS);
 
 	return 0;
+}
+
+static int at803x_ack_interrupt(struct phy_device *phydev)
+{
+	int err;
+
+	err = phy_read(phydev, AT803X_INSR);
+
+	return (err < 0) ? err : 0;
+}
+
+static int at803x_config_intr(struct phy_device *phydev)
+{
+	int err;
+
+	if (phydev->interrupts == PHY_INTERRUPT_ENABLED)
+		err = phy_write(phydev, AT803X_INER, AT803X_INER_INIT);
+	else
+		err = phy_write(phydev, AT803X_INER, 0);
+
+	return err;
 }
 
 /* ATHEROS 8035 */
@@ -118,6 +143,23 @@ static struct phy_driver at8035_driver = {
 	.flags		= PHY_HAS_INTERRUPT,
 	.config_aneg	= &genphy_config_aneg,
 	.read_status	= &genphy_read_status,
+	.driver		= {
+		.owner = THIS_MODULE,
+	},
+};
+
+/* ATHEROS 8033 */
+static struct phy_driver at8033_driver = {
+	.phy_id		= 0x004dd074,
+	.name		= "Atheros 8033 ethernet",
+	.phy_id_mask	= 0xffffffef,
+	.config_init	= at803x_config_init,
+	.features	= PHY_GBIT_FEATURES,
+	.flags		= PHY_HAS_INTERRUPT,
+	.config_aneg	= &genphy_config_aneg,
+	.read_status	= &genphy_read_status,
+	.ack_interrupt	= &at803x_ack_interrupt,
+	.config_intr	= &at803x_config_intr,
 	.driver		= {
 		.owner = THIS_MODULE,
 	},
@@ -146,12 +188,17 @@ static int __init atheros_init(void)
 	if (ret)
 		goto err1;
 
-	ret = phy_driver_register(&at8030_driver);
+	ret = phy_driver_register(&at8033_driver);
 	if (ret)
 		goto err2;
 
-	return 0;
+	ret = phy_driver_register(&at8030_driver);
+	if (ret)
+		goto err3;
 
+	return 0;
+err3:
+	phy_driver_unregister(&at8033_driver);
 err2:
 	phy_driver_unregister(&at8035_driver);
 err1:
@@ -161,6 +208,7 @@ err1:
 static void __exit atheros_exit(void)
 {
 	phy_driver_unregister(&at8035_driver);
+	phy_driver_unregister(&at8033_driver);
 	phy_driver_unregister(&at8030_driver);
 }
 
@@ -169,6 +217,7 @@ module_exit(atheros_exit);
 
 static struct mdio_device_id __maybe_unused atheros_tbl[] = {
 	{ 0x004dd076, 0xffffffef },
+	{ 0x004dd074, 0xffffffef },
 	{ 0x004dd072, 0xffffffef },
 	{ }
 };

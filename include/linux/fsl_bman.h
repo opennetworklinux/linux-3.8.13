@@ -403,6 +403,12 @@ static inline void bman_release_bpid(u32 bpid)
 	bman_release_bpid_range(bpid, 1);
 }
 
+int bman_reserve_bpid_range(u32 bpid, unsigned int count);
+static inline int bman_reserve_bpid(u32 bpid)
+{
+       return bman_reserve_bpid_range(bpid, 1);
+}
+
 void bman_seed_bpid_range(u32 bpid, unsigned int count);
 
 
@@ -468,7 +474,8 @@ int bman_release(struct bman_pool *pool, const struct bm_buffer *bufs, u8 num,
  *
  * Issues an "Acquire" command via the portal's management command interface.
  * The return value will be the number of buffers obtained from the pool, or a
- * negative error code if a h/w error or pool starvation was encountered.
+ * negative error code if a h/w error or pool starvation was encountered. In
+ * the latter case, the content of @bufs is undefined.
  */
 int bman_acquire(struct bman_pool *pool, struct bm_buffer *bufs, u8 num,
 			u32 flags);
@@ -507,6 +514,13 @@ u32 bman_query_free_buffers(struct bman_pool *pool);
  */
 int bman_update_pool_thresholds(struct bman_pool *pool, const u32 *thresholds);
 #endif
+
+/**
+ * The below bman_p_***() variant might be called in a situation that the cpu
+ * which the portal affine to is not online yet.
+ * @bman_portal specifies which portal the API will use.
+*/
+int bman_p_irqsource_add(struct bman_portal *p, __maybe_unused u32 bits);
 #ifdef __cplusplus
 }
 #endif

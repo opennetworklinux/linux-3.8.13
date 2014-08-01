@@ -55,16 +55,14 @@
 do {									\
 	if ((kparam.key.size <= 0) ||					\
 			(kparam.key.size > DPA_OFFLD_MAXENTRYKEYSIZE)) { \
-		pr_err("ERROR: %s, %s (%d): Invalid lookup key size "	\
-			"(%d bytes).\n", __FILE__, __func__, __LINE__,	\
+		log_err("Invalid lookup key size (%d bytes).\n",	\
 			kparam.key.size);				\
 		return -EINVAL;						\
 	}								\
 									\
 	if (copy_from_user(key_buf, kparam.key.byte,			\
 						kparam.key.size)) {	\
-		pr_err("ERROR: %s, %s (%d): Read failed: lookup "	\
-			"key.\n", __FILE__, __func__, __LINE__);	\
+		log_err("Read failed: lookup key.\n");			\
 		return -EBUSY;						\
 	}								\
 	kparam.key.byte = key_buf;					\
@@ -72,9 +70,7 @@ do {									\
 	if (kparam.key.mask) {						\
 		if (copy_from_user(mask_buf, kparam.key.mask,		\
 						kparam.key.size)) {	\
-			pr_err("ERROR: %s, %s (%d): Read failed: "	\
-				"key mask.\n", __FILE__, __func__,	\
-				__LINE__);				\
+			log_err("Read failed: key mask.\n");		\
 			return -EBUSY;					\
 		}							\
 									\
@@ -88,9 +84,7 @@ do {									\
 		if (copy_from_user(&new_key,				\
 				kparam.mod_params.key,			\
 			sizeof(struct dpa_offload_lookup_key))) {	\
-			pr_err("ERROR: %s, %s (%d): Read failed: "	\
-				"new lookup key.\n", __FILE__,		\
-				__func__, __LINE__);			\
+			log_err("Read failed: new lookup key.\n");	\
 			return -EBUSY;					\
 		}							\
 		kparam.mod_params.key = &new_key;			\
@@ -98,9 +92,8 @@ do {									\
 		if ((kparam.mod_params.key->size <= 0) ||		\
 			(kparam.mod_params.key->size >			\
 				DPA_OFFLD_MAXENTRYKEYSIZE)) {		\
-			pr_err("ERROR: %s, %s (%d): Invalid new lookup " \
-				"key size (%d bytes).\n", __FILE__,	\
-				__func__, __LINE__,			\
+			log_err("Invalid new lookup key size (%d "	\
+				"bytes).\n",				\
 				kparam.mod_params.key->size);		\
 			return -EINVAL;					\
 		}							\
@@ -108,10 +101,9 @@ do {									\
 		if (kparam.mod_params.key->byte) {			\
 			if (copy_from_user(new_key_buf,			\
 				kparam.mod_params.key->byte,		\
-				kparam.mod_params.key->size)) {	\
-				pr_err("ERROR: %s, %s (%d): Read "	\
-					"failed: new lookup key data.\n", \
-					__FILE__, __func__, __LINE__);	\
+				kparam.mod_params.key->size)) {		\
+				log_err("Read failed: new lookup key "	\
+					"data.\n");			\
 				return -EBUSY;				\
 			}						\
 			kparam.mod_params.key->byte = new_key_buf;	\
@@ -120,9 +112,7 @@ do {									\
 			if (copy_from_user(new_mask_buf,		\
 				kparam.mod_params.key->mask,		\
 				kparam.mod_params.key->size)) {		\
-				pr_err("ERROR: %s, %s (%d): Read "	\
-					"failed: new key mask.\n",	\
-					__FILE__, __func__, __LINE__);	\
+				log_err("Read failed: new key mask.\n");\
 				return -EBUSY;				\
 			}						\
 			kparam.mod_params.key->mask = new_mask_buf;	\
@@ -211,6 +201,8 @@ static const struct file_operations dpa_classif_fops = {
 };
 
 static int dpa_cls_cdev_major = -1;
+static struct class *classifier_class;
+static struct device *classifier_dev;
 
 
 int	wrp_dpa_classif_init(void)
@@ -224,9 +216,29 @@ int	wrp_dpa_classif_init(void)
 					WRP_DPA_CLS_CDEVNAME,
 					&dpa_classif_fops);
 	if (dpa_cls_cdev_major < 0) {
-		pr_err("ERROR: %s, %s (%d): Could not register DPA Classifier "
-			"Control Device.\n", __FILE__, __func__, __LINE__);
+		log_err("Could not register DPA Classifier Control Device.\n");
 		return -EBUSY;
+	}
+
+	classifier_class = class_create(THIS_MODULE, WRP_DPA_CLS_CLASS_NAME);
+	if (IS_ERR(classifier_class)) {
+		log_err("Failed to create the DPA classifier class device\n");
+		unregister_chrdev(dpa_cls_cdev_major, WRP_DPA_CLS_CDEVNAME);
+		dpa_cls_cdev_major = -1;
+		return PTR_ERR(classifier_class);
+	}
+
+	classifier_dev = device_create(	classifier_class,
+					NULL,
+					MKDEV(dpa_cls_cdev_major, 0),
+					NULL,
+					WRP_DPA_CLS_CDEVNAME);
+	if (IS_ERR(classifier_dev)) {
+		log_err("Failed to create the DPA Classifier device\n");
+		class_destroy(classifier_class);
+		unregister_chrdev(dpa_cls_cdev_major, WRP_DPA_CLS_CDEVNAME);
+		dpa_cls_cdev_major = -1;
+		return PTR_ERR(classifier_dev);
 	}
 
 	return 0;
@@ -237,6 +249,9 @@ int wrp_dpa_classif_exit(void)
 {
 	if (dpa_cls_cdev_major < 0)
 		return 0;
+
+	device_destroy(classifier_class, MKDEV(dpa_cls_cdev_major, 0));
+	class_destroy(classifier_class);
 
 	unregister_chrdev(dpa_cls_cdev_major, WRP_DPA_CLS_CDEVNAME);
 
@@ -366,9 +381,9 @@ long wrp_dpa_classif_do_ioctl(
 
 		/* Prepare arguments */
 		if (copy_from_user(&param, (void *) args, sizeof(param))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: "
+			log_err("Read failed: "
 				"dpa_classif_table_delete_entry_by_ref user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+				"space args.\n");
 			return -EBUSY;
 		}
 
@@ -413,9 +428,9 @@ long wrp_dpa_classif_do_ioctl(
 
 		/* Prepare arguments */
 		if (copy_from_user(&param, (void *) args, sizeof(param))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: "
+			log_err("Read failed: "
 				"dpa_classif_table_get_entry_stats_by_ref user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+				"space args.\n");
 			return -EBUSY;
 		}
 
@@ -428,9 +443,9 @@ long wrp_dpa_classif_do_ioctl(
 
 		/* Return results to user space */
 		if (copy_to_user((void *) args, &param, sizeof(param))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: "
+			log_err("Write failed: "
 				"dpa_classif_table_get_entry_stats_by_ref "
-				"result.\n", __FILE__, __func__, __LINE__);
+				"result.\n");
 			return -EBUSY;
 		}
 
@@ -450,10 +465,9 @@ long wrp_dpa_classif_do_ioctl(
 		if (compat_mode) {
 			if (copy_from_user(&uparam, (void *) args,
 							sizeof(uparam))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
+				log_err("Read failed: "
 					"dpa_classif_table_lookup_by_key user "
-					"space args.\n", __FILE__, __func__,
-					__LINE__);
+					"space args.\n");
 				return -EBUSY;
 			}
 
@@ -463,9 +477,9 @@ long wrp_dpa_classif_do_ioctl(
 #endif /* CONFIG_COMPAT */
 		/* Prepare arguments */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: "
+			log_err("Read failed: "
 				"dpa_classif_table_lookup_by_key user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+				"args.\n");
 			return -EBUSY;
 		}
 
@@ -485,18 +499,16 @@ long wrp_dpa_classif_do_ioctl(
 			return ret;
 
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: "
-				"dpa_classif_table_get_params result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: "
+				"dpa_classif_table_get_params result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		/* Return results to user space */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: "
-				"dpa_classif_table_get_params result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: "
+				"dpa_classif_table_get_params result.\n");
 			return -EBUSY;
 		}
 
@@ -592,42 +604,39 @@ long wrp_dpa_classif_do_ioctl(
 #ifdef CONFIG_COMPAT
 	case	DPA_CLS_IOC_COMPAT_MCAST_CREATE_GROUP:
 #endif /* CONFIG_COMPAT */
-	case	DPA_CLS_IOC_MCAST_CREATE_GROUP:
+	case DPA_CLS_IOC_MCAST_CREATE_GROUP:
 		ret = do_ioctl_mcast_create_group(args, compat_mode);
 		break;
 #ifdef CONFIG_COMPAT
-	case	DPA_CLS_IOC_COMPAT_MCAST_ADD_MEMBER:
+	case DPA_CLS_IOC_COMPAT_MCAST_ADD_MEMBER:
 #endif /* CONFIG_COMPAT */
-	case	DPA_CLS_IOC_MCAST_ADD_MEMBER:
+	case DPA_CLS_IOC_MCAST_ADD_MEMBER:
 		ret = do_ioctl_mcast_add_member(args, compat_mode);
 		break;
-	case	DPA_CLS_IOC_MCAST_REMOVE_MEMBER: {
+	case DPA_CLS_IOC_MCAST_REMOVE_MEMBER: {
 		struct ioc_dpa_cls_mcast_remove_params params;
 		int sz;
 		sz = sizeof(struct ioc_dpa_cls_mcast_remove_params);
 		if (copy_from_user(&params,
 				 (struct ioc_dpa_cls_mcast_remove_params *)args,
 				 sz)) {
-			pr_err("ERROR: %s, %s (%d):Could not copy parameters\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Could not copy parameters.\n");
 			return -EINVAL;
 			}
 #if (DPAA_VERSION >= 11)
 		ret = dpa_classif_mcast_remove_member(params.grpd,
 						      params.md);
 #else
-		pr_err("ERROR: %s, %s (%d): Multicast not supported  on this"
-		       "platform.\n", __FILE__, __func__, __LINE__);
+		log_err("Multicast not supported on this platform.\n");
 		ret = -EINVAL;
 		return ret;
 #endif
 		break;
 	}
-	case	DPA_CLS_IOC_MCAST_FREE_GROUP: {
+	case DPA_CLS_IOC_MCAST_FREE_GROUP: {
 		int grpd;
 		if (copy_from_user(&grpd, (int *)args, sizeof(int))) {
-			pr_err("ERROR: %s, %s (%d):Could not copy parameters\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Could not copy parameters.\n");
 			return -EINVAL;
 		}
 #if (DPAA_VERSION >= 11)
@@ -635,16 +644,14 @@ long wrp_dpa_classif_do_ioctl(
 		if (ret < 0)
 			return ret;
 #else
-		pr_err("ERROR: %s, %s (%d): Multicast not supported  on this"
-		       "platform.\n", __FILE__, __func__, __LINE__);
+		log_err("Multicast not supported  on this platform.\n");
 		ret = -EINVAL;
 		return ret;
 #endif
 		break;
 	}
 	default:
-		pr_err("ERROR: %s, %s (%d): DPA Classifier ioctl command "
-			"(0x%x) not suppoted", __FILE__, __func__, __LINE__,
+		log_err("DPA Classifier ioctl command (0x%x) not supported.\n",
 			cmd);
 		return -EINVAL;
 	}
@@ -665,8 +672,7 @@ static long do_ioctl_table_create(unsigned long args, bool compat_mode)
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -678,8 +684,7 @@ static long do_ioctl_table_create(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -697,15 +702,13 @@ static long do_ioctl_table_create(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.td = kparam.td;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -725,8 +728,7 @@ static long do_ioctl_set_remove_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -738,8 +740,7 @@ static long do_ioctl_set_remove_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -768,15 +769,13 @@ static long do_ioctl_set_remove_hm(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.hmd = kparam.hmd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -795,8 +794,7 @@ static long do_ioctl_modify_remove_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -808,8 +806,7 @@ static long do_ioctl_modify_remove_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -832,8 +829,7 @@ static long do_ioctl_set_insert_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -845,8 +841,7 @@ static long do_ioctl_set_insert_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: space args.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Read failed: space args.\n");
 			return -EBUSY;
 		}
 
@@ -868,10 +863,8 @@ static long do_ioctl_set_insert_hm(unsigned long args, bool compat_mode)
 		sz = kparam.ins_params.custom.size;
 		data =	kzalloc(sz * sizeof(*data), GFP_KERNEL);
 		if (!data) {
-			pr_err("ERROR: %s, %s (%d): Failed to allocate memory "
-				"for  data param for DPA_CLS_HM_INSERT_CUSTOM"
-				" parameter type.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Failed to allocate memory for  data param for "
+				"DPA_CLS_HM_INSERT_CUSTOM parameter type.\n");
 			return -ENOMEM;
 		}
 
@@ -890,15 +883,13 @@ static long do_ioctl_set_insert_hm(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.hmd = kparam.hmd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -919,8 +910,7 @@ static long do_ioctl_modify_insert_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -932,8 +922,7 @@ static long do_ioctl_modify_insert_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -944,10 +933,8 @@ static long do_ioctl_modify_insert_hm(unsigned long args, bool compat_mode)
 		sz = kparam.ins_params.custom.size;
 		data =	kzalloc(sz * sizeof(*data), GFP_KERNEL);
 		if (!data) {
-			pr_err("ERROR: %s, %s (%d): Failed to allocate memory "
-				"for data param for DPA_CLS_HM_INSERT_CUSTOM "
-				"parameter type.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Failed to allocate memory for data param for "
+				"DPA_CLS_HM_INSERT_CUSTOM parameter type.\n");
 			return -ENOMEM;
 		}
 
@@ -975,8 +962,7 @@ static long  do_ioctl_set_vlan_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -988,8 +974,7 @@ static long  do_ioctl_set_vlan_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1017,15 +1002,13 @@ static long  do_ioctl_set_vlan_hm(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.hmd = kparam.hmd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1045,8 +1028,7 @@ static long do_ioctl_modify_vlan_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1058,8 +1040,7 @@ static long do_ioctl_modify_vlan_hm(unsigned long args, bool compat_mode)
 	} else
 #endif
 	if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-		pr_err("ERROR: %s, %s (%d): Read failed: user space args.\n",
-			__FILE__, __func__, __LINE__);
+		log_err("Read failed: user space args.\n");
 		return -EBUSY;
 	}
 
@@ -1083,8 +1064,7 @@ static long do_ioctl_set_nat_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1096,8 +1076,7 @@ static long do_ioctl_set_nat_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1122,11 +1101,10 @@ static long do_ioctl_set_nat_hm(unsigned long args, bool compat_mode)
 				options_size;
 			options = kzalloc(sz * sizeof(*options), GFP_KERNEL);
 			if (!options) {
-				pr_err("ERROR: %s, %s (%d): Failed to allocate"
-					" memory for  options param for"
-					" DPA_CLS_HM_NAT_TYPE_NAT_PT parameter"
-					" type.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Failed to allocate memory for "
+					"options param for "
+					"DPA_CLS_HM_NAT_TYPE_NAT_PT parameter "
+					"type.\n");
 				return -ENOMEM;
 			}
 			copy_from_user(options,
@@ -1148,15 +1126,13 @@ static long do_ioctl_set_nat_hm(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.hmd = kparam.hmd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1178,8 +1154,7 @@ static long do_ioctl_modify_nat_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1191,8 +1166,7 @@ static long do_ioctl_modify_nat_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1203,11 +1177,10 @@ static long do_ioctl_modify_nat_hm(unsigned long args, bool compat_mode)
 				options_size;
 			options = kzalloc(sz * sizeof(*options), GFP_KERNEL);
 			if (!options) {
-				pr_err("ERROR: %s, %s (%d): Failed to allocate"
-					" memory for  options param for"
-					" DPA_CLS_HM_NAT_TYPE_NAT_PT parameter"
-					" type.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Failed to allocate memory for "
+					"options param for "
+					"DPA_CLS_HM_NAT_TYPE_NAT_PT parameter "
+					"type.\n");
 				return -ENOMEM;
 			}
 			copy_from_user(options,
@@ -1240,8 +1213,7 @@ static long do_ioctl_set_update_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1253,8 +1225,7 @@ static long do_ioctl_set_update_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1276,11 +1247,9 @@ static long do_ioctl_set_update_hm(unsigned long args, bool compat_mode)
 		sz = kparam.update_params.replace.new_ipv4_hdr.options_size;
 		options = kzalloc(sz * sizeof(*options), GFP_KERNEL);
 		if (!options) {
-			pr_err("ERROR: %s, %s (%d): Failed to allocate memory "
-				"for  options param for"
-				" DPA_CLS_HM_REPLACE_IPv6_BY_IPv4"
-				" parameter type.\n", __FILE__, __func__,
-				__LINE__);
+			log_err("Failed to allocate memory for options param "
+				"for DPA_CLS_HM_REPLACE_IPv6_BY_IPv4 "
+				"parameter type.\n");
 			return -ENOMEM;
 		}
 
@@ -1301,15 +1270,13 @@ static long do_ioctl_set_update_hm(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.hmd = kparam.hmd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1330,8 +1297,7 @@ static long do_ioctl_modify_update_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1343,8 +1309,7 @@ static long do_ioctl_modify_update_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-			       "space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1355,11 +1320,9 @@ static long do_ioctl_modify_update_hm(unsigned long args, bool compat_mode)
 		sz = kparam.update_params.replace.new_ipv4_hdr.options_size;
 		options = kzalloc(sz * sizeof(*options), GFP_KERNEL);
 		if (!options) {
-			pr_err("ERROR: %s, %s (%d): Failed to allocate memory "
-				"for  options param for"
-				" DPA_CLS_HM_REPLACE_IPv6_BY_IPv4"
-				" parameter type.\n", __FILE__, __func__,
-				__LINE__);
+			log_err("Failed to allocate memory for options param "
+				"for DPA_CLS_HM_REPLACE_IPv6_BY_IPv4 "
+				"parameter type.\n");
 			return -ENOMEM;
 		}
 
@@ -1387,8 +1350,7 @@ static long do_ioctl_set_fwd_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1400,8 +1362,7 @@ static long do_ioctl_set_fwd_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1430,15 +1391,13 @@ static long do_ioctl_set_fwd_hm(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.hmd = kparam.hmd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1457,8 +1416,7 @@ static long do_ioctl_modify_fwd_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1470,8 +1428,7 @@ static long do_ioctl_modify_fwd_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1491,8 +1448,7 @@ static long  do_ioctl_set_mpls_hm(unsigned long args, bool compat_mode)
 	struct compat_ioc_dpa_cls_hm_mpls_params uparam;
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1504,8 +1460,7 @@ static long  do_ioctl_set_mpls_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1533,15 +1488,13 @@ static long  do_ioctl_set_mpls_hm(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.hmd = kparam.hmd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1560,8 +1513,7 @@ static long  do_ioctl_modify_mpls_hm(unsigned long args, bool compat_mode)
 
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1573,8 +1525,7 @@ static long  do_ioctl_modify_mpls_hm(unsigned long args, bool compat_mode)
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1590,12 +1541,12 @@ static long do_ioctl_mcast_create_group(unsigned long args, bool compat_mode)
 	long ret = 0;
 	struct ioc_dpa_cls_mcast_group_params kparam;
 	struct dpa_cls_tbl_policer_params policer_params;
+	struct dpa_cls_mcast_group_resources *p_res = NULL;
 #ifdef CONFIG_COMPAT
 	struct compat_ioc_dpa_cls_mcast_group_params uparam;
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1612,8 +1563,7 @@ static long do_ioctl_mcast_create_group(unsigned long args, bool compat_mode)
 #endif /* CONFIG_COMPAT */
 	{
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1623,9 +1573,7 @@ static long do_ioctl_mcast_create_group(unsigned long args, bool compat_mode)
 					kparam.mcast_grp_params.
 					first_member_params.policer_params,
 				sizeof(policer_params))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"policer params.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Read failed: policer params.\n");
 				return -EBUSY;
 			}
 			kparam.mcast_grp_params.first_member_params.
@@ -1633,10 +1581,13 @@ static long do_ioctl_mcast_create_group(unsigned long args, bool compat_mode)
 								&policer_params;
 		}
 	}
+
+	if (kparam.res.group_node)
+		p_res = &kparam.res;
 	/*
 	 * Translate FM_PCD file descriptor
 	 */
-	if (!kparam.mcast_grp_params.group) {
+	if (!p_res) {
 		kparam.mcast_grp_params.fm_pcd =
 				translate_fm_pcd_handle(kparam.
 						       mcast_grp_params.fm_pcd);
@@ -1646,10 +1597,9 @@ static long do_ioctl_mcast_create_group(unsigned long args, bool compat_mode)
 
 #if (DPAA_VERSION >= 11)
 	ret = dpa_classif_mcast_create_group(&kparam.mcast_grp_params,
-					     &kparam.grpd);
+					     &kparam.grpd, p_res);
 #else
-	pr_err("ERROR: %s, %s (%d): Multicast not supported  on this"
-	       "platform.\n", __FILE__, __func__, __LINE__);
+	log_err("Multicast not supported on this platform.\n");
 	return -EINVAL;
 #endif
 
@@ -1660,15 +1610,13 @@ static long do_ioctl_mcast_create_group(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.grpd = kparam.grpd;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1687,8 +1635,7 @@ static long do_ioctl_mcast_add_member(unsigned long args, bool compat_mode)
 	struct compat_ioc_dpa_cls_mcast_member_params uparam;
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1704,8 +1651,7 @@ static long do_ioctl_mcast_add_member(unsigned long args, bool compat_mode)
 #endif /* CONFIG_COMPAT */
 	{
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1713,9 +1659,7 @@ static long do_ioctl_mcast_add_member(unsigned long args, bool compat_mode)
 			if (copy_from_user(&policer_params,
 					kparam.member_params.policer_params,
 						sizeof(policer_params))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"policer params.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Read failed: policer params.\n");
 				return -EBUSY;
 			}
 
@@ -1728,8 +1672,7 @@ static long do_ioctl_mcast_add_member(unsigned long args, bool compat_mode)
 	if (ret < 0)
 		return ret;
 #else
-	pr_err("ERROR: %s, %s (%d): Multicast not supported  on this"
-	       "platform.\n", __FILE__, __func__, __LINE__);
+	log_err("Multicast not supported on this platform.\n");
 	return -EINVAL;
 #endif
 
@@ -1737,15 +1680,13 @@ static long do_ioctl_mcast_add_member(unsigned long args, bool compat_mode)
 	if (compat_mode) {
 		uparam.md = kparam.md;
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1768,8 +1709,7 @@ static long do_ioctl_table_modify_miss_action(unsigned long	args,
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1783,8 +1723,7 @@ static long do_ioctl_table_modify_miss_action(unsigned long	args,
 #endif /* CONFIG_COMPAT */
 	{
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1792,9 +1731,7 @@ static long do_ioctl_table_modify_miss_action(unsigned long	args,
 			if (copy_from_user(&policer_params,
 				   kparam.miss_action.enq_params.policer_params,
 						sizeof(policer_params))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"policer params.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Read failed: policer params.\n");
 				return -EBUSY;
 			}
 
@@ -1823,8 +1760,7 @@ static long do_ioctl_table_insert_entry(unsigned long args, bool compat_mode)
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1842,8 +1778,7 @@ static long do_ioctl_table_insert_entry(unsigned long args, bool compat_mode)
 #endif /* CONFIG_COMPAT */
 	{
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1855,9 +1790,7 @@ static long do_ioctl_table_insert_entry(unsigned long args, bool compat_mode)
 			if (copy_from_user(&policer_params,
 				kparam.action.enq_params.policer_params,
 				sizeof(policer_params))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"policer params.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Read failed: policer params.\n");
 				return -EBUSY;
 			}
 		kparam.action.enq_params.policer_params = &policer_params;
@@ -1882,15 +1815,13 @@ static long do_ioctl_table_insert_entry(unsigned long args, bool compat_mode)
 		uparam.entry_id = kparam.entry_id;
 
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -1918,8 +1849,7 @@ static long do_ioctl_table_modify_entry_by_key(unsigned long	args,
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1945,8 +1875,7 @@ static long do_ioctl_table_modify_entry_by_key(unsigned long	args,
 #endif /* CONFIG_COMPAT */
 	{
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -1959,9 +1888,7 @@ static long do_ioctl_table_modify_entry_by_key(unsigned long	args,
 			if (copy_from_user(&action,
 				kparam.mod_params.action,
 				sizeof(struct dpa_cls_tbl_action))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"new action params.\n", __FILE__,
-					__func__, __LINE__);
+				log_err("Read failed: new action params.\n");
 				return -EBUSY;
 			}
 			kparam.mod_params.action = &action;
@@ -1976,9 +1903,8 @@ static long do_ioctl_table_modify_entry_by_key(unsigned long	args,
 					action->enq_params.
 					policer_params,
 					sizeof(policer_params))) {
-					pr_err("ERROR: %s, %s (%d): Read "
-				"failed: new policer params.\n", __FILE__,
-				__func__, __LINE__);
+					log_err("Read failed: new policer "
+						"params.\n");
 					return -EBUSY;
 				}
 				kparam.mod_params.action->enq_params.
@@ -2014,8 +1940,7 @@ static long do_ioctl_table_modify_entry_by_ref(unsigned long	args,
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2039,8 +1964,7 @@ static long do_ioctl_table_modify_entry_by_ref(unsigned long	args,
 #endif /* CONFIG_COMPAT */
 	{
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2051,9 +1975,7 @@ static long do_ioctl_table_modify_entry_by_ref(unsigned long	args,
 			if (copy_from_user(&action,
 				kparam.mod_params.action,
 				sizeof(struct dpa_cls_tbl_action))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"new action params.\n", __FILE__,
-					__func__, __LINE__);
+				log_err("Read failed: new action params.\n");
 				return -EBUSY;
 			}
 			kparam.mod_params.action = &action;
@@ -2068,9 +1990,8 @@ static long do_ioctl_table_modify_entry_by_ref(unsigned long	args,
 					action->enq_params.
 					policer_params,
 					sizeof(policer_params))) {
-					pr_err("ERROR: %s, %s (%d): Read "
-				"failed: new policer params.\n", __FILE__,
-				__func__, __LINE__);
+					log_err("Read failed: new policer "
+						"params.\n");
 					return -EBUSY;
 				}
 				kparam.mod_params.action->enq_params.
@@ -2101,8 +2022,7 @@ static long do_ioctl_table_lookup_by_key(unsigned long args, bool compat_mode)
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2119,8 +2039,7 @@ static long do_ioctl_table_lookup_by_key(unsigned long args, bool compat_mode)
 #endif /* CONFIG_COMPAT */
 	{
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2146,15 +2065,13 @@ static long do_ioctl_table_lookup_by_key(unsigned long args, bool compat_mode)
 			return ret;
 
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -2174,8 +2091,7 @@ static long do_ioctl_table_lookup_by_ref(unsigned long args, bool compat_mode)
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2188,8 +2104,7 @@ static long do_ioctl_table_lookup_by_ref(unsigned long args, bool compat_mode)
 #endif /* CONFIG_COMPAT */
 		/* Prepare arguments */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2212,15 +2127,13 @@ static long do_ioctl_table_lookup_by_ref(unsigned long args, bool compat_mode)
 			return ret;
 
 		if (copy_to_user((void *)args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -2243,8 +2156,7 @@ static long do_ioctl_table_delete_entry_by_key(unsigned long	args,
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2262,8 +2174,7 @@ static long do_ioctl_table_delete_entry_by_key(unsigned long	args,
 	{
 		/* Prepare arguments */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2291,8 +2202,7 @@ static long do_ioctl_table_get_stats_by_key(unsigned long	args,
 	/* Prepare arguments */
 	if (compat_mode) {
 		if (copy_from_user(&uparam, (void *) args, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user "
-				"space args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2310,8 +2220,7 @@ static long do_ioctl_table_get_stats_by_key(unsigned long	args,
 	{
 		/* Prepare arguments */
 		if (copy_from_user(&kparam, (void *) args, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: user space "
-				"args.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: user space args.\n");
 			return -EBUSY;
 		}
 
@@ -2335,15 +2244,13 @@ static long do_ioctl_table_get_stats_by_key(unsigned long	args,
 				sizeof(struct dpa_cls_tbl_entry_stats));
 
 		if (copy_to_user((void *) args, &uparam, sizeof(uparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 	} else
 #endif /* CONFIG_COMPAT */
 		if (copy_to_user((void *) args, &kparam, sizeof(kparam))) {
-			pr_err("ERROR: %s, %s (%d): Write failed: result.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Write failed: result.\n");
 			return -EBUSY;
 		}
 
@@ -2360,8 +2267,8 @@ void *translate_fm_pcd_handle(void *fm_pcd)
 
 	fm_pcd_file = fcheck((unsigned long)fm_pcd);
 	if (!fm_pcd_file) {
-		pr_err("ERROR: %s, %s (%d): Could not translate PCD handle "
-			"fm_pcd=0x%p.\n", __FILE__, __func__, __LINE__, fm_pcd);
+		log_err("Could not translate PCD handle fm_pcd=0x%p.\n",
+			fm_pcd);
 		return NULL;
 	}
 	fm_wrapper_dev = (t_LnxWrpFmDev *)fm_pcd_file->private_data;
@@ -2412,8 +2319,7 @@ int dpa_lookup_key_params_compatcpy(
 	kparam->size = uparam->size;
 	if (copy_from_user(kparam->byte, compat_ptr(uparam->byte),
 		uparam->size)) {
-		pr_err("ERROR: %s, %s (%d): Read failed: lookup key.\n",
-			__FILE__, __func__, __LINE__);
+		log_err("Read failed: lookup key.\n");
 		return -EBUSY;
 	}
 
@@ -2421,8 +2327,7 @@ int dpa_lookup_key_params_compatcpy(
 		BUG_ON(!kparam->mask);
 		if (copy_from_user(kparam->mask, compat_ptr(uparam->mask),
 			uparam->size)) {
-			pr_err("ERROR: %s, %s (%d): Read failed: key mask.\n",
-				__FILE__, __func__, __LINE__);
+			log_err("Read failed: key mask.\n");
 			return -EBUSY;
 		}
 	} else
@@ -2470,9 +2375,7 @@ int dpa_cls_tbl_action_params_compatcpy(
 			if (copy_from_user(kparam->enq_params.policer_params,
 				compat_ptr(uparam->enq_params.policer_params),
 				sizeof(struct dpa_cls_tbl_policer_params))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"policer params.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Read failed: policer params.\n");
 				return -EBUSY;
 			}
 		} else
@@ -2481,6 +2384,7 @@ int dpa_cls_tbl_action_params_compatcpy(
 	case DPA_CLS_TBL_ACTION_NEXT_TABLE:
 		kparam->next_table_params.next_td =
 				uparam->next_table_params.next_td;
+		kparam->next_table_params.hmd = uparam->next_table_params.hmd;
 		break;
 	case DPA_CLS_TBL_ACTION_MCAST:
 		kparam->mcast_params.grpd = uparam->mcast_params.grpd;
@@ -2507,16 +2411,15 @@ int dpa_cls_tbl_action_params_rcompatcpy(
 		uparam->enq_params.new_fqid =
 				kparam->enq_params.new_fqid;
 		uparam->enq_params.hmd = kparam->enq_params.hmd;
-
+		uparam->enq_params.new_rel_vsp_id =
+				kparam->enq_params.new_rel_vsp_id;
 		if (kparam->enq_params.policer_params) {
 			BUG_ON(!compat_ptr(uparam->enq_params.policer_params));
 			if (copy_to_user(
 				compat_ptr(uparam->enq_params.policer_params),
 				kparam->enq_params.policer_params,
 				sizeof(struct dpa_cls_tbl_policer_params))) {
-				pr_err("ERROR: %s, %s (%d): Read failed: "
-					"policer params.\n", __FILE__, __func__,
-					__LINE__);
+				log_err("Read failed: policer params.\n");
 				return -EBUSY;
 			}
 		} else
@@ -2525,6 +2428,11 @@ int dpa_cls_tbl_action_params_rcompatcpy(
 	case DPA_CLS_TBL_ACTION_NEXT_TABLE:
 		uparam->next_table_params.next_td =
 				kparam->next_table_params.next_td;
+		uparam->next_table_params.hmd = kparam->next_table_params.hmd;
+		break;
+	case DPA_CLS_TBL_ACTION_MCAST:
+		uparam->mcast_params.grpd = kparam->mcast_params.grpd;
+		uparam->mcast_params.hmd = kparam->mcast_params.hmd;
 		break;
 	default:
 		break;
@@ -2661,8 +2569,7 @@ int dpa_cls_tbl_entry_mod_params_compatcpy(
 		BUG_ON(!kparam->key);
 		if (copy_from_user(&key, compat_ptr(uparam->key),
 			sizeof(struct compat_ioc_dpa_offld_lookup_key))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: New key "
-				"parameters.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: New key parameters.\n");
 			return -EBUSY;
 		}
 
@@ -2680,8 +2587,7 @@ int dpa_cls_tbl_entry_mod_params_compatcpy(
 
 		if (copy_from_user(&action, compat_ptr(uparam->action),
 			sizeof(struct dpa_cls_compat_tbl_action))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: New action "
-				"parameters.\n", __FILE__, __func__, __LINE__);
+			log_err("Read failed: New action parameters.\n");
 			return -EBUSY;
 		}
 
@@ -3063,9 +2969,7 @@ int dpa_cls_mcast_group_params_compatcpy(
 			compat_ptr(uparam->mcast_grp_params.first_member_params.
 					policer_params),
 			sizeof(struct dpa_cls_tbl_policer_params))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: "
-				"policer params.\n", __FILE__, __func__,
-				__LINE__);
+			log_err("Read failed: policer params.\n");
 			return -EBUSY;
 		}
 	} else
@@ -3077,12 +2981,12 @@ int dpa_cls_mcast_group_params_compatcpy(
 	kparam->mcast_grp_params.prefilled_members =
 			uparam->mcast_grp_params.prefilled_members;
 
-	if (uparam->mcast_grp_params.group)
-		kparam->mcast_grp_params.group = compat_get_id2ptr(
-						uparam->mcast_grp_params.group,
-						FM_MAP_TYPE_PCD_NODE);
+	if (uparam->res.group_node)
+		kparam->res.group_node = compat_get_id2ptr(
+					uparam->res.group_node,
+					FM_MAP_TYPE_PCD_NODE);
 	else
-		kparam->mcast_grp_params.group = NULL;
+		kparam->res.group_node = NULL;
 
 	if (compat_ptr(uparam->mcast_grp_params.distribution))
 		kparam->mcast_grp_params.distribution = compat_get_id2ptr(
@@ -3116,9 +3020,7 @@ int dpa_cls_mcast_member_params_compatcpy(
 		if (copy_from_user(kparam->member_params.policer_params,
 			compat_ptr(uparam->member_params.policer_params),
 			sizeof(struct dpa_cls_tbl_policer_params))) {
-			pr_err("ERROR: %s, %s (%d): Read failed: "
-				"policer params.\n", __FILE__, __func__,
-				__LINE__);
+			log_err("Read failed: policer params.\n");
 			return -EBUSY;
 		}
 	} else

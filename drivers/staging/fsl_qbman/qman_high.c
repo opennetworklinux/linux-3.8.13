@@ -87,6 +87,7 @@ struct qman_portal {
 	struct qm_portal p;
 	unsigned long bits; /* PORTAL_BITS_*** - dynamic, strictly internal */
 	unsigned long irq_sources;
+	u32 use_eqcr_ci_stashing;
 	u32 slowpoll;	/* only used when interrupts are off */
 	struct qman_fq *vdqcr_owned; /* only 1 volatile dequeue at a time */
 #ifdef CONFIG_FSL_DPA_CAN_WAIT_SYNC
@@ -114,14 +115,12 @@ struct qman_portal {
 	struct list_head cgr_cbs;
 	/* list lock */
 	spinlock_t cgr_lock;
-
 	/* 2-element array. ccgrs[0] is mask, ccgrs[1] is snapshot. */
 	struct qman_ccgrs *ccgrs[QMAN_CEETM_MAX];
 	/* 256-element array, each is a linked-list of CCSCN handlers. */
 	struct list_head ccgr_cbs[QMAN_CEETM_MAX];
 	/* list lock */
 	spinlock_t ccgr_lock;
-
 	/* track if memory was allocated by the driver */
 	u8 alloced;
 };
@@ -155,6 +154,8 @@ static cpumask_t affine_mask;
 static DEFINE_SPINLOCK(affine_mask_lock);
 static u16 affine_channels[NR_CPUS];
 static DEFINE_PER_CPU(struct qman_portal, qman_affine_portal);
+void *affine_portals[NR_CPUS];
+
 /* "raw" gets the cpu-local struct whether it's a redirect or not. */
 static inline struct qman_portal *get_raw_affine_portal(void)
 {
@@ -302,8 +303,8 @@ static irqreturn_t portal_isr(__always_unused int irq, void *ptr)
 	 * as part of the handling of this interrupt source. We mustn't
 	 * clear it a second time in this top-level function.
 	 */
-	u32 clear = QM_DQAVAIL_MASK | (p->irq_sources & ~QM_PIRQ_CSCI) |
-					(p->irq_sources & ~QM_PIRQ_CCSCI);
+	u32 clear = QM_DQAVAIL_MASK | (p->irq_sources &
+		~(QM_PIRQ_CSCI | QM_PIRQ_CCSCI));
 	u32 is = qm_isr_status_read(&p->p) & p->irq_sources;
 	/* DQRR-handling if it's interrupt-driven */
 	if (is & QM_PIRQ_DQRI)
@@ -361,9 +362,6 @@ loop:
 	goto loop;
 }
 
-
-
-
 struct qman_portal *qman_create_portal(
 			struct qman_portal *portal,
 			const struct qm_portal_config *config,
@@ -382,12 +380,20 @@ struct qman_portal *qman_create_portal(
 
 	__p = &portal->p;
 
+	portal->use_eqcr_ci_stashing = ((qman_ip_rev >= QMAN_REV30) ?
+								1 : 0);
+
 	/* prep the low-level portal struct with the mapped addresses from the
 	 * config, everything that follows depends on it and "config" is more
 	 * for (de)reference... */
 	__p->addr.addr_ce = config->addr_virt[DPA_PORTAL_CE];
 	__p->addr.addr_ci = config->addr_virt[DPA_PORTAL_CI];
-	if (qm_eqcr_init(__p, qm_eqcr_pvb, qm_eqcr_cce)) {
+	/*
+	 * If CI-stashing is used, the current defaults use a threshold of 3,
+	 * and stash with high-than-DQRR priority.
+	 */
+	if (qm_eqcr_init(__p, qm_eqcr_pvb,
+			portal->use_eqcr_ci_stashing ? 3 : 0, 1)) {
 		pr_err("Qman EQCR initialisation failed\n");
 		goto fail_eqcr;
 	}
@@ -540,38 +546,34 @@ fail_eqcr:
 	return NULL;
 }
 
-
-
 struct qman_portal *qman_create_affine_portal(
 			const struct qm_portal_config *config,
 			const struct qman_cgrs *cgrs)
 {
 	struct qman_portal *res;
-	struct qman_portal *portal = get_raw_affine_portal();
-	/* A criteria for calling this function (from qman_driver.c) is that
-	 * we're already affine to the cpu and won't schedule onto another cpu.
-	 * This means we can put_affine_portal() and yet continue to use
-	 * "portal", which in turn means aspects of this routine can sleep. */
-	put_affine_portal();
+	struct qman_portal *portal;
 
+	portal = &per_cpu(qman_affine_portal, config->public_cfg.cpu);
 	res = qman_create_portal(portal, config, cgrs);
 	if (res) {
 		spin_lock(&affine_mask_lock);
 		cpumask_set_cpu(config->public_cfg.cpu, &affine_mask);
 		affine_channels[config->public_cfg.cpu] =
 			config->public_cfg.channel;
+		affine_portals[config->public_cfg.cpu] = portal;
 		spin_unlock(&affine_mask_lock);
 	}
 	return res;
 }
 
-
 /* These checks are BUG_ON()s because the driver is already supposed to avoid
  * these cases. */
-struct qman_portal *qman_create_affine_slave(struct qman_portal *redirect)
+struct qman_portal *qman_create_affine_slave(struct qman_portal *redirect,
+								int cpu)
 {
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
-	struct qman_portal *p = get_raw_affine_portal();
+	struct qman_portal *p;
+	p = &per_cpu(qman_affine_portal, cpu);
 	/* Check that we don't already have our own portal */
 	BUG_ON(p->config);
 	/* Check that we aren't already slaving to another portal */
@@ -581,15 +583,13 @@ struct qman_portal *qman_create_affine_slave(struct qman_portal *redirect)
 	/* These are the only elements to initialise when redirecting */
 	p->irq_sources = 0;
 	p->sharing_redirect = redirect;
-	put_affine_portal();
+	affine_portals[cpu] = p;
 	return p;
 #else
 	BUG();
 	return NULL;
 #endif
 }
-
-
 
 void qman_destroy_portal(struct qman_portal *qm)
 {
@@ -598,7 +598,6 @@ void qman_destroy_portal(struct qman_portal *qm)
 
 	/* Stop dequeues on the portal */
 	qm_dqrr_sdqcr_set(&qm->p, 0);
-
 
 	/* NB we do this to "quiesce" EQCR. If we add enqueue-completions or
 	 * something related to QM_PIRQ_EQCI, this may need fixing.
@@ -657,10 +656,16 @@ const struct qm_portal_config *qman_destroy_affine_portal(void)
 	return pcfg;
 }
 
+const struct qman_portal_config *qman_p_get_portal_config(struct qman_portal *p)
+{
+	return &p->config->public_cfg;
+}
+EXPORT_SYMBOL(qman_p_get_portal_config);
+
 const struct qman_portal_config *qman_get_portal_config(void)
 {
 	struct qman_portal *p = get_affine_portal();
-	const struct qman_portal_config *ret = &p->config->public_cfg;
+	const struct qman_portal_config *ret = qman_p_get_portal_config(p);
 	put_affine_portal();
 	return ret;
 }
@@ -716,7 +721,6 @@ static u32 __poll_portal_slow(struct qman_portal *p, u32 is)
 		 * state change.
 		 */
 		qm_isr_status_clear(&p->p, QM_PIRQ_CSCI);
-
 		qm_mc_start(&p->p);
 		qm_mc_commit(&p->p, QM_MCC_VERB_QUERYCONGESTION);
 		while (!(mcr = qm_mc_result(&p->p)))
@@ -871,7 +875,6 @@ mr_loop:
 mr_done:
 		qm_mr_cci_consume(&p->p, num);
 	}
-
 	/*
 	 * QM_PIRQ_CSCI/CCSCI has already been cleared, as part of its specific
 	 * processing. If that interrupt source has meanwhile been re-asserted,
@@ -997,30 +1000,36 @@ u32 qman_irqsource_get(void)
 }
 EXPORT_SYMBOL(qman_irqsource_get);
 
-int qman_irqsource_add(u32 bits __maybe_unused)
+int qman_p_irqsource_add(struct qman_portal *p, u32 bits __maybe_unused)
 {
-	struct qman_portal *p = get_raw_affine_portal();
-	int ret = 0;
+	__maybe_unused unsigned long irqflags;
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
 	if (p->sharing_redirect)
-		ret = -EINVAL;
+		return -EINVAL;
 	else
 #endif
 	{
-		__maybe_unused unsigned long irqflags;
 		PORTAL_IRQ_LOCK(p, irqflags);
 		set_bits(bits & QM_PIRQ_VISIBLE, &p->irq_sources);
 		qm_isr_enable_write(&p->p, p->irq_sources);
 		PORTAL_IRQ_UNLOCK(p, irqflags);
 	}
+	return 0;
+}
+EXPORT_SYMBOL(qman_p_irqsource_add);
+
+int qman_irqsource_add(u32 bits __maybe_unused)
+{
+	struct qman_portal *p = get_raw_affine_portal();
+	int ret;
+	ret = qman_p_irqsource_add(p, bits);
 	put_affine_portal();
 	return ret;
 }
 EXPORT_SYMBOL(qman_irqsource_add);
 
-int qman_irqsource_remove(u32 bits)
+int qman_p_irqsource_remove(struct qman_portal *p, u32 bits)
 {
-	struct qman_portal *p = get_raw_affine_portal();
 	__maybe_unused unsigned long irqflags;
 	u32 ier;
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
@@ -1046,8 +1055,17 @@ int qman_irqsource_remove(u32 bits)
 	 * data-dependency, ie. to protect against re-ordering. */
 	qm_isr_status_clear(&p->p, ~ier);
 	PORTAL_IRQ_UNLOCK(p, irqflags);
-	put_affine_portal();
 	return 0;
+}
+EXPORT_SYMBOL(qman_p_irqsource_remove);
+
+int qman_irqsource_remove(u32 bits)
+{
+	struct qman_portal *p = get_raw_affine_portal();
+	int ret;
+	ret = qman_p_irqsource_remove(p, bits);
+	put_affine_portal();
+	return ret;
 }
 EXPORT_SYMBOL(qman_irqsource_remove);
 
@@ -1072,10 +1090,16 @@ u16 qman_affine_channel(int cpu)
 }
 EXPORT_SYMBOL(qman_affine_channel);
 
-int qman_poll_dqrr(unsigned int limit)
+void *qman_get_affine_portal(int cpu)
 {
-	struct qman_portal *p = get_poll_portal();
+	return affine_portals[cpu];
+}
+EXPORT_SYMBOL(qman_affine_portal);
+
+int qman_p_poll_dqrr(struct qman_portal *p, unsigned int limit)
+{
 	int ret;
+
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
 	if (unlikely(p->sharing_redirect))
 		ret = -EINVAL;
@@ -1085,14 +1109,22 @@ int qman_poll_dqrr(unsigned int limit)
 		BUG_ON(p->irq_sources & QM_PIRQ_DQRI);
 		ret = __poll_portal_fast(p, limit);
 	}
+	return ret;
+}
+EXPORT_SYMBOL(qman_p_poll_dqrr);
+
+int qman_poll_dqrr(unsigned int limit)
+{
+	struct qman_portal *p = get_poll_portal();
+	int ret;
+	ret = qman_p_poll_dqrr(p, limit);
 	put_poll_portal();
 	return ret;
 }
 EXPORT_SYMBOL(qman_poll_dqrr);
 
-u32 qman_poll_slow(void)
+u32 qman_p_poll_slow(struct qman_portal *p)
 {
-	struct qman_portal *p = get_poll_portal();
 	u32 ret;
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
 	if (unlikely(p->sharing_redirect))
@@ -1104,18 +1136,26 @@ u32 qman_poll_slow(void)
 		ret = __poll_portal_slow(p, is);
 		qm_isr_status_clear(&p->p, ret);
 	}
+	return ret;
+}
+EXPORT_SYMBOL(qman_p_poll_slow);
+
+u32 qman_poll_slow(void)
+{
+	struct qman_portal *p = get_poll_portal();
+	u32 ret;
+	ret = qman_p_poll_slow(p);
 	put_poll_portal();
 	return ret;
 }
 EXPORT_SYMBOL(qman_poll_slow);
 
 /* Legacy wrapper */
-void qman_poll(void)
+void qman_p_poll(struct qman_portal *p)
 {
-	struct qman_portal *p = get_poll_portal();
 #ifdef CONFIG_FSL_DPA_PORTAL_SHARE
 	if (unlikely(p->sharing_redirect))
-		goto done;
+		return;
 #endif
 	if ((~p->irq_sources) & QM_PIRQ_SLOW) {
 		if (!(p->slowpoll--)) {
@@ -1130,73 +1170,114 @@ void qman_poll(void)
 	}
 	if ((~p->irq_sources) & QM_PIRQ_DQRI)
 		__poll_portal_fast(p, CONFIG_FSL_QMAN_POLL_LIMIT);
-#ifdef CONFIG_FSL_DPA_PORTAL_SHARE
-done:
-#endif
+}
+EXPORT_SYMBOL(qman_p_poll);
+
+void qman_poll(void)
+{
+	struct qman_portal *p = get_poll_portal();
+	qman_p_poll(p);
 	put_poll_portal();
 }
 EXPORT_SYMBOL(qman_poll);
 
+void qman_p_stop_dequeues(struct qman_portal *p)
+{
+	qman_stop_dequeues_ex(p);
+}
+EXPORT_SYMBOL(qman_p_stop_dequeues);
+
 void qman_stop_dequeues(void)
 {
 	struct qman_portal *p = get_affine_portal();
-	qman_stop_dequeues_ex(p);
+	qman_p_stop_dequeues(p);
 	put_affine_portal();
 }
 EXPORT_SYMBOL(qman_stop_dequeues);
 
-void qman_start_dequeues(void)
+void qman_p_start_dequeues(struct qman_portal *p)
 {
-	struct qman_portal *p = get_affine_portal();
 	unsigned long irqflags __maybe_unused;
 	PORTAL_IRQ_LOCK(p, irqflags);
 	DPA_ASSERT(p->dqrr_disable_ref > 0);
 	if (!(--p->dqrr_disable_ref))
 		qm_dqrr_set_maxfill(&p->p, DQRR_MAXFILL);
 	PORTAL_IRQ_UNLOCK(p, irqflags);
+}
+EXPORT_SYMBOL(qman_p_start_dequeues);
+
+void qman_start_dequeues(void)
+{
+	struct qman_portal *p = get_affine_portal();
+	qman_p_start_dequeues(p);
 	put_affine_portal();
 }
 EXPORT_SYMBOL(qman_start_dequeues);
 
-void qman_static_dequeue_add(u32 pools)
+void qman_p_static_dequeue_add(struct qman_portal *p, u32 pools)
 {
 	unsigned long irqflags __maybe_unused;
-	struct qman_portal *p = get_affine_portal();
 	PORTAL_IRQ_LOCK(p, irqflags);
 	pools &= p->config->public_cfg.pools;
 	p->sdqcr |= pools;
 	qm_dqrr_sdqcr_set(&p->p, p->sdqcr);
 	PORTAL_IRQ_UNLOCK(p, irqflags);
+}
+EXPORT_SYMBOL(qman_p_static_dequeue_add);
+
+void qman_static_dequeue_add(u32 pools)
+{
+	struct qman_portal *p = get_affine_portal();
+	qman_p_static_dequeue_add(p, pools);
 	put_affine_portal();
 }
 EXPORT_SYMBOL(qman_static_dequeue_add);
 
-void qman_static_dequeue_del(u32 pools)
+void qman_p_static_dequeue_del(struct qman_portal *p, u32 pools)
 {
-	struct qman_portal *p = get_affine_portal();
 	unsigned long irqflags __maybe_unused;
 	PORTAL_IRQ_LOCK(p, irqflags);
 	pools &= p->config->public_cfg.pools;
 	p->sdqcr &= ~pools;
 	qm_dqrr_sdqcr_set(&p->p, p->sdqcr);
 	PORTAL_IRQ_UNLOCK(p, irqflags);
+}
+EXPORT_SYMBOL(qman_p_static_dequeue_del);
+
+void qman_static_dequeue_del(u32 pools)
+{
+	struct qman_portal *p = get_affine_portal();
+	qman_p_static_dequeue_del(p, pools);
 	put_affine_portal();
 }
 EXPORT_SYMBOL(qman_static_dequeue_del);
 
+u32 qman_p_static_dequeue_get(struct qman_portal *p)
+{
+	return p->sdqcr;
+}
+EXPORT_SYMBOL(qman_p_static_dequeue_get);
+
 u32 qman_static_dequeue_get(void)
 {
 	struct qman_portal *p = get_affine_portal();
-	u32 ret = p->sdqcr;
+	u32 ret = qman_p_static_dequeue_get(p);
 	put_affine_portal();
 	return ret;
 }
 EXPORT_SYMBOL(qman_static_dequeue_get);
 
+void qman_p_dca(struct qman_portal *p, struct qm_dqrr_entry *dq,
+						int park_request)
+{
+	qm_dqrr_cdc_consume_1ptr(&p->p, dq, park_request);
+}
+EXPORT_SYMBOL(qman_p_dca);
+
 void qman_dca(struct qm_dqrr_entry *dq, int park_request)
 {
 	struct qman_portal *p = get_affine_portal();
-	qm_dqrr_cdc_consume_1ptr(&p->p, dq, park_request);
+	qman_p_dca(p, dq, park_request);
 	put_affine_portal();
 }
 EXPORT_SYMBOL(qman_dca);
@@ -1368,9 +1449,6 @@ int qman_init_fq(struct qman_fq *fq, u32 flags, struct qm_mcc_initfq *opts)
 		return -EINVAL;
 #endif
 	if (opts && (opts->we_mask & QM_INITFQ_WE_OAC)) {
-		/* OAC not supported on rev1.0 */
-		if (unlikely(qman_ip_rev == QMAN_REV10))
-			return -EINVAL;
 		/* And can't be set at the same time as TDTHRESH */
 		if (opts->we_mask & QM_INITFQ_WE_TDTHRESH)
 			return -EINVAL;
@@ -1726,7 +1804,9 @@ int qman_query_fq_np(struct qman_fq *fq, struct qm_mcr_queryfq_np *np)
 		*np = mcr->queryfq_np;
 	PORTAL_IRQ_UNLOCK(p, irqflags);
 	put_affine_portal();
-	if (res != QM_MCR_RESULT_OK)
+	if (res == QM_MCR_RESULT_ERR_FQID)
+		return -ERANGE;
+	else if (res != QM_MCR_RESULT_OK)
 		return -EIO;
 	return 0;
 }
@@ -1849,30 +1929,49 @@ int qman_query_congestion(struct qm_mcr_querycongestion *congestion)
 EXPORT_SYMBOL(qman_query_congestion);
 
 /* internal function used as a wait_event() expression */
-static int set_vdqcr(struct qman_portal **p, struct qman_fq *fq, u32 vdqcr)
+static int set_p_vdqcr(struct qman_portal *p, struct qman_fq *fq, u32 vdqcr)
 {
 	unsigned long irqflags __maybe_unused;
 	int ret = -EBUSY;
-	*p = get_affine_portal();
-	PORTAL_IRQ_LOCK(*p, irqflags);
-	if (!(*p)->vdqcr_owned) {
+	PORTAL_IRQ_LOCK(p, irqflags);
+	if (!p->vdqcr_owned) {
 		FQLOCK(fq);
 		if (fq_isset(fq, QMAN_FQ_STATE_VDQCR))
 			goto escape;
 		fq_set(fq, QMAN_FQ_STATE_VDQCR);
 		FQUNLOCK(fq);
-		(*p)->vdqcr_owned = fq;
+		p->vdqcr_owned = fq;
 		ret = 0;
 	}
 escape:
-	PORTAL_IRQ_UNLOCK(*p, irqflags);
+	PORTAL_IRQ_UNLOCK(p, irqflags);
 	if (!ret)
-		qm_dqrr_vdqcr_set(&(*p)->p, vdqcr);
+		qm_dqrr_vdqcr_set(&p->p, vdqcr);
+	return ret;
+}
+
+static int set_vdqcr(struct qman_portal **p, struct qman_fq *fq, u32 vdqcr)
+{
+	int ret;
+	*p = get_affine_portal();
+	ret = set_p_vdqcr(*p, fq, vdqcr);
 	put_affine_portal();
 	return ret;
 }
 
 #ifdef CONFIG_FSL_DPA_CAN_WAIT
+static int wait_p_vdqcr_start(struct qman_portal *p, struct qman_fq *fq,
+				u32 vdqcr, u32 flags)
+{
+	int ret = 0;
+	if (flags & QMAN_VOLATILE_FLAG_WAIT_INT)
+		ret = wait_event_interruptible(affine_queue,
+				!(ret = set_p_vdqcr(p, fq, vdqcr)));
+	else
+		wait_event(affine_queue, !(ret = set_p_vdqcr(p, fq, vdqcr)));
+	return ret;
+}
+
 static int wait_vdqcr_start(struct qman_portal **p, struct qman_fq *fq,
 				u32 vdqcr, u32 flags)
 {
@@ -1885,6 +1984,46 @@ static int wait_vdqcr_start(struct qman_portal **p, struct qman_fq *fq,
 	return ret;
 }
 #endif
+
+int qman_p_volatile_dequeue(struct qman_portal *p, struct qman_fq *fq,
+					u32 flags __maybe_unused, u32 vdqcr)
+{
+	int ret;
+
+	if ((fq->state != qman_fq_state_parked) &&
+			(fq->state != qman_fq_state_retired))
+		return -EINVAL;
+	if (vdqcr & QM_VDQCR_FQID_MASK)
+		return -EINVAL;
+	if (fq_isset(fq, QMAN_FQ_STATE_VDQCR))
+		return -EBUSY;
+	vdqcr = (vdqcr & ~QM_VDQCR_FQID_MASK) | fq->fqid;
+#ifdef CONFIG_FSL_DPA_CAN_WAIT
+	if (flags & QMAN_VOLATILE_FLAG_WAIT)
+		ret = wait_p_vdqcr_start(p, fq, vdqcr, flags);
+	else
+#endif
+		ret = set_p_vdqcr(p, fq, vdqcr);
+	if (ret)
+		return ret;
+	/* VDQCR is set */
+#ifdef CONFIG_FSL_DPA_CAN_WAIT
+	if (flags & QMAN_VOLATILE_FLAG_FINISH) {
+		if (flags & QMAN_VOLATILE_FLAG_WAIT_INT)
+			/* NB: don't propagate any error - the caller wouldn't
+			 * know whether the VDQCR was issued or not. A signal
+			 * could arrive after returning anyway, so the caller
+			 * can check signal_pending() if that's an issue. */
+			wait_event_interruptible(affine_queue,
+				!fq_isset(fq, QMAN_FQ_STATE_VDQCR));
+		else
+			wait_event(affine_queue,
+				!fq_isset(fq, QMAN_FQ_STATE_VDQCR));
+	}
+#endif
+	return 0;
+}
+EXPORT_SYMBOL(qman_p_volatile_dequeue);
 
 int qman_volatile_dequeue(struct qman_fq *fq, u32 flags __maybe_unused,
 				u32 vdqcr)
@@ -1964,7 +2103,7 @@ void qman_set_dc_ern(qman_cb_dc_ern handler, int affine)
 }
 EXPORT_SYMBOL(qman_set_dc_ern);
 
-static inline struct qm_eqcr_entry *try_eq_start(struct qman_portal **p,
+static inline struct qm_eqcr_entry *try_p_eq_start(struct qman_portal *p,
 					unsigned long *irqflags __maybe_unused,
 					struct qman_fq *fq,
 					const struct qm_fd *fd,
@@ -1972,32 +2111,41 @@ static inline struct qm_eqcr_entry *try_eq_start(struct qman_portal **p,
 {
 	struct qm_eqcr_entry *eq;
 	u8 avail;
-
-	*p = get_affine_portal();
-	PORTAL_IRQ_LOCK(*p, (*irqflags));
+	PORTAL_IRQ_LOCK(p, (*irqflags));
 #ifdef CONFIG_FSL_DPA_CAN_WAIT_SYNC
 	if (unlikely((flags & QMAN_ENQUEUE_FLAG_WAIT) &&
 			(flags & QMAN_ENQUEUE_FLAG_WAIT_SYNC))) {
-		if ((*p)->eqci_owned) {
-			PORTAL_IRQ_UNLOCK(*p, (*irqflags));
-			put_affine_portal();
+		if (p->eqci_owned) {
+			PORTAL_IRQ_UNLOCK(p, (*irqflags));
 			return NULL;
 		}
-		(*p)->eqci_owned = fq;
+		p->eqci_owned = fq;
 	}
 #endif
-	avail = qm_eqcr_get_avail(&(*p)->p);
-	if (avail < 2)
-		update_eqcr_ci(*p, avail);
-	eq = qm_eqcr_start(&(*p)->p);
+	if (p->use_eqcr_ci_stashing) {
+		/*
+		 * The stashing case is easy, only update if we need to in
+		 * order to try and liberate ring entries.
+		 */
+		eq = qm_eqcr_start_stash(&p->p);
+	} else {
+		/*
+		 * The non-stashing case is harder, need to prefetch ahead of
+		 * time.
+		 */
+		avail = qm_eqcr_get_avail(&p->p);
+		if (avail < 2)
+			update_eqcr_ci(p, avail);
+		eq = qm_eqcr_start_no_stash(&p->p);
+	}
+
 	if (unlikely(!eq)) {
 #ifdef CONFIG_FSL_DPA_CAN_WAIT_SYNC
 		if (unlikely((flags & QMAN_ENQUEUE_FLAG_WAIT) &&
 				(flags & QMAN_ENQUEUE_FLAG_WAIT_SYNC)))
-			(*p)->eqci_owned = NULL;
+			p->eqci_owned = NULL;
 #endif
-		PORTAL_IRQ_UNLOCK(*p, (*irqflags));
-		put_affine_portal();
+		PORTAL_IRQ_UNLOCK(p, (*irqflags));
 		return NULL;
 	}
 	if (flags & QMAN_ENQUEUE_FLAG_DCA)
@@ -2011,34 +2159,21 @@ static inline struct qm_eqcr_entry *try_eq_start(struct qman_portal **p,
 #else
 	eq->tag = (u32)(uintptr_t)fq;
 #endif
-	/* From p4080 rev1 -> rev2, the FD struct's address went from 48-bit to
-	 * 40-bit but rev1 chips will still interpret it as 48-bit, meaning we
-	 * have to scrub the upper 8-bits, just in case the user left noise in
-	 * there. Doing this selectively via a run-time check of the h/w
-	 * revision (as we do for most errata, for example) is too slow in this
-	 * critical path code. The most inexpensive way to handle this is just
-	 * to reinterpret the FD as 4 32-bit words and to mask the first word
-	 * appropriately, irrespecitive of the h/w revision. The struct fields
-	 * corresponding to this word are;
-	 *     u8 dd:2;
-	 *     u8 liodn_offset:6;
-	 *     u8 bpid;
-	 *     u8 eliodn_offset:4;
-	 *     u8 __reserved:4;
-	 *     u8 addr_hi;
-	 * So we mask this word with 0xc0ff00ff, which implicitly scrubs out
-	 * liodn_offset, eliodn_offset, and __reserved - the latter two fields
-	 * are interpreted as the 8 msbits of the 48-bit address in the case of
-	 * rev1.
-	 */
-	{
-		const u32 *src = (const u32 *)fd;
-		u32 *dest = (u32 *)&eq->fd;
-		dest[0] = src[0] & 0xc0ff00ff;
-		dest[1] = src[1];
-		dest[2] = src[2];
-		dest[3] = src[3];
-	}
+	eq->fd = *fd;
+	return eq;
+}
+
+static inline struct qm_eqcr_entry *try_eq_start(struct qman_portal **p,
+					unsigned long *irqflags __maybe_unused,
+					struct qman_fq *fq,
+					const struct qm_fd *fd,
+					u32 flags)
+{
+	struct qm_eqcr_entry *eq;
+	*p = get_affine_portal();
+	eq = try_p_eq_start(*p, irqflags, fq, fd, flags);
+	if (!eq)
+		put_affine_portal();
 	return eq;
 }
 
@@ -2069,7 +2204,66 @@ static noinline struct qm_eqcr_entry *wait_eq_start(struct qman_portal **p,
 			(eq = __wait_eq_start(p, irqflags, fq, fd, flags)));
 	return eq;
 }
+static noinline struct qm_eqcr_entry *__wait_p_eq_start(struct qman_portal *p,
+					unsigned long *irqflags __maybe_unused,
+					struct qman_fq *fq,
+					const struct qm_fd *fd,
+					u32 flags)
+{
+	struct qm_eqcr_entry *eq = try_p_eq_start(p, irqflags, fq, fd, flags);
+	if (!eq)
+		qm_eqcr_set_ithresh(&p->p, EQCR_ITHRESH);
+	return eq;
+}
+static noinline struct qm_eqcr_entry *wait_p_eq_start(struct qman_portal *p,
+					unsigned long *irqflags __maybe_unused,
+					struct qman_fq *fq,
+					const struct qm_fd *fd,
+					u32 flags)
+{
+	struct qm_eqcr_entry *eq;
+	if (flags & QMAN_ENQUEUE_FLAG_WAIT_INT)
+		wait_event_interruptible(affine_queue,
+			(eq = __wait_p_eq_start(p, irqflags, fq, fd, flags)));
+	else
+		wait_event(affine_queue,
+			(eq = __wait_p_eq_start(p, irqflags, fq, fd, flags)));
+	return eq;
+}
 #endif
+
+int qman_p_enqueue(struct qman_portal *p, struct qman_fq *fq,
+				const struct qm_fd *fd, u32 flags)
+{
+	struct qm_eqcr_entry *eq;
+	unsigned long irqflags __maybe_unused;
+
+#ifdef CONFIG_FSL_DPA_CAN_WAIT
+	if (flags & QMAN_ENQUEUE_FLAG_WAIT)
+		eq = wait_p_eq_start(p, &irqflags, fq, fd, flags);
+	else
+#endif
+	eq = try_p_eq_start(p, &irqflags, fq, fd, flags);
+	if (!eq)
+		return -EBUSY;
+	/* Note: QM_EQCR_VERB_INTERRUPT == QMAN_ENQUEUE_FLAG_WAIT_SYNC */
+	qm_eqcr_pvb_commit(&p->p, QM_EQCR_VERB_CMD_ENQUEUE |
+		(flags & (QM_EQCR_VERB_COLOUR_MASK | QM_EQCR_VERB_INTERRUPT)));
+	/* Factor the below out, it's used from qman_enqueue_orp() too */
+	PORTAL_IRQ_UNLOCK(p, irqflags);
+#ifdef CONFIG_FSL_DPA_CAN_WAIT_SYNC
+	if (unlikely((flags & QMAN_ENQUEUE_FLAG_WAIT) &&
+			(flags & QMAN_ENQUEUE_FLAG_WAIT_SYNC))) {
+		if (flags & QMAN_ENQUEUE_FLAG_WAIT_INT)
+			wait_event_interruptible(affine_queue,
+					(p->eqci_owned != fq));
+		else
+			wait_event(affine_queue, (p->eqci_owned != fq));
+	}
+#endif
+	return 0;
+}
+EXPORT_SYMBOL(qman_p_enqueue);
 
 int qman_enqueue(struct qman_fq *fq, const struct qm_fd *fd, u32 flags)
 {
@@ -2104,6 +2298,54 @@ int qman_enqueue(struct qman_fq *fq, const struct qm_fd *fd, u32 flags)
 	return 0;
 }
 EXPORT_SYMBOL(qman_enqueue);
+
+int qman_p_enqueue_orp(struct qman_portal *p, struct qman_fq *fq,
+				const struct qm_fd *fd, u32 flags,
+				struct qman_fq *orp, u16 orp_seqnum)
+{
+	struct qm_eqcr_entry *eq;
+	unsigned long irqflags __maybe_unused;
+
+#ifdef CONFIG_FSL_DPA_CAN_WAIT
+	if (flags & QMAN_ENQUEUE_FLAG_WAIT)
+		eq = wait_p_eq_start(p, &irqflags, fq, fd, flags);
+	else
+#endif
+	eq = try_p_eq_start(p, &irqflags, fq, fd, flags);
+	if (!eq)
+		return -EBUSY;
+	/* Process ORP-specifics here */
+	if (flags & QMAN_ENQUEUE_FLAG_NLIS)
+		orp_seqnum |= QM_EQCR_SEQNUM_NLIS;
+	else {
+		orp_seqnum &= ~QM_EQCR_SEQNUM_NLIS;
+		if (flags & QMAN_ENQUEUE_FLAG_NESN)
+			orp_seqnum |= QM_EQCR_SEQNUM_NESN;
+		else
+			/* No need to check 4 QMAN_ENQUEUE_FLAG_HOLE */
+			orp_seqnum &= ~QM_EQCR_SEQNUM_NESN;
+	}
+	eq->seqnum = orp_seqnum;
+	eq->orp = orp->fqid;
+	/* Note: QM_EQCR_VERB_INTERRUPT == QMAN_ENQUEUE_FLAG_WAIT_SYNC */
+	qm_eqcr_pvb_commit(&p->p, QM_EQCR_VERB_ORP |
+		((flags & (QMAN_ENQUEUE_FLAG_HOLE | QMAN_ENQUEUE_FLAG_NESN)) ?
+				0 : QM_EQCR_VERB_CMD_ENQUEUE) |
+		(flags & (QM_EQCR_VERB_COLOUR_MASK | QM_EQCR_VERB_INTERRUPT)));
+	PORTAL_IRQ_UNLOCK(p, irqflags);
+#ifdef CONFIG_FSL_DPA_CAN_WAIT_SYNC
+	if (unlikely((flags & QMAN_ENQUEUE_FLAG_WAIT) &&
+			(flags & QMAN_ENQUEUE_FLAG_WAIT_SYNC))) {
+		if (flags & QMAN_ENQUEUE_FLAG_WAIT_INT)
+			wait_event_interruptible(affine_queue,
+					(p->eqci_owned != fq));
+		else
+			wait_event(affine_queue, (p->eqci_owned != fq));
+	}
+#endif
+	return 0;
+}
+EXPORT_SYMBOL(qman_p_enqueue_orp);
 
 int qman_enqueue_orp(struct qman_fq *fq, const struct qm_fd *fd, u32 flags,
 			struct qman_fq *orp, u16 orp_seqnum)
@@ -2154,6 +2396,86 @@ int qman_enqueue_orp(struct qman_fq *fq, const struct qm_fd *fd, u32 flags,
 }
 EXPORT_SYMBOL(qman_enqueue_orp);
 
+int qman_p_enqueue_precommit(struct qman_portal *p, struct qman_fq *fq,
+				const struct qm_fd *fd, u32 flags,
+				qman_cb_precommit cb, void *cb_arg)
+{
+	struct qm_eqcr_entry *eq;
+	unsigned long irqflags __maybe_unused;
+
+#ifdef CONFIG_FSL_DPA_CAN_WAIT
+	if (flags & QMAN_ENQUEUE_FLAG_WAIT)
+		eq = wait_p_eq_start(p, &irqflags, fq, fd, flags);
+	else
+#endif
+	eq = try_p_eq_start(p, &irqflags, fq, fd, flags);
+	if (!eq)
+		return -EBUSY;
+	/* invoke user supplied callback function before writing commit verb */
+	if (cb(cb_arg)) {
+		PORTAL_IRQ_UNLOCK(p, irqflags);
+		return -EINVAL;
+	}
+	/* Note: QM_EQCR_VERB_INTERRUPT == QMAN_ENQUEUE_FLAG_WAIT_SYNC */
+	qm_eqcr_pvb_commit(&p->p, QM_EQCR_VERB_CMD_ENQUEUE |
+		(flags & (QM_EQCR_VERB_COLOUR_MASK | QM_EQCR_VERB_INTERRUPT)));
+	/* Factor the below out, it's used from qman_enqueue_orp() too */
+	PORTAL_IRQ_UNLOCK(p, irqflags);
+#ifdef CONFIG_FSL_DPA_CAN_WAIT_SYNC
+	if (unlikely((flags & QMAN_ENQUEUE_FLAG_WAIT) &&
+			(flags & QMAN_ENQUEUE_FLAG_WAIT_SYNC))) {
+		if (flags & QMAN_ENQUEUE_FLAG_WAIT_INT)
+			wait_event_interruptible(affine_queue,
+					(p->eqci_owned != fq));
+		else
+			wait_event(affine_queue, (p->eqci_owned != fq));
+	}
+#endif
+	return 0;
+}
+EXPORT_SYMBOL(qman_p_enqueue_precommit);
+
+int qman_enqueue_precommit(struct qman_fq *fq, const struct qm_fd *fd,
+		u32 flags, qman_cb_precommit cb, void *cb_arg)
+{
+	struct qman_portal *p;
+	struct qm_eqcr_entry *eq;
+	unsigned long irqflags __maybe_unused;
+
+#ifdef CONFIG_FSL_DPA_CAN_WAIT
+	if (flags & QMAN_ENQUEUE_FLAG_WAIT)
+		eq = wait_eq_start(&p, &irqflags, fq, fd, flags);
+	else
+#endif
+	eq = try_eq_start(&p, &irqflags, fq, fd, flags);
+	if (!eq)
+		return -EBUSY;
+	/* invoke user supplied callback function before writing commit verb */
+	if (cb(cb_arg)) {
+		PORTAL_IRQ_UNLOCK(p, irqflags);
+		put_affine_portal();
+		return -EINVAL;
+	}
+	/* Note: QM_EQCR_VERB_INTERRUPT == QMAN_ENQUEUE_FLAG_WAIT_SYNC */
+	qm_eqcr_pvb_commit(&p->p, QM_EQCR_VERB_CMD_ENQUEUE |
+		(flags & (QM_EQCR_VERB_COLOUR_MASK | QM_EQCR_VERB_INTERRUPT)));
+	/* Factor the below out, it's used from qman_enqueue_orp() too */
+	PORTAL_IRQ_UNLOCK(p, irqflags);
+	put_affine_portal();
+#ifdef CONFIG_FSL_DPA_CAN_WAIT_SYNC
+	if (unlikely((flags & QMAN_ENQUEUE_FLAG_WAIT) &&
+			(flags & QMAN_ENQUEUE_FLAG_WAIT_SYNC))) {
+		if (flags & QMAN_ENQUEUE_FLAG_WAIT_INT)
+			wait_event_interruptible(affine_queue,
+					(p->eqci_owned != fq));
+		else
+			wait_event(affine_queue, (p->eqci_owned != fq));
+	}
+#endif
+	return 0;
+}
+EXPORT_SYMBOL(qman_enqueue_precommit);
+
 int qman_modify_cgr(struct qman_cgr *cgr, u32 flags,
 			struct qm_mcc_initcgr *opts)
 {
@@ -2164,14 +2486,6 @@ int qman_modify_cgr(struct qman_cgr *cgr, u32 flags,
 	u8 res;
 	u8 verb = QM_MCC_VERB_MODIFYCGR;
 
-	/* frame mode not supported on rev1.0 */
-	if (unlikely(qman_ip_rev == QMAN_REV10)) {
-		if (opts && (opts->we_mask & QM_CGR_WE_MODE) &&
-				opts->cgr.mode == QMAN_CGR_MODE_FRAME) {
-			put_affine_portal();
-			return -EIO;
-		}
-	}
 	PORTAL_IRQ_LOCK(p, irqflags);
 	mcc = qm_mc_start(&p->p);
 	if (opts)
@@ -2337,8 +2651,7 @@ int qman_delete_cgr(struct qman_cgr *cgr)
 	/* Overwrite TARG */
 	local_opts.we_mask = QM_CGR_WE_CSCN_TARG;
 	if ((qman_ip_rev & 0xFF00) >= QMAN_REV30)
-		local_opts.cgr.cscn_targ_upd_ctrl =
-			~QM_CGR_TARG_UDP_CTRL_WRITE_BIT | PORTAL_IDX(p);
+		local_opts.cgr.cscn_targ_upd_ctrl = PORTAL_IDX(p);
 	else
 		local_opts.cgr.cscn_targ = cgr_state.cgr.cscn_targ &
 							 ~(TARG_MASK(p));
@@ -3688,18 +4001,154 @@ int qman_ceetm_channel_get_group(struct qm_ceetm_channel *channel, int *group_b,
 }
 EXPORT_SYMBOL(qman_ceetm_channel_get_group);
 
-#define CQ_ELIGIBILITY_MASK(n)	(1 << (7 - n))
-#define CQ_A_ELIGIBILITY_MASK	(1 << 8)
-#define CQ_B_ELIGIBILITY_MASK	(1 << 9)
+#define GROUP_A_ELIGIBILITY_SET		(1 << 8)
+#define GROUP_B_ELIGIBILITY_SET		(1 << 9)
+#define CQ_ELIGIBILITY_SET(n)		(1 << (7 - n))
+int qman_ceetm_channel_set_group_cr_eligibility(struct qm_ceetm_channel
+				*channel, int group_b, int cre)
+{
+	struct qm_mcc_ceetm_class_scheduler_config csch_config;
+	struct qm_mcr_ceetm_class_scheduler_query csch_query;
+	int i;
+
+	if (qman_ceetm_query_class_scheduler(channel, &csch_query)) {
+		pr_err("Cannot get the channel %d scheduler setting.\n",
+						channel->idx);
+		return -EINVAL;
+	}
+	csch_config.cqcid = channel->idx;
+	csch_config.dcpid = channel->dcp_idx;
+	csch_config.gpc = csch_query.gpc;
+	for (i = 0; i < 8; i++)
+		csch_config.w[i] = csch_query.w[i];
+	csch_config.erem = csch_query.erem;
+	if (group_b)
+		csch_config.crem = (csch_query.crem & ~GROUP_B_ELIGIBILITY_SET)
+					| (cre ? GROUP_B_ELIGIBILITY_SET : 0);
+	else
+		csch_config.crem = (csch_query.crem & ~GROUP_A_ELIGIBILITY_SET)
+					| (cre ? GROUP_A_ELIGIBILITY_SET : 0);
+
+	if (qman_ceetm_configure_class_scheduler(&csch_config)) {
+		pr_err("Cannot config channel %d's scheduler with "
+			"group_%c's cr eligibility\n", channel->idx,
+			group_b ? 'b' : 'a');
+		return -EINVAL;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(qman_ceetm_channel_set_group_cr_eligibility);
+
+int qman_ceetm_channel_set_group_er_eligibility(struct qm_ceetm_channel
+				*channel, int group_b, int ere)
+{
+	struct qm_mcc_ceetm_class_scheduler_config csch_config;
+	struct qm_mcr_ceetm_class_scheduler_query csch_query;
+	int i;
+
+	if (qman_ceetm_query_class_scheduler(channel, &csch_query)) {
+		pr_err("Cannot get the channel %d scheduler setting.\n",
+						channel->idx);
+		return -EINVAL;
+	}
+	csch_config.cqcid = channel->idx;
+	csch_config.dcpid = channel->dcp_idx;
+	csch_config.gpc = csch_query.gpc;
+	for (i = 0; i < 8; i++)
+		csch_config.w[i] = csch_query.w[i];
+	csch_config.crem = csch_query.crem;
+	if (group_b)
+		csch_config.erem = (csch_query.erem & ~GROUP_B_ELIGIBILITY_SET)
+					| (ere ? GROUP_B_ELIGIBILITY_SET : 0);
+	else
+		csch_config.erem = (csch_query.erem & ~GROUP_A_ELIGIBILITY_SET)
+					| (ere ? GROUP_A_ELIGIBILITY_SET : 0);
+
+	if (qman_ceetm_configure_class_scheduler(&csch_config)) {
+		pr_err("Cannot config channel %d's scheduler with "
+			"group_%c's er eligibility\n", channel->idx,
+			group_b ? 'b' : 'a');
+		return -EINVAL;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(qman_ceetm_channel_set_group_er_eligibility);
+
+int qman_ceetm_channel_set_cq_cr_eligibility(struct qm_ceetm_channel *channel,
+						unsigned int idx, u16 cre)
+{
+	struct qm_mcc_ceetm_class_scheduler_config csch_config;
+	struct qm_mcr_ceetm_class_scheduler_query csch_query;
+	int i;
+
+	if (idx > 7) {
+		pr_err("CQ index is out of range\n");
+		return -EINVAL;
+	}
+	if (qman_ceetm_query_class_scheduler(channel, &csch_query)) {
+		pr_err("Cannot get the channel %d scheduler setting.\n",
+						channel->idx);
+		return -EINVAL;
+	}
+	csch_config.cqcid = channel->idx;
+	csch_config.dcpid = channel->dcp_idx;
+	csch_config.gpc = csch_query.gpc;
+	for (i = 0; i < 8; i++)
+		csch_config.w[i] = csch_query.w[i];
+	csch_config.erem = csch_query.erem;
+	csch_config.crem = (csch_query.crem & ~CQ_ELIGIBILITY_SET(idx)) |
+					(cre ? CQ_ELIGIBILITY_SET(idx) : 0);
+	if (qman_ceetm_configure_class_scheduler(&csch_config)) {
+		pr_err("Cannot config channel scheduler to set "
+			"cr eligibility mask for CQ#%d\n", idx);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(qman_ceetm_channel_set_cq_cr_eligibility);
+
+int qman_ceetm_channel_set_cq_er_eligibility(struct qm_ceetm_channel *channel,
+						unsigned int idx, u16 ere)
+{
+	struct qm_mcc_ceetm_class_scheduler_config csch_config;
+	struct qm_mcr_ceetm_class_scheduler_query csch_query;
+	int i;
+
+	if (idx > 7) {
+		pr_err("CQ index is out of range\n");
+		return -EINVAL;
+	}
+	if (qman_ceetm_query_class_scheduler(channel, &csch_query)) {
+		pr_err("Cannot get the channel %d scheduler setting.\n",
+						channel->idx);
+		return -EINVAL;
+	}
+	csch_config.cqcid = channel->idx;
+	csch_config.dcpid = channel->dcp_idx;
+	csch_config.gpc = csch_query.gpc;
+	for (i = 0; i < 8; i++)
+		csch_config.w[i] = csch_query.w[i];
+	csch_config.crem = csch_query.crem;
+	csch_config.erem = (csch_query.erem & ~CQ_ELIGIBILITY_SET(idx)) |
+					(ere ? CQ_ELIGIBILITY_SET(idx) : 0);
+	if (qman_ceetm_configure_class_scheduler(&csch_config)) {
+		pr_err("Cannot config channel scheduler to set "
+			"er eligibility mask for CQ#%d\n", idx);
+		return -EINVAL;
+	}
+	return 0;
+}
+EXPORT_SYMBOL(qman_ceetm_channel_set_cq_er_eligibility);
+
 int qman_ceetm_cq_claim(struct qm_ceetm_cq **cq,
 		struct qm_ceetm_channel *channel, unsigned int idx,
 		struct qm_ceetm_ccg *ccg)
 {
 	struct qm_ceetm_cq *p;
 	struct qm_mcc_ceetm_cq_config cq_config;
-	struct qm_mcc_ceetm_class_scheduler_config csch_config;
-	struct qm_mcr_ceetm_class_scheduler_query csch_query_result;
-	int i;
 
 	if (idx > 7) {
 		pr_err("The independent class queue id is out of range\n");
@@ -3736,29 +4185,6 @@ int qman_ceetm_cq_claim(struct qm_ceetm_cq **cq,
 		}
 	}
 
-	if (channel->shaper_enable) {
-		if (qman_ceetm_query_class_scheduler(channel,
-						&csch_query_result)) {
-			pr_err("Can't query channel#%d!\n", channel->idx);
-			return -EINVAL;
-		}
-		csch_config.cqcid = channel->idx;
-		csch_config.dcpid = channel->dcp_idx;
-		csch_config.crem = csch_query_result.crem |
-						CQ_ELIGIBILITY_MASK(idx);
-		csch_config.erem = csch_query_result.erem |
-						CQ_ELIGIBILITY_MASK(idx);
-		csch_config.gpc = csch_query_result.gpc;
-		for (i = 0; i < 8; i++)
-			csch_config.w[i] = csch_query_result.w[i];
-
-		if (qman_ceetm_configure_class_scheduler(&csch_config)) {
-			pr_err("Can't config channel scheduler to set"
-					" eligibility mask for CQ#%d\n", idx);
-			return -EINVAL;
-		}
-	}
-
 	*cq = p;
 	return 0;
 }
@@ -3770,9 +4196,6 @@ int qman_ceetm_cq_claim_A(struct qm_ceetm_cq **cq,
 {
 	struct qm_ceetm_cq *p;
 	struct qm_mcc_ceetm_cq_config cq_config;
-	struct qm_mcc_ceetm_class_scheduler_config csch_config;
-	struct qm_mcr_ceetm_class_scheduler_query csch_query_result;
-	int i;
 
 	if ((idx < 7) || (idx > 15)) {
 		pr_err("This grouped class queue id is out of range\n");
@@ -3808,28 +4231,6 @@ int qman_ceetm_cq_claim_A(struct qm_ceetm_cq **cq,
 			return -EINVAL;
 		}
 	}
-
-	if (channel->shaper_enable) {
-		if (qman_ceetm_query_class_scheduler(channel,
-						&csch_query_result)) {
-			pr_err("Can't query channel#%d!\n", channel->idx);
-			return -EINVAL;
-		}
-		csch_config.cqcid = channel->idx;
-		csch_config.dcpid = channel->dcp_idx;
-		csch_config.crem = csch_query_result.crem |
-						CQ_A_ELIGIBILITY_MASK;
-		csch_config.erem = csch_query_result.erem |
-						CQ_A_ELIGIBILITY_MASK;
-		csch_config.gpc = csch_query_result.gpc;
-		for (i = 0; i < 8; i++)
-			csch_config.w[i] = csch_query_result.w[i];
-		if (qman_ceetm_configure_class_scheduler(&csch_config)) {
-			pr_err("Can't config channel scheduler to set"
-					" eligibility mask for CQ#%d\n", idx);
-			return -EINVAL;
-		}
-	}
 	*cq = p;
 	return 0;
 }
@@ -3841,9 +4242,6 @@ int qman_ceetm_cq_claim_B(struct qm_ceetm_cq **cq,
 {
 	struct qm_ceetm_cq *p;
 	struct qm_mcc_ceetm_cq_config cq_config;
-	struct qm_mcc_ceetm_class_scheduler_config csch_config;
-	struct qm_mcr_ceetm_class_scheduler_query csch_query_result;
-	int i;
 
 	if ((idx < 11) || (idx > 15)) {
 		pr_err("This grouped class queue id is out of range\n");
@@ -3877,28 +4275,6 @@ int qman_ceetm_cq_claim_B(struct qm_ceetm_cq **cq,
 			pr_err("Can't configure the CQ#%d with CCGRID#%d\n",
 					 idx, ccg->idx);
 		return -EINVAL;
-		}
-	}
-
-	if (channel->shaper_enable) {
-		if (qman_ceetm_query_class_scheduler(channel,
-						&csch_query_result)) {
-			pr_err("Can't query channel#%d!\n", channel->idx);
-			return -EINVAL;
-		}
-		csch_config.cqcid = channel->idx;
-		csch_config.dcpid = channel->dcp_idx;
-		csch_config.crem = csch_query_result.crem |
-							 CQ_B_ELIGIBILITY_MASK;
-		csch_config.erem = csch_query_result.erem |
-							CQ_B_ELIGIBILITY_MASK;
-		csch_config.gpc = csch_query_result.gpc;
-		for (i = 0; i < 8; i++)
-			csch_config.w[i] = csch_query_result.w[i];
-		if (qman_ceetm_configure_class_scheduler(&csch_config)) {
-			pr_err("Can't config channel scheduler to set"
-					" eligibility mask for CQ#%d\n", idx);
-			return -EINVAL;
 		}
 	}
 	*cq = p;
@@ -4231,9 +4607,11 @@ int qman_ceetm_ccg_release(struct qm_ceetm_ccg *ccg)
 	list_for_each_entry(i, &p->ccgr_cbs[ccg->parent->dcp_idx], cb_node)
 		if ((i->idx == ccg->idx) && i->cb)
 			goto release_lock;
+	config_opts.ccgrid = CEETM_CCGR_CM_CONFIGURE |
+				(ccg->parent->idx << 4) | ccg->idx;
+	config_opts.dcpid = ccg->parent->dcp_idx;
 	config_opts.we_mask = QM_CCGR_WE_CSCN_TUPD;
-	config_opts.cm_config.cscn_tupd =
-			~QM_CGR_TARG_UDP_CTRL_WRITE_BIT | PORTAL_IDX(p);
+	config_opts.cm_config.cscn_tupd = PORTAL_IDX(p);
 
 	ret = qman_ceetm_configure_ccgr(&config_opts);
 release_lock:
@@ -4509,10 +4887,18 @@ int qman_shutdown_fq(u32 fqid)
 	struct qman_portal *p;
 	unsigned long irqflags __maybe_unused;
 	int ret;
+	struct qm_portal *low_p;
 	p = get_affine_portal();
 	PORTAL_IRQ_LOCK(p, irqflags);
-	ret = qm_shutdown_fq(&p->p, fqid);
+	low_p = &p->p;
+	ret = qm_shutdown_fq(&low_p, 1, fqid);
 	PORTAL_IRQ_UNLOCK(p, irqflags);
 	put_affine_portal();
 	return ret;
+}
+
+const struct qm_portal_config *qman_get_qm_portal_config(
+						struct qman_portal *portal)
+{
+	return portal->sharing_redirect ? NULL : portal->config;
 }

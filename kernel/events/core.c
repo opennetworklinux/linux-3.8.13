@@ -633,6 +633,7 @@ void perf_pmu_disable(struct pmu *pmu)
 	if (!(*count)++)
 		pmu->pmu_disable(pmu);
 }
+EXPORT_SYMBOL_GPL(perf_pmu_disable);
 
 void perf_pmu_enable(struct pmu *pmu)
 {
@@ -640,6 +641,7 @@ void perf_pmu_enable(struct pmu *pmu)
 	if (!--(*count))
 		pmu->pmu_enable(pmu);
 }
+EXPORT_SYMBOL_GPL(perf_pmu_enable);
 
 static DEFINE_PER_CPU(struct list_head, rotation_list);
 
@@ -3425,6 +3427,7 @@ void perf_event_update_userpage(struct perf_event *event)
 unlock:
 	rcu_read_unlock();
 }
+EXPORT_SYMBOL_GPL(perf_event_update_userpage);
 
 static int perf_mmap_fault(struct vm_area_struct *vma, struct vm_fault *vmf)
 {
@@ -4934,6 +4937,7 @@ int perf_event_overflow(struct perf_event *event,
 {
 	return __perf_event_overflow(event, 1, data, regs);
 }
+EXPORT_SYMBOL_GPL(perf_event_overflow);
 
 /*
  * Generic software event infrastructure
@@ -6052,6 +6056,7 @@ free_pdc:
 	free_percpu(pmu->pmu_disable_count);
 	goto unlock;
 }
+EXPORT_SYMBOL_GPL(perf_pmu_register);
 
 void perf_pmu_unregister(struct pmu *pmu)
 {
@@ -6073,6 +6078,7 @@ void perf_pmu_unregister(struct pmu *pmu)
 	put_device(pmu->dev);
 	free_pmu_context(pmu);
 }
+EXPORT_SYMBOL_GPL(perf_pmu_unregister);
 
 struct pmu *perf_init_event(struct perf_event *event)
 {

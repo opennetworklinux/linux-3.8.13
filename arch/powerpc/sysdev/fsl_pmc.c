@@ -16,11 +16,13 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/export.h>
+#include <linux/fsl_devices.h>
 #include <linux/suspend.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/of_platform.h>
 #include <linux/pm.h>
+
 #include <asm/switch_to.h>
 #include <asm/cacheflush.h>
 
@@ -164,15 +166,24 @@ static int pmc_suspend_enter(suspend_state_t state)
 static int pmc_suspend_valid(suspend_state_t state)
 {
 	if (((pmc_flag & PMC_SLEEP) && (state == PM_SUSPEND_STANDBY)) ||
-	    ((pmc_flag & PMC_DEEP_SLEEP) && (state == PM_SUSPEND_MEM)))
+	    ((pmc_flag & PMC_DEEP_SLEEP) && (state == PM_SUSPEND_MEM))) {
+		set_pm_suspend_state(state);
+
 		return 1;
+	}
 	else
 		return 0;
 }
 
+static void pmc_suspend_end(void)
+{
+	set_pm_suspend_state(PM_SUSPEND_ON);
+}
+
 static const struct platform_suspend_ops pmc_suspend_ops = {
-	.valid = pmc_suspend_valid,
-	.enter = pmc_suspend_enter,
+	.valid	= pmc_suspend_valid,
+	.enter	= pmc_suspend_enter,
+	.end	= pmc_suspend_end,
 };
 
 static int pmc_probe(struct platform_device *pdev)
@@ -191,6 +202,7 @@ static int pmc_probe(struct platform_device *pdev)
 		pmc_flag |= PMC_DEEP_SLEEP | PMC_LOSSLESS;
 
 	suspend_set_ops(&pmc_suspend_ops);
+	set_pm_suspend_state(PM_SUSPEND_ON);
 
 	pr_info("Freescale PMC driver\n");
 	return 0;

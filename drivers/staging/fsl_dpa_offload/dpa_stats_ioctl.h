@@ -116,14 +116,14 @@ struct compat_ioc_dpa_offld_lookup_key {
 
 struct dpa_stats_compat_cnt_classif_tbl {
 	int td;
-	struct compat_ioc_dpa_offld_lookup_key key;
+	compat_uptr_t key;
 	unsigned int cnt_sel;
 };
 
 struct dpa_stats_compat_cnt_classif_node {
 	compat_uptr_t cc_node;
 	enum dpa_stats_classif_node_type ccnode_type;
-	struct compat_ioc_dpa_offld_lookup_key key;
+	compat_uptr_t key;
 	unsigned int cnt_sel;
 };
 
@@ -202,15 +202,15 @@ struct compat_ioc_dpa_stats_cls_cnt_params {
 };
 
 struct compat_ioc_dpa_offld_lookup_key_pair {
-	struct compat_ioc_dpa_offld_lookup_key first_key;
-	struct compat_ioc_dpa_offld_lookup_key second_key;
+	compat_uptr_t first_key;
+	compat_uptr_t second_key;
 };
 
 struct dpa_stats_compat_cls_member_params {
 	enum dpa_stats_cls_member_type type;
 	union {
-		struct compat_ioc_dpa_offld_lookup_key key;
-		struct compat_ioc_dpa_offld_lookup_key_pair pair;
+		compat_uptr_t key;
+		compat_uptr_t pair;
 		int sa_id;
 	};
 };
@@ -240,11 +240,13 @@ struct compat_ioc_dpa_stats_cnts_reset_params {
 };
 
 struct compat_dpa_stats_event_params {
-	int		dpa_stats_id;
-	unsigned int	storage_area_offset;
-	unsigned int	cnts_written;
-	int		bytes_written;
-	compat_uptr_t request_done;
+	int			dpa_stats_id;
+	unsigned int		storage_area_offset;
+	unsigned int		cnts_written;
+	int			bytes_written;
+	compat_uptr_t		us_cnt_ids;
+	unsigned int		cnt_ids_len;
+	compat_uptr_t		request_done;
 };
 #endif
 #define DPA_STATS_IOC_MAGIC				0xde

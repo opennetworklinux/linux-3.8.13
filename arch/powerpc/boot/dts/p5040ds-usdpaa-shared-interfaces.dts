@@ -123,7 +123,7 @@
 		 * at this interface, the ethernet driver will do kmap_atomic/kunmap_atomic
 		 * for that frame. */
 		ethernet@11 {
-			compatible = "fsl,p5040-dpa-ethernet", "fsl,dpa-ethernet";
+			compatible = "fsl,p5040-dpa-ethernet-shared", "fsl,dpa-ethernet-shared";
 			fsl,bman-buffer-pools = <&bp16>;
 			fsl,qman-frame-queues-rx = <0x66 1 0x67 1 0x2000 3>;
 			fsl,qman-frame-queues-tx = <0 1 0 1 0x3000 8>;
@@ -134,7 +134,7 @@
 		 * On receiving frame at this interface, the ethernet driver will do
 		 * kmap_atomic/kunmap_atomic for that frame. */
 		ethernet@16 {
-			compatible = "fsl,p5040-dpa-ethernet", "fsl,dpa-ethernet";
+			compatible = "fsl,p5040-dpa-ethernet-macless", "fsl,dpa-ethernet-macless";
 			fsl,bman-buffer-pools = <&bp17>;
 			fsl,qman-frame-queues-rx = <4000 8>;
 			fsl,qman-frame-queues-tx = <4008 8>;

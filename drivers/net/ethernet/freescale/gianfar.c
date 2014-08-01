@@ -90,6 +90,7 @@
 
 #include <asm/io.h>
 #include <asm/reg.h>
+#include <asm/mpc85xx.h>
 #include <asm/irq.h>
 #include <asm/uaccess.h>
 #include <linux/module.h>
@@ -902,6 +903,9 @@ static int gfar_of_init(struct platform_device *ofdev, struct net_device **pdev)
 				     FSL_GIANFAR_DEV_HAS_EXTENDED_HASH |
 				     FSL_GIANFAR_DEV_HAS_36BIT_ADDR;
 
+	/* default pause frame settings */
+	priv->rx_pause = priv->tx_pause = true;
+
 	ctype = of_get_property(np, "phy-connection-type", NULL);
 
 	/* We only care about rgmii-id.  The rest are autodetected */
@@ -1113,13 +1117,15 @@ static void gfar_init_filer_table(struct gfar_private *priv)
 	}
 }
 
-static void gfar_detect_errata(struct gfar_private *priv)
+static void __gfar_detect_errata_83xx(struct gfar_private *priv)
 {
-	struct device *dev = &priv->ofdev->dev;
 	unsigned int pvr = mfspr(SPRN_PVR);
 	unsigned int svr = mfspr(SPRN_SVR);
 	unsigned int mod = (svr >> 16) & 0xfff6; /* w/o E suffix */
 	unsigned int rev = svr & 0xffff;
+
+	/* no plans to fix */
+	priv->errata |= GFAR_ERRATA_A002;
 
 	/* MPC8313 Rev 2.0 and higher; All MPC837x */
 	if ((pvr == 0x80850010 && mod == 0x80b0 && rev >= 0x0020) ||
@@ -1131,15 +1137,33 @@ static void gfar_detect_errata(struct gfar_private *priv)
 	    (pvr == 0x80861010 && (mod & 0xfff9) == 0x80c0))
 		priv->errata |= GFAR_ERRATA_76;
 
-	/* MPC8313 and MPC837x all rev */
-	if ((pvr == 0x80850010 && mod == 0x80b0) ||
-	    (pvr == 0x80861010 && (mod & 0xfff9) == 0x80c0))
-		priv->errata |= GFAR_ERRATA_A002;
-
-	/* MPC8313 Rev < 2.0, MPC8548 rev 2.0 */
-	if ((pvr == 0x80850010 && mod == 0x80b0 && rev < 0x0020) ||
-	    (pvr == 0x80210020 && mod == 0x8030 && rev == 0x0020))
+	/* MPC8313 Rev < 2.0 */
+	if (pvr == 0x80850010 && mod == 0x80b0 && rev < 0x0020)
 		priv->errata |= GFAR_ERRATA_12;
+}
+
+static void __gfar_detect_errata_85xx(struct gfar_private *priv)
+{
+	unsigned int svr = mfspr(SPRN_SVR);
+
+	if ((SVR_SOC_VER(svr) == SVR_8548) && (SVR_REV(svr) == 0x20))
+		priv->errata |= GFAR_ERRATA_12;
+	if (((SVR_SOC_VER(svr) == SVR_P2020) && (SVR_REV(svr) < 0x20)) ||
+	    ((SVR_SOC_VER(svr) == SVR_P2010) && (SVR_REV(svr) < 0x20)))
+		priv->errata |= GFAR_ERRATA_76; /* aka eTSEC 20 */
+}
+
+static void gfar_detect_errata(struct gfar_private *priv)
+{
+	struct device *dev = &priv->ofdev->dev;
+
+	/* no plans to fix */
+	priv->errata |= GFAR_ERRATA_A002;
+
+	if (pvr_version_is(PVR_VER_E500V1) || pvr_version_is(PVR_VER_E500V2))
+		__gfar_detect_errata_85xx(priv);
+	else /* non-mpc85xx parts, i.e. e300 core based */
+		__gfar_detect_errata_83xx(priv);
 
 	if (priv->errata)
 		dev_info(dev, "enabled errata workarounds, flags: 0x%x\n",
@@ -1153,6 +1177,7 @@ static void gfar_init_recycle(struct gfar_private *priv)
 
 	rec->buff_size = priv->rx_buffer_size + RXBUF_ALIGNMENT;
 	skb_queue_head_init(&rec->recycle_q);
+	rec->local = NULL;
 
 	if (!gfar_skb_recycling_en)
 		goto disable_rec;
@@ -1231,8 +1256,10 @@ static int gfar_probe(struct platform_device *ofdev)
 	/* We need to delay at least 3 TX clocks */
 	udelay(2);
 
-	tempval = (MACCFG1_TX_FLOW | MACCFG1_RX_FLOW);
-	gfar_write(&regs->maccfg1, tempval);
+	/* the soft reset bit is not self-resetting, so we need to
+	 * clear it before resuming normal operation
+	 */
+	gfar_write(&regs->maccfg1, 0);
 
 	/* Initialize MACCFG2. */
 	tempval = MACCFG2_INIT_SETTINGS;
@@ -1931,7 +1958,7 @@ static int __gfar_is_rx_idle(struct gfar_private *priv)
 	/* Normaly TSEC should not hang on GRS commands, so we should
 	 * actually wait for IEVENT_GRSC flag.
 	 */
-	if (likely(!gfar_has_errata(priv, GFAR_ERRATA_A002)))
+	if (!gfar_has_errata(priv, GFAR_ERRATA_A002))
 		return 0;
 
 	/* Read the eTSEC register at offset 0xD1C. If bits 7-14 are
@@ -2140,6 +2167,9 @@ static void free_skb_recycle_q(struct gfar_priv_recycle *rec)
 
 	while ((skb = skb_dequeue(&rec->recycle_q)) != NULL)
 		dev_kfree_skb_any(skb);
+
+	if (!rec->local)
+		return;
 
 	for_each_possible_cpu(cpu) {
 		struct gfar_priv_recycle_local *local;
@@ -3208,6 +3238,10 @@ static void gfar_timeout(struct net_device *dev)
 
 static void gfar_align_skb(struct sk_buff *skb)
 {
+#ifdef CONFIG_AS_FASTPATH
+	/* Reserving the extra headroom required for ASF IPSec processing */
+	skb_reserve(skb, EXTRA_HEADROOM);
+#endif
 	/* We need the data buffer to be aligned properly.  We will reserve
 	 * as many bytes as needed to align the data properly
 	 */
@@ -3473,7 +3507,12 @@ static struct sk_buff *gfar_alloc_skb(struct net_device *dev)
 	struct gfar_private *priv = netdev_priv(dev);
 	struct sk_buff *skb;
 
+#ifndef CONFIG_AS_FASTPATH
 	skb = netdev_alloc_skb(dev, priv->rx_buffer_size + RXBUF_ALIGNMENT);
+#else
+	skb = netdev_alloc_skb(dev, priv->rx_buffer_size + RXBUF_ALIGNMENT +
+		EXTRA_HEADROOM);
+#endif
 	if (!skb)
 		return NULL;
 
@@ -3489,6 +3528,9 @@ static struct sk_buff *gfar_new_skb(struct gfar_private *priv)
 	struct gfar_priv_recycle_local *local;
 	struct sk_buff_head *recycle_q;
 	int cpu;
+
+	if (unlikely(!rec->local))
+		goto alloc;
 
 	cpu = get_cpu();
 	local = per_cpu_ptr(rec->local, cpu);
@@ -3976,6 +4018,25 @@ static irqreturn_t gfar_interrupt(int irq, void *grp_id)
 	return IRQ_HANDLED;
 }
 
+/* toggle pause frame settings */
+void gfar_configure_pause(struct gfar_private *priv, bool en)
+{
+	struct gfar __iomem *regs = priv->gfargrp[0].regs;
+	u32 tempval = gfar_read(&regs->maccfg1);
+
+	if (en && priv->rx_pause)
+		tempval |= MACCFG1_RX_FLOW;
+	else
+		tempval &= ~MACCFG1_RX_FLOW;
+
+	if (en && priv->tx_pause)
+		tempval |= MACCFG1_TX_FLOW;
+	else
+		tempval &= ~MACCFG1_TX_FLOW;
+
+	gfar_write(&regs->maccfg1, tempval);
+}
+
 /* Called every time the controller might need to be made
  * aware of new link state.  The PHY code conveys this
  * information through variables in the phydev structure, and this
@@ -4006,6 +4067,9 @@ static void adjust_link(struct net_device *dev)
 				tempval &= ~(MACCFG2_FULL_DUPLEX);
 			else
 				tempval |= MACCFG2_FULL_DUPLEX;
+
+			/* update pause frame settings */
+			gfar_configure_pause(priv, !!phydev->duplex);
 
 			priv->oldduplex = phydev->duplex;
 		}

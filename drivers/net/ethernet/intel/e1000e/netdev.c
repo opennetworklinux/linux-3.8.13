@@ -6047,6 +6047,7 @@ static int e1000_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (aspm_disable_flag)
 		e1000e_disable_aspm(pdev, aspm_disable_flag);
 
+	pcibios_setup_device(pdev);
 	err = pci_enable_device_mem(pdev);
 	if (err)
 		return err;

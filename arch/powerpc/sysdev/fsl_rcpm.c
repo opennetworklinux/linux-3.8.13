@@ -10,6 +10,7 @@
  */
 #include <linux/types.h>
 #include <linux/errno.h>
+#include <linux/fsl_devices.h>
 #include <linux/suspend.h>
 #include <linux/device.h>
 #include <linux/delay.h>
@@ -93,14 +94,22 @@ static int rcpm_v2_suspend_enter(suspend_state_t state)
 
 static int rcpm_suspend_valid(suspend_state_t state)
 {
-	if (state == PM_SUSPEND_STANDBY)
+	if (state == PM_SUSPEND_STANDBY) {
+		set_pm_suspend_state(state);
 		return 1;
+	}
 	else
 		return 0;
 }
 
+static void rcpm_suspend_end(void)
+{
+	set_pm_suspend_state(PM_SUSPEND_ON);
+}
+
 static struct platform_suspend_ops rcpm_suspend_ops = {
 	.valid = rcpm_suspend_valid,
+	.end = rcpm_suspend_end,
 };
 
 static int rcpm_probe(struct platform_device *pdev)
@@ -122,6 +131,7 @@ static int rcpm_probe(struct platform_device *pdev)
 	}
 
 	suspend_set_ops(&rcpm_suspend_ops);
+	set_pm_suspend_state(PM_SUSPEND_ON);
 
 	dev_info(&pdev->dev, "Freescale RCPM driver\n");
 	return 0;

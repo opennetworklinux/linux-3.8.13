@@ -48,8 +48,8 @@
 #include "fm_common.h"
 #include "fsl_fman_sp.h"
 
-#if (DPAA_VERSION >= 11)
 
+#if (DPAA_VERSION >= 11)
 static t_Error CheckParamsGeneratedInternally(t_FmVspEntry *p_FmVspEntry)
 {
     t_Error err = E_OK;
@@ -61,6 +61,7 @@ static t_Error CheckParamsGeneratedInternally(t_FmVspEntry *p_FmVspEntry)
     return err;
 
 }
+
 static t_Error CheckParams(t_FmVspEntry *p_FmVspEntry)
 {
     t_Error err = E_OK;
@@ -538,18 +539,18 @@ t_Error FM_VSP_Init(t_Handle h_FmVsp)
     fm_vsp_params.buf_margins = (struct fman_sp_buf_margins*)&p_FmVspEntry->bufMargins;
     fm_vsp_params.int_context = (struct fman_sp_int_context_data_copy*)&p_FmVspEntry->intContext;
 
-   /*no check on err - it was checked earlier*/
+    /* no check on err - it was checked earlier */
     FmVSPGetAbsoluteProfileId(p_FmVspEntry->h_Fm,
-                                   p_FmVspEntry->portType,
-                                   p_FmVspEntry->portId,
-                                   p_FmVspEntry->relativeProfileId,
-                                   &absoluteProfileId);
-
+                              p_FmVspEntry->portType,
+                              p_FmVspEntry->portId,
+                              p_FmVspEntry->relativeProfileId,
+                              &absoluteProfileId);
 
     ASSERT_COND(p_FmVspEntry->p_FmSpRegsBase);
     ASSERT_COND(fm_vsp_params.int_context);
     ASSERT_COND(fm_vsp_params.buf_margins);
     ASSERT_COND(IN_RANGE(0, absoluteProfileId, FM_VSP_MAX_NUM_OF_ENTRIES));
+
     /* Set all registers related to VSP */
     fman_vsp_init(p_FmVspEntry->p_FmSpRegsBase, absoluteProfileId, &fm_vsp_params,FM_PORT_MAX_NUM_OF_EXT_POOLS, BM_MAX_NUM_OF_POOLS, FM_MAX_NUM_OF_PFC_PRIORITIES);
 

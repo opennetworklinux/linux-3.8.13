@@ -228,6 +228,10 @@ int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 				spr_val);
 		break;
 
+	case SPRN_PWRMGTCR0:
+		/* Guest relies on host power management configurations */
+		break;
+
 	/* extra exceptions */
 	case SPRN_IVOR32:
 		vcpu->arch.ivor[BOOKE_IRQPRIO_SPE_UNAVAIL] = spr_val;
@@ -332,6 +336,10 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
 		break;
 
 	case SPRN_MMUCSR0:
+		*spr_val = 0;
+		break;
+
+	case SPRN_PWRMGTCR0:
 		*spr_val = 0;
 		break;
 

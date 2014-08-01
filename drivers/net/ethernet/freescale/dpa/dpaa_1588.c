@@ -31,6 +31,7 @@
 #include <linux/udp.h>
 #include <asm/div64.h>
 #include "dpaa_eth.h"
+#include "dpaa_eth_common.h"
 #include "dpaa_1588.h"
 
 static int dpa_ptp_init_circ(struct dpa_ptp_circ_buf *ptp_buf, u32 size)
@@ -166,8 +167,7 @@ static int dpa_ptp_find_and_remove(struct dpa_ptp_circ_buf *ptp_buf,
 	return 0;
 }
 
-/*
- * Parse the PTP packets
+/* Parse the PTP packets
  *
  * The PTP header can be found in an IPv4 packet, IPv6 patcket or in
  * an IEEE802.3 ethernet frame. This function returns the position of
@@ -178,30 +178,25 @@ static u8 *dpa_ptp_parse_packet(struct sk_buff *skb, u16 *eth_type)
 	u8 *pos = skb->data + ETH_ALEN + ETH_ALEN;
 	u8 *ptp_loc = NULL;
 	u8 msg_type;
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 	u32 access_len = ETH_ALEN + ETH_ALEN + DPA_ETYPE_LEN;
-#endif
 	struct iphdr *iph;
 	struct udphdr *udph;
 	struct ipv6hdr *ipv6h;
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 	/* when we can receive S/G frames we need to check the data we want to
-	 * access is in the linear skb buffer */
+	 * access is in the linear skb buffer
+	 */
 	if (!pskb_may_pull(skb, access_len))
 		return NULL;
-#endif
 
 	*eth_type = *((u16 *)pos);
 
 	/* Check if inner tag is here */
 	if (*eth_type == ETH_P_8021Q) {
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 		access_len += DPA_VLAN_TAG_LEN;
 
 		if (!pskb_may_pull(skb, access_len))
 			return NULL;
-#endif
 
 		pos += DPA_VLAN_TAG_LEN;
 		*eth_type = *((u16 *)pos);
@@ -214,10 +209,8 @@ static u8 *dpa_ptp_parse_packet(struct sk_buff *skb, u16 *eth_type)
 	case ETH_P_1588:
 		ptp_loc = pos;
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 		if (!pskb_may_pull(skb, access_len + PTP_OFFS_MSG_TYPE + 1))
 			return NULL;
-#endif
 
 		msg_type = *((u8 *)(ptp_loc + PTP_OFFS_MSG_TYPE)) & 0xf;
 		if ((msg_type == PTP_MSGTYPE_SYNC)
@@ -229,23 +222,19 @@ static u8 *dpa_ptp_parse_packet(struct sk_buff *skb, u16 *eth_type)
 	/* Transport of PTP over IPv4 */
 	case ETH_P_IP:
 		iph = (struct iphdr *)pos;
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 		access_len += sizeof(struct iphdr);
 
 		if (!pskb_may_pull(skb, access_len))
 			return NULL;
-#endif
 
 		if (ntohs(iph->protocol) != IPPROTO_UDP)
 			return NULL;
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 		access_len += iph->ihl * 4 - sizeof(struct iphdr) +
 				sizeof(struct udphdr);
 
 		if (!pskb_may_pull(skb, access_len))
 			return NULL;
-#endif
 
 		pos += iph->ihl * 4;
 		udph = (struct udphdr *)pos;
@@ -257,9 +246,7 @@ static u8 *dpa_ptp_parse_packet(struct sk_buff *skb, u16 *eth_type)
 	case ETH_P_IPV6:
 		ipv6h = (struct ipv6hdr *)pos;
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 		access_len += sizeof(struct ipv6hdr) + sizeof(struct udphdr);
-#endif
 
 		if (ntohs(ipv6h->nexthdr) != IPPROTO_UDP)
 			return NULL;
@@ -304,10 +291,8 @@ static int dpa_ptp_store_stamp(const struct dpa_priv_s *priv,
 		return -EINVAL;
 	}
 
-#ifdef CONFIG_FSL_DPAA_ETH_SG_SUPPORT
 	if (!pskb_may_pull(skb, ptp_loc - skb->data + PTP_OFFS_SEQ_ID + 2))
 		return -EINVAL;
-#endif
 
 	ptp_data->ident.version = *(ptp_loc + PTP_OFFS_VER_PTP) & 0xf;
 	ptp_data->ident.msg_type = *(ptp_loc + PTP_OFFS_MSG_TYPE) & 0xf;
@@ -390,18 +375,20 @@ static void dpa_set_fiper_alarm(struct dpa_ptp_tsu *tsu,
 	u64 tmp, fiper;
 
 	if (mac_dev->fm_rtc_disable)
-		mac_dev->fm_rtc_disable(tsu->dpa_priv->net_dev);
+		mac_dev->fm_rtc_disable(get_fm_handle(tsu->dpa_priv->net_dev));
 
 	/* TMR_FIPER1 will pulse every second after ALARM1 expired */
 	tmp = (u64)cnt_time->sec * NANOSEC_PER_SECOND + (u64)cnt_time->nsec;
 	fiper = NANOSEC_PER_SECOND - DPA_PTP_NOMINAL_FREQ_PERIOD_NS;
 	if (mac_dev->fm_rtc_set_alarm)
-		mac_dev->fm_rtc_set_alarm(tsu->dpa_priv->net_dev, 0, tmp);
+		mac_dev->fm_rtc_set_alarm(get_fm_handle(tsu->dpa_priv->net_dev),
+					  0, tmp);
 	if (mac_dev->fm_rtc_set_fiper)
-		mac_dev->fm_rtc_set_fiper(tsu->dpa_priv->net_dev, 0, fiper);
+		mac_dev->fm_rtc_set_fiper(get_fm_handle(tsu->dpa_priv->net_dev),
+					  0, fiper);
 
 	if (mac_dev->fm_rtc_enable)
-		mac_dev->fm_rtc_enable(tsu->dpa_priv->net_dev);
+		mac_dev->fm_rtc_enable(get_fm_handle(tsu->dpa_priv->net_dev));
 }
 
 static void dpa_get_curr_cnt(struct dpa_ptp_tsu *tsu,
@@ -412,7 +399,8 @@ static void dpa_get_curr_cnt(struct dpa_ptp_tsu *tsu,
 	u32 mod;
 
 	if (mac_dev->fm_rtc_get_cnt)
-		mac_dev->fm_rtc_get_cnt(tsu->dpa_priv->net_dev, &tmp);
+		mac_dev->fm_rtc_get_cnt(get_fm_handle(tsu->dpa_priv->net_dev),
+					&tmp);
 
 	mod = do_div(tmp, NANOSEC_PER_SECOND);
 	curr_time->sec = (u32)tmp;
@@ -428,7 +416,8 @@ static void dpa_set_1588cnt(struct dpa_ptp_tsu *tsu,
 	tmp = (u64)cnt_time->sec * NANOSEC_PER_SECOND + (u64)cnt_time->nsec;
 
 	if (mac_dev->fm_rtc_set_cnt)
-		mac_dev->fm_rtc_set_cnt(tsu->dpa_priv->net_dev, tmp);
+		mac_dev->fm_rtc_set_cnt(get_fm_handle(tsu->dpa_priv->net_dev),
+					tmp);
 
 	/* Restart fiper two seconds later */
 	cnt_time->sec += 2;
@@ -442,7 +431,8 @@ static void dpa_get_drift(struct dpa_ptp_tsu *tsu, u32 *addend)
 	u32 drift;
 
 	if (mac_dev->fm_rtc_get_drift)
-		mac_dev->fm_rtc_get_drift(tsu->dpa_priv->net_dev, &drift);
+		mac_dev->fm_rtc_get_drift(get_fm_handle(tsu->dpa_priv->net_dev),
+					  &drift);
 
 	*addend = drift;
 }
@@ -452,7 +442,8 @@ static void dpa_set_drift(struct dpa_ptp_tsu *tsu, u32 addend)
 	struct mac_device *mac_dev = tsu->dpa_priv->mac_dev;
 
 	if (mac_dev->fm_rtc_set_drift)
-		mac_dev->fm_rtc_set_drift(tsu->dpa_priv->net_dev, addend);
+		mac_dev->fm_rtc_set_drift(get_fm_handle(tsu->dpa_priv->net_dev),
+					  addend);
 }
 
 static void dpa_flush_timestamp(struct dpa_ptp_tsu *tsu)
@@ -479,16 +470,16 @@ int dpa_ioctl_1588(struct net_device *dev, struct ifreq *ifr, int cmd)
 	case PTP_ENBL_TXTS_IOCTL:
 		tsu->hwts_tx_en_ioctl = 1;
 		if (mac_dev->fm_rtc_enable)
-			mac_dev->fm_rtc_enable(dev);
+			mac_dev->fm_rtc_enable(get_fm_handle(dev));
 		if (mac_dev->ptp_enable)
-			mac_dev->ptp_enable(mac_dev);
+			mac_dev->ptp_enable(mac_dev->get_mac_handle(mac_dev));
 		break;
 	case PTP_DSBL_TXTS_IOCTL:
 		tsu->hwts_tx_en_ioctl = 0;
 		if (mac_dev->fm_rtc_disable)
-			mac_dev->fm_rtc_disable(dev);
+			mac_dev->fm_rtc_disable(get_fm_handle(dev));
 		if (mac_dev->ptp_disable)
-			mac_dev->ptp_disable(mac_dev);
+			mac_dev->ptp_disable(mac_dev->get_mac_handle(mac_dev));
 		break;
 	case PTP_ENBL_RXTS_IOCTL:
 		tsu->hwts_rx_en_ioctl = 1;

@@ -539,6 +539,34 @@ static int gfar_sringparam(struct net_device *dev,
 	return err;
 }
 
+static void gfar_gpauseparam(struct net_device *dev,
+			     struct ethtool_pauseparam *pause)
+{
+	struct gfar_private *priv = netdev_priv(dev);
+
+	pause->autoneg = AUTONEG_ENABLE;
+	if (priv->rx_pause)
+		pause->rx_pause = 1;
+	if (priv->tx_pause)
+		pause->tx_pause = 1;
+}
+
+static int gfar_spauseparam(struct net_device *dev,
+			    struct ethtool_pauseparam *pause)
+{
+	struct gfar_private *priv = netdev_priv(dev);
+	struct phy_device *phydev = priv->phydev;
+
+	priv->rx_pause = !!pause->rx_pause;
+	priv->tx_pause = !!pause->tx_pause;
+
+	/* update h/w settings, if link is up */
+	if (phydev && phydev->link)
+		gfar_configure_pause(priv, !!phydev->duplex);
+
+	return 0;
+}
+
 int gfar_set_features(struct net_device *dev, netdev_features_t features)
 {
 	struct gfar_private *priv = netdev_priv(dev);
@@ -1872,6 +1900,8 @@ const struct ethtool_ops gfar_ethtool_ops = {
 	.set_coalesce = gfar_scoalesce,
 	.get_ringparam = gfar_gringparam,
 	.set_ringparam = gfar_sringparam,
+	.get_pauseparam = gfar_gpauseparam,
+	.set_pauseparam = gfar_spauseparam,
 	.get_strings = gfar_gstrings,
 	.get_sset_count = gfar_sset_count,
 	.get_ethtool_stats = gfar_fill_stats,
