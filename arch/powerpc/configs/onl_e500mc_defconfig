@@ -2,7 +2,6 @@
 # Automatically generated file; DO NOT EDIT.
 # Linux/powerpc 3.8.13 Kernel Configuration
 #
-# 1 August 2014
 # CONFIG_PPC64 is not set
 
 #
@@ -86,7 +85,7 @@ CONFIG_IRQ_WORK=y
 CONFIG_EXPERIMENTAL=y
 CONFIG_INIT_ENV_ARG_LIMIT=32
 CONFIG_CROSS_COMPILE="powerpc-linux-gnu-"
-CONFIG_LOCALVERSION="-OpenNetworkLinux-e500mc"
+CONFIG_LOCALVERSION="-OpenNetworkLinux-e500mc-1.5"
 # CONFIG_LOCALVERSION_AUTO is not set
 CONFIG_DEFAULT_HOSTNAME="(none)"
 CONFIG_SWAP=y
