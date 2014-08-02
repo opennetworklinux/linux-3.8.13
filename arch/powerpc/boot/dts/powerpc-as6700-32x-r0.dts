@@ -112,7 +112,10 @@
         };
 
 		i2c@118000 {
-
+			rtc@68 {
+				compatible = "dallas,ds1672";
+				reg = <0x68>;
+			};
 		};
 
 		i2c@118100 {
