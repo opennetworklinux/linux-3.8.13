@@ -42,10 +42,9 @@
 	interrupt-parent = <&mpic>;
 
 	aliases {
-        ethernet0 = &enet0;
+        ethernet0 = &enet3;
         ethernet2 = &enet2;
-        ethernet3 = &enet3;
-		phy_sgmii_2 = &phy_sgmii_2;
+        phy_sgmii_2 = &phy_sgmii_2;
         phy_sgmii_1e = &phy_sgmii_1e;
         phy_sgmii_1 = &phy_sgmii_1;
 	};
