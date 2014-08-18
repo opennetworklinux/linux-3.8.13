@@ -34,8 +34,8 @@
 #define NUM_OF_SFP_PORT 54
 #define BIT_INDEX(i) (1ULL << (i))
 
-#define CPLD2_I2C_SELECT_NONE  0x18
-#define CPLD3_I2C_SELECT_NONE  0x1E
+#define CPLD2_I2C_SELECT_NONE  0xFF
+#define CPLD3_I2C_SELECT_NONE  0xFF
 
 static ssize_t show_status(struct device *dev, struct device_attribute *da,char *buf);
 static ssize_t set_tx_disable(struct device *dev, struct device_attribute *da,
@@ -59,7 +59,10 @@ struct as5710_54x_sfp_data {
     struct mutex        update_lock;
     char                valid;           /* !=0 if registers are valid */
     unsigned long       last_updated;    /* In jiffies */
-    u8                  active_port;
+    u8                  active_port;     /* Activated front port index
+                                          * 0 => none of the front ports are selected
+                                          * 1 ~ 54 => port N is selected
+                                          */
     char                eeprom[256];
     u64                 status[4];       /* bit0:port0, bit1:port1 and so on */
                                          /* index 0 => is_present 
@@ -67,6 +70,19 @@ struct as5710_54x_sfp_data {
                                                   2 => tx_disable
                                                   3 => rx_loss */
 };
+
+/* The table maps active port to cpld port.
+ * Array index 0 is for active port 1, 
+ * index 1 for active port 2, and so on.
+ * The array content implies cpld port index.
+ */
+static const u8 active_port_to_cpld_port_table[] = 
+{ 0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, 15, 
+ 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 
+ 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 
+ 48, 50, 52, 49, 51, 53};
+
+#define MAP_ACTIVE_PORT_TO_CPLD_PORT(active_port)  (active_port_to_cpld_port_table[active_port-1])
 
 static struct as5710_54x_sfp_data *as5710_54x_sfp_update_device(struct device *dev);             
 
@@ -104,16 +120,19 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
     struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
     struct as5710_54x_sfp_data *data = as5710_54x_sfp_update_device(dev);
     u8 val;
+    u8 cpld_port_idx;
 
     if (data->active_port == 0 || data->active_port > NUM_OF_SFP_PORT) {
         return sprintf(buf, "0\n");
     }
 
+    cpld_port_idx = MAP_ACTIVE_PORT_TO_CPLD_PORT(data->active_port);
+
     if (attr->index == SFP_IS_PRESENT) {
-        val = (data->status[attr->index] & BIT_INDEX(data->active_port-1)) ? 0 : 1;
+        val = (data->status[attr->index] & BIT_INDEX(cpld_port_idx)) ? 0 : 1;
     }
     else {
-        val = (data->status[attr->index] & BIT_INDEX(data->active_port-1)) ? 1 : 0;
+        val = (data->status[attr->index] & BIT_INDEX(cpld_port_idx)) ? 1 : 0;
     }
 
     return sprintf(buf, "%d", val);
@@ -125,7 +144,7 @@ static ssize_t set_tx_disable(struct device *dev, struct device_attribute *da,
     struct i2c_client *client = to_i2c_client(dev);
     struct as5710_54x_sfp_data *data = i2c_get_clientdata(client);
     unsigned short cpld_addr = 0;
-    u8 cpld_reg = 0, cpld_val = 0;
+    u8 cpld_reg = 0, cpld_val = 0, cpld_port_idx;
 	long disable;
 	int error;
 
@@ -140,18 +159,19 @@ static ssize_t set_tx_disable(struct device *dev, struct device_attribute *da,
     }
 
     mutex_lock(&data->update_lock);
-    cpld_addr = (data->active_port <= 24) ? 0x61 : 0x62;
-    cpld_reg  = 0xC + ((data->active_port - 1)%24)/8;
+    cpld_port_idx = MAP_ACTIVE_PORT_TO_CPLD_PORT(data->active_port);
+    cpld_addr     = (cpld_port_idx < 24) ? 0x61 : 0x62;
+    cpld_reg      = 0xC + (cpld_port_idx%24)/8;
 
     /* Update tx_disable status */
     if (disable) {
-        data->status[SFP_TX_DISABLE] |= BIT_INDEX(data->active_port-1);
+        data->status[SFP_TX_DISABLE] |= BIT_INDEX(cpld_port_idx);
     }
     else {
-        data->status[SFP_TX_DISABLE] &= ~BIT_INDEX(data->active_port-1);
+        data->status[SFP_TX_DISABLE] &= ~BIT_INDEX(cpld_port_idx);
     }
     
-    cpld_val |= data->status[SFP_TX_DISABLE] >> (8*((data->active_port-1)/8));
+    cpld_val |= data->status[SFP_TX_DISABLE] >> (8*(cpld_port_idx/8));
     accton_i2c_cpld_write(cpld_addr, cpld_reg, cpld_val);
 
     mutex_unlock(&data->update_lock);
@@ -180,7 +200,7 @@ static ssize_t set_active_port(struct device *dev, struct device_attribute *da,
     unsigned short cpld_addr;
 	long active_port;
 	int error;
-    u8 cpld_val;
+    u8 cpld_val, cpld_port_idx;
 
 	error = kstrtol(buf, 10, &active_port);
 	if (error) {
@@ -200,9 +220,10 @@ static ssize_t set_active_port(struct device *dev, struct device_attribute *da,
     accton_i2c_cpld_write(0x62, 0x2, CPLD3_I2C_SELECT_NONE);
 
     /* Set active port to CPLD */
-    if (active_port != 0) {
-        cpld_addr = (active_port <= 24) ? 0x61 : 0x62;
-        cpld_val  = (active_port <= 24) ? (active_port-1) : (active_port-25);
+    if (data->active_port != 0) {
+        cpld_port_idx = MAP_ACTIVE_PORT_TO_CPLD_PORT(data->active_port);
+        cpld_addr = (cpld_port_idx < 24) ? 0x61 : 0x62;
+        cpld_val  = (cpld_port_idx < 24) ? cpld_port_idx : (cpld_port_idx - 24);
         accton_i2c_cpld_write(cpld_addr, 0x2, cpld_val);
     }
     
@@ -246,10 +267,6 @@ static int as5710_54x_sfp_probe(struct i2c_client *client,
     }
 
     i2c_set_clientdata(client, data);
-    data->valid = 0;
-    data->active_port = 0;
-    memset(data->eeprom, 0, sizeof(data->eeprom));
-    memset(data->status, 0, sizeof(data->status));
     mutex_init(&data->update_lock);
 
     dev_info(&client->dev, "chip found\n");
@@ -315,6 +332,7 @@ static int as5710_54x_sfp_read_block(struct i2c_client *client, u8 command, u8 *
     
     if (unlikely(result < 0))
         goto abort;
+
     if (unlikely(result != data_len)) {
         result = -EIO;
         goto abort;
@@ -337,6 +355,7 @@ static struct as5710_54x_sfp_data *as5710_54x_sfp_update_device(struct device *d
         || !data->valid) {
         int status = -1;
         int i = 0, j = 0;
+        u8 cpld_port_idx;
 
         //dev_dbg(&client->dev, "Starting as5710_54x sfp update\n");        
         memset(data->status, 0, sizeof(data->status));
@@ -366,10 +385,11 @@ static struct as5710_54x_sfp_data *as5710_54x_sfp_update_device(struct device *d
         }
 
         /* Read eeprom data based on active port */
+        cpld_port_idx = MAP_ACTIVE_PORT_TO_CPLD_PORT(data->active_port);
         memset(data->eeprom, 0, sizeof(data->eeprom));
 
         /* Check if the port is present */
-        if ((data->status[SFP_IS_PRESENT] & BIT_INDEX(data->active_port-1)) == 0) {
+        if ((data->status[SFP_IS_PRESENT] & BIT_INDEX(cpld_port_idx)) == 0) {
             /* read eeprom */
             for (i = 0; i < sizeof(data->eeprom)/I2C_SMBUS_BLOCK_MAX; i++) {
                 status = as5710_54x_sfp_read_block(client, i*I2C_SMBUS_BLOCK_MAX, 
