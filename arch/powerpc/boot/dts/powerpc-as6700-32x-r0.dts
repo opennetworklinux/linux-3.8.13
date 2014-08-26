@@ -179,31 +179,31 @@
 					#size-cells = <0>;
 					reg = <2>;
 
-					as6700_32x_ac_psu1@39 {
-						compatible = "acc_as6700_32x_psu";
-						reg = <0x39>;
-					};
-					cpr_4011_4mxx_psu1@3d {
-						compatible = "cpr_4011_4mxx";
-						reg = <0x3d>;
-					};
-					as6700_32x_dc_psu1@51 {
-						compatible = "acc_as6700_32x_psu";
-						reg = <0x51>;
-					};
-
-					as6700_32x_ac_psu2@3a {
-						compatible = "acc_as6700_32x_psu";
-						reg = <0x3a>;
-					};
-					cpr_4011_4mxx_psu2@3e {
-						compatible = "cpr_4011_4mxx";
-						reg = <0x3e>;
-					};
-					as6700_32x_dc_psu2@52 {
-						compatible = "acc_as6700_32x_psu";
-						reg = <0x52>;
-					};
+                    as6700_32x_ac_psu1@3a {
+                        compatible = "acc_as6700_32x_psu";
+                        reg = <0x3a>;
+                    };
+                    cpr_4011_4mxx_psu1@3e {
+                        compatible = "cpr_4011_4mxx";
+                        reg = <0x3e>;
+                    };
+                    as6700_32x_dc_psu1@52 {
+                        compatible = "acc_as6700_32x_psu";
+                        reg = <0x52>;
+                    };
+				
+                    as6700_32x_ac_psu2@39 {
+                        compatible = "acc_as6700_32x_psu";
+                        reg = <0x39>;
+                    };
+                    cpr_4011_4mxx_psu2@3d {
+                        compatible = "cpr_4011_4mxx";
+                        reg = <0x3d>;
+                    };
+                    as6700_32x_dc_psu2@51 {
+                        compatible = "acc_as6700_32x_psu";
+                        reg = <0x51>;
+                    };
 				};
 			};
 		};
