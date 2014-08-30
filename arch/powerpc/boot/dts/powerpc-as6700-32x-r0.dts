@@ -111,7 +111,7 @@
         };
 
 		i2c@118000 {
-		    clock-frequency = <200000>; /*actual freq is about 97.66khz*/
+                        clock-frequency = <0x18000>;
 			rtc@68 {
 				compatible = "dallas,ds1672";
 				reg = <0x68>;
@@ -119,7 +119,7 @@
 		};
 
 		i2c@118100 {
-		    clock-frequency = <200000>; /*actual freq is about 97.66khz*/
+                	clock-frequency = <0x18000>;
 			accton_i2c_cpld@18 {
 				compatible = "accton_i2c_cpld";
 				reg = <0x18>;
@@ -153,13 +153,13 @@
 				reg = <0x35>;
 			};
 		};
-		
+
 		i2c@119000 {
-		    clock-frequency = <200000>; /*actual freq is about 97.66khz*/
+		    clock-frequency = <0x18000>;
 		};
-		
+
 		i2c@119100 {
-		    clock-frequency = <200000>; /*actual freq is about 97.66khz*/
+		    clock-frequency = <0x18000>;
 			pca9546@70 {
 				compatible = "nxp,pca9546";
 				reg = <0x70>;
@@ -176,7 +176,7 @@
 						reg = <0x4d>;
 					};
                 };
-        
+
 				i2c@2 {
 					#address-cells = <1>;
 					#size-cells = <0>;
