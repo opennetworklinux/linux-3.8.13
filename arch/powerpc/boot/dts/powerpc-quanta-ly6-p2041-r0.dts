@@ -1,0 +1,1011 @@
+/*
+ * P2041RDB Device Tree Source
+ *
+ * Copyright 2011-2012 Freescale Semiconductor Inc.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *     * Redistributions of source code must retain the above copyright
+ *	 notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright
+ *	 notice, this list of conditions and the following disclaimer in the
+ *	 documentation and/or other materials provided with the distribution.
+ *     * Neither the name of Freescale Semiconductor nor the
+ *	 names of its contributors may be used to endorse or promote products
+ *	 derived from this software without specific prior written permission.
+ *
+ *
+ * ALTERNATIVELY, this software may be distributed under the terms of the
+ * GNU General Public License ("GPL") as published by the Free Software
+ * Foundation, either version 2 of that License or (at your option) any
+ * later version.
+ *
+ * THIS SOFTWARE IS PROVIDED BY Freescale Semiconductor ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+ * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ * DISCLAIMED. IN NO EVENT SHALL Freescale Semiconductor BE LIABLE FOR ANY
+ * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+ * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/include/ "fsl/p2041si-pre.dtsi"
+
+/ {
+	model = "powerpc-quanta-ly6-p2041-r0";
+	compatible = "quanta,P2041RDB";
+	#address-cells = <2>;
+	#size-cells = <2>;
+	interrupt-parent = <&mpic>;
+
+	aliases {
+		ethernet0 = &enet2;
+		phy_sgmii_2 = &phy_sgmii_2;
+	};
+
+	memory {
+		device_type = "memory";
+	};
+
+	dcsr: dcsr@f00000000 {
+		ranges = <0x00000000 0xf 0x00000000 0x01008000>;
+	};
+
+	bportals: bman-portals@ff4000000 {
+		ranges = <0x0 0xf 0xf4000000 0x200000>;
+	};
+
+	qportals: qman-portals@ff4200000 {
+		ranges = <0x0 0xf 0xf4200000 0x200000>;
+	};
+
+	soc: soc@ffe000000 {
+		ranges = <0x00000000 0xf 0xfe000000 0x1000000>;
+		reg = <0xf 0xfe000000 0 0x00001000>;
+
+
+		i2c@118000 {
+			dimm@51 {
+				compatible = "at,spd";
+				reg = <0x52>;
+				read-only;
+			};
+
+			rtc@68 {
+				compatible = "dallas,ds1339";
+				reg = <0x68>;
+			};
+
+			mux-cb@71 {
+				compatible = "nxp,pca9546";
+				reg = <0x71>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				i2c@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+
+					gpio-cb-9555@20 {
+						compatible = "nxp,pca9555";
+						reg = <0x20>;
+						#gpio-cells = <2>;
+						gpio-controller;
+					};
+				};
+
+				i2c@1 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <1>;
+
+					eeprom-cb@53 {
+						compatible = "at,24c02";
+						reg = <0x53>;
+						read-only;
+					};
+				};
+
+				i2c@2 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <2>;
+
+					gpio-cb-9554@21 {
+						compatible = "nxp,pca9554";
+						reg = <0x21>;
+						#gpio-cells = <2>;
+						gpio-controller;
+					};
+				};
+
+				i2c@3 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <3>;
+				};
+			};
+
+			temp-fan@4e {
+				compatible = "quanta_ly6_hwmon";
+				reg = <0x4e>;
+			};
+
+			mux@77 {
+				compatible = "nxp,pca9548";
+				reg = <0x77>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				i2c@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+
+					mux@73 {
+						compatible = "nxp,pca9548";
+						reg = <0x73>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+
+							qsfp-eeprom-1@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-1@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+
+							qsfp-eeprom-2@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-2@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+
+							qsfp-eeprom-3@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-3@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+
+							qsfp-eeprom-4@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-4@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+
+							qsfp-eeprom-5@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-5@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+
+							qsfp-eeprom-6@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-6@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+
+							qsfp-eeprom-7@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-7@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+
+							qsfp-eeprom-8@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-8@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+					};
+				};
+
+				i2c@1 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <1>;
+
+					mux@74 {
+						compatible = "nxp,pca9548";
+						reg = <0x74>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+
+							qsfp-eeprom-9@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-9@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+
+							qsfp-eeprom-10@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-10@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+
+							qsfp-eeprom-11@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-11@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+
+							qsfp-eeprom-12@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-12@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+
+							qsfp-eeprom-13@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-13@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+
+							qsfp-eeprom-14@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-14@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+
+							qsfp-eeprom-15@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-15@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+
+							qsfp-eeprom-16@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-16@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+					};
+				};
+
+				i2c@2 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <2>;
+
+					mux@75 {
+						compatible = "nxp,pca9548";
+						reg = <0x75>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+
+							qsfp-eeprom-17@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-17@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+
+							qsfp-eeprom-18@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-18@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+
+							qsfp-eeprom-19@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-19@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+
+							qsfp-eeprom-20@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-20@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+
+							qsfp-eeprom-21@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-21@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+
+							qsfp-eeprom-22@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-22@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+
+							qsfp-eeprom-23@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-23@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+
+							qsfp-eeprom-24@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-24@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+					};
+				};
+
+				i2c@3 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <3>;
+
+					mux@76 {
+						compatible = "nxp,pca9548";
+						reg = <0x76>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+
+							qsfp-eeprom-25@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-25@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+
+							qsfp-eeprom-26@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-26@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+
+							qsfp-eeprom-27@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-27@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+
+							qsfp-eeprom-28@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-28@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+
+							qsfp-eeprom-29@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-29@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+
+							qsfp-eeprom-30@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-30@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+
+							qsfp-eeprom-31@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-31@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+
+						i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+
+							qsfp-eeprom-32@50 {
+								compatible = "at,24c02";
+								reg = <0x50>;
+								read-only;
+							};
+							qsfp-eeprom-32@51 {
+								compatible = "at,24c02";
+								reg = <0x51>;
+								read-only;
+							};
+						};
+					};
+				};
+
+				i2c@4 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <4>;
+
+					mux-cpld-2@3a {
+						compatible = "quanta_ly6_i2c_mux";
+						reg = <0x3a>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+					};
+				};
+
+				i2c@5 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <5>;
+
+					mux-cpld-3@3b {
+						compatible = "quanta_ly6_i2c_mux";
+						reg = <0x3b>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+					};
+				};
+
+				i2c@6 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <6>;
+
+					gpio-1@24 {
+						compatible = "nxp,pca9555";
+						reg = <0x24>;
+						#gpio-cells = <2>;
+						gpio-controller;
+					};
+				};
+
+				i2c@7 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <7>;
+
+					gpio-2@23 {
+						compatible = "nxp,pca9555";
+						reg = <0x23>;
+						#gpio-cells = <2>;
+						gpio-controller;
+					};
+				};
+			};
+
+			mux@72 {
+				compatible = "nxp,pca9546";
+				reg = <0x72>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				i2c@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+
+					psu-1@58 {
+						compatible = "pmbus";
+						reg = <0x58>;
+					};
+
+					psu-1@69 {
+						compatible = "pmbus";
+						reg = <0x69>;
+					};
+				};
+
+				i2c@1 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <1>;
+
+					psu-2@59 {
+						compatible = "pmbus";
+						reg = <0x59>;
+					};
+
+					psu-2@6f {
+						compatible = "pmbus";
+						reg = <0x6f>;
+					};
+				};
+
+				i2c@2 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <2>;
+
+					gpio-psu-1@26 {
+						compatible = "nxp,pca9555";
+						reg = <0x26>;
+						#gpio-cells = <2>;
+						gpio-controller;
+					};
+				};
+
+				i2c@3 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <3>;
+
+					eeprom-mb@54 {
+						compatible = "at,24c02";
+						reg = <0x54>;
+						read-only;
+					};
+				};
+			};
+		};
+
+		i2c@118100 {
+		};
+
+		usb1: usb@211000 {
+			dr_mode = "host";
+		};
+
+		fman0: fman@400000 {
+/*
+			enet0: ethernet@e0000 {
+				tbi-handle = <&tbi0>;
+				phy-handle = <&phy_sgmii_2>;
+				phy-connection-type = "sgmii";
+			};
+*/
+
+			mdio0: mdio@e1120 {
+				tbi0: tbi-phy@8 {
+					reg = <0x8>;
+					device_type = "tbi-phy";
+				};
+
+				phy_sgmii_2: ethernet-phy@5 {
+					reg = <0x5>;
+				};
+			};
+
+			enet2: ethernet@e4000 {
+				tbi-handle = <&tbi2>;
+				phy-handle = <&phy_sgmii_2>;
+				phy-connection-type = "sgmii";
+				local-mac-address = [ 00 00 00 00 00 00 ];
+			};
+
+			mdio@e5120 {
+				tbi2: tbi-phy@8 {
+					reg = <8>;
+					device_type = "tbi-phy";
+				};
+			};
+		};
+	};
+
+	rio: rapidio@ffe0c0000 {
+		reg = <0xf 0xfe0c0000 0 0x11000>;
+
+		port1 {
+			ranges = <0 0 0xc 0x20000000 0 0x10000000>;
+		};
+		port2 {
+			ranges = <0 0 0xc 0x30000000 0 0x10000000>;
+		};
+	};
+
+
+	lbc: localbus@ffe124000 {
+		reg = <0xf 0xfe124000 0 0x1000>;
+		ranges = <0 0 0xf 0xffa00000 0x00040000>;
+
+		nand@0,0 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "fsl,elbc-fcm-nand";
+			reg = <0x0 0x0 0x40000>;
+
+			partition@0 {
+				label = "uboot";
+				reg = <0x0 0x00100000>;
+				read-only;
+			};
+
+			partition@100000 {
+				label = "uboot-env";
+				reg = <0x00100000 0x00100000>;
+				read-only;
+			};
+
+			partition@200000 {
+				label = "onie";
+				reg = <0x00200000 0x00e00000>;
+				read-only;
+			};
+
+			partition@1000000 {
+				label = "open";
+				reg = <0x01000000 0x3e000000>;
+			};
+
+			partition@3f000000 {
+				label = "misc";
+				reg = <0x3f000000 0x01000000>;
+			};
+		};
+
+	};
+
+	pci0: pcie@ffe200000 {
+		reg = <0xf 0xfe200000 0 0x1000>;
+		ranges = <0x02000000 0 0xe0000000 0xc 0x00000000 0x0 0x20000000
+			  0x01000000 0 0x00000000 0xf 0xf8000000 0x0 0x00010000>;
+		pcie@0 {
+			ranges = <0x02000000 0 0xe0000000
+				  0x02000000 0 0xe0000000
+				  0 0x20000000
+
+				  0x01000000 0 0x00000000
+				  0x01000000 0 0x00000000
+				  0 0x00010000>;
+		};
+	};
+
+	pci1: pcie@ffe201000 {
+		reg = <0xf 0xfe201000 0 0x1000>;
+		ranges = <0x02000000 0x0 0xe0000000 0xc 0x20000000 0x0 0x20000000
+			  0x01000000 0x0 0x00000000 0xf 0xf8010000 0x0 0x00010000>;
+		pcie@0 {
+			ranges = <0x02000000 0 0xe0000000
+				  0x02000000 0 0xe0000000
+				  0 0x20000000
+
+				  0x01000000 0 0x00000000
+				  0x01000000 0 0x00000000
+				  0 0x00010000>;
+		};
+	};
+
+	pci2: pcie@ffe202000 {
+		reg = <0xf 0xfe202000 0 0x1000>;
+		ranges = <0x02000000 0 0xe0000000 0xc 0x40000000 0 0x20000000
+			  0x01000000 0 0x00000000 0xf 0xf8020000 0 0x00010000>;
+		pcie@0 {
+			ranges = <0x02000000 0 0xe0000000
+				  0x02000000 0 0xe0000000
+				  0 0x20000000
+
+				  0x01000000 0 0x00000000
+				  0x01000000 0 0x00000000
+				  0 0x00010000>;
+		};
+	};
+
+	fsl,dpaa {
+		compatible = "fsl,p2041-dpaa", "fsl,dpaa";
+
+		ethernet@0 {
+			compatible = "fsl,p2041-dpa-ethernet", "fsl,dpa-ethernet";
+			fsl,fman-mac = <&enet2>;
+		};
+	};
+};
+
+/include/ "fsl/quanta-ly6-p2041si-post.dtsi"
+
+/include/ "fsl/qoriq-dpaa-res1.dtsi"
