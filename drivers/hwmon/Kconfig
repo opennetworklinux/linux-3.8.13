@@ -1555,6 +1555,13 @@ config SENSORS_ACCTON_AS6700_32x_FAN
 	  This driver can also be built as a module. If so, the module will
 	  be called accton_as6700_32x_fan.
       
+config SENSORS_QUANTA_LY6_HWMON
+	tristate "Quanta LY6 hardware monitor"
+	depends on I2C
+	help
+	  If you say yes here you get support for the Quanta LY6 hardware
+	  monitor.
+
 if ACPI
 
 comment "ACPI drivers"

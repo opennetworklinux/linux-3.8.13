@@ -49,4 +49,10 @@ config I2C_MUX_PINCTRL
 	  This driver can also be built as a module. If so, the module will be
 	  called pinctrl-i2cmux.
 
+config I2C_MUX_QUANTA_LY6
+	tristate "Quanta LY6 I2C multiplexer"
+	help
+	  If you say yes here you get support for the Quanta LY6 I2C/GPIO
+	  multiplexer.
+
 endmenu

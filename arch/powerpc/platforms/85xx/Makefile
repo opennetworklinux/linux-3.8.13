@@ -27,6 +27,7 @@ obj-$(CONFIG_TWR_P102x)   += twr_p102x.o
 obj-$(CONFIG_AS6700_32X)  += as6700_32x.o corenet_ds.o
 obj-$(CONFIG_AS5700_96X)  += as5700_96x.o corenet_ds.o
 obj-$(CONFIG_AS5710_96X)  += as5710_96x.o corenet_ds.o
+obj-$(CONFIG_QUANTA_P2041_RDB)   += quanta_p2041_rdb.o corenet_ds.o
 obj-$(CONFIG_P2041_RDB)   += p2041_rdb.o corenet_ds.o
 obj-$(CONFIG_P3041_DS)    += p3041_ds.o corenet_ds.o
 obj-$(CONFIG_P4080_DS)    += p4080_ds.o corenet_ds.o
