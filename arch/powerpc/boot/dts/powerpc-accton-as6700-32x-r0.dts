@@ -35,7 +35,7 @@
 /include/ "fsl/as6700_32x-pre.dtsi"
 
 / {
-	model = "powerpc-as6700-32x-r0";
+	model = "powerpc-accton-as6700-32x-r0";
 	compatible = "accton,as6700_32x";
 	#address-cells = <2>;
 	#size-cells = <2>;
@@ -194,7 +194,7 @@
                         compatible = "acc_as6700_32x_psu";
                         reg = <0x52>;
                     };
-				
+
                     as6700_32x_ac_psu2@39 {
                         compatible = "acc_as6700_32x_psu";
                         reg = <0x39>;
