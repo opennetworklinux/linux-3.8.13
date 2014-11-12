@@ -73,7 +73,7 @@
             flash@0 {
                 #address-cells = <1>;
                 #size-cells = <1>;
-                compatible = "numonyx,n25q512a13";
+                compatible = "numonyx,n25q512a13", "s25fl512s";
                 reg = <0>;
                 spi-max-frequency = <12000000>; /* input clock */
                 partition@uboot {
@@ -82,30 +82,30 @@
                 };
                 partition@uboot-env {
                     label = "uboot-env";
-                    reg = <0x00100000 0x00010000>;
+                    reg = <0x00100000 0x00040000>;
                     env_size = <0x2000>;
                 };
                 partition@Fman-FW {
                     label = "Fman-FW";
-                    reg = <0x00110000 0x00010000>;
+                    reg = <0x00140000 0x00040000>;
                     read-only;
                 };
                 partition@hw-info {
                     label = "hw-info";
-                    reg = <0x00120000 0x00010000>;
+                    reg = <0x00180000 0x00040000>;
                     read-only;
                 };
                 partition@onie {
                     label = "onie";
-                    reg = <0x00130000 0x00800000>;
+                    reg = <0x001c0000 0x00800000>;
                 };
                 partition@diag {
                     label = "diag";
-                    reg = <0x00930000 0x01600000>;
+                    reg = <0x009c0000 0x02000000>;
                 };
                 partition@reserved {
                     label = "reserved";
-                    reg = <0x01f30000 0x020d0000>;
+                    reg = <0x029c0000 0x01640000>;
                 };
             };
         };
