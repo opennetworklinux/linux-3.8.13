@@ -93,7 +93,9 @@ enum as5710_54x_sfp_sysfs_attributes {
     SFP_TX_DISABLE,
     SFP_RX_LOSS,
     SFP_ACTIVE_PORT,
-    SFP_EEPROM
+    SFP_EEPROM,
+    SFP_RX_LOS_ALL,
+    SFP_IS_PRESENT_ALL,
 };
 
 /* sysfs attributes for hwmon
@@ -104,6 +106,9 @@ static SENSOR_DEVICE_ATTR(sfp_tx_disable,  S_IWUSR | S_IRUGO, show_status, set_t
 static SENSOR_DEVICE_ATTR(sfp_rx_loss,     S_IRUGO, show_status,NULL, SFP_RX_LOSS);
 static SENSOR_DEVICE_ATTR(sfp_active_port, S_IWUSR | S_IRUGO, show_active_port, set_active_port, SFP_ACTIVE_PORT);
 static SENSOR_DEVICE_ATTR(sfp_eeprom,      S_IRUGO, show_eeprom, NULL, SFP_EEPROM);
+static SENSOR_DEVICE_ATTR(sfp_rx_los_all, S_IRUGO, show_status,NULL, SFP_RX_LOS_ALL);
+static SENSOR_DEVICE_ATTR(sfp_is_present_all, S_IRUGO, show_status,NULL, SFP_IS_PRESENT_ALL);
+
 
 static struct attribute *as5710_54x_sfp_attributes[] = {
     &sensor_dev_attr_sfp_is_present.dev_attr.attr,
@@ -112,6 +117,8 @@ static struct attribute *as5710_54x_sfp_attributes[] = {
     &sensor_dev_attr_sfp_tx_disable.dev_attr.attr,
     &sensor_dev_attr_sfp_eeprom.dev_attr.attr,
     &sensor_dev_attr_sfp_active_port.dev_attr.attr,
+    &sensor_dev_attr_sfp_rx_los_all.dev_attr.attr,
+    &sensor_dev_attr_sfp_is_present_all.dev_attr.attr,
     NULL
 };
 
@@ -119,9 +126,69 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
              char *buf)
 {
     struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
-    struct as5710_54x_sfp_data *data = as5710_54x_sfp_update_device(dev, 0);
+    struct as5710_54x_sfp_data *data;
+
     u8 val;
     u8 cpld_port_idx;
+    u8 values[7];
+
+    if(attr->index == SFP_RX_LOS_ALL) {
+        /*
+         * Report the RX_LOS status for all ports.
+         * This does not depend on the currently active SFP selector.
+         */
+
+        /* RX_LOS Ports 1-8 */
+        values[0] = accton_i2c_cpld_read(0x61, 0x0F);
+        /* RX_LOS Ports 9-16 */
+        values[1] = accton_i2c_cpld_read(0x61, 0x10);
+        /* RX_LOS Ports 17-24 */
+        values[2] = accton_i2c_cpld_read(0x61, 0x11);
+        /* RX_LOS Ports 25-32 */
+        values[3] = accton_i2c_cpld_read(0x62, 0x0F);
+        /* RX_LOS Ports 33-40 */
+        values[4] = accton_i2c_cpld_read(0x62, 0x10);
+        /* RX_LOS Ports 41-48 */
+        values[5] = accton_i2c_cpld_read(0x62, 0x11);
+
+        /** Return values 1 -> 48 in order */
+        return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x\n",
+                       values[0], values[1], values[2],
+                       values[3], values[4], values[5]);
+    }
+
+    if(attr->index == SFP_IS_PRESENT_ALL) {
+        /*
+         * Report the SFP_PRESENCE status for all ports.
+         * This does not depend on the currently active SFP selector.
+         */
+
+        /* SFP_PRESENT Ports 1-8 */
+        values[0] = accton_i2c_cpld_read(0x61, 0x6);
+        /* SFP_PRESENT Ports 9-16 */
+        values[1] = accton_i2c_cpld_read(0x61, 0x7);
+        /* SFP_PRESENT Ports 17-24 */
+        values[2] = accton_i2c_cpld_read(0x61, 0x8);
+        /* SFP_PRESENT Ports 25-32 */
+        values[3] = accton_i2c_cpld_read(0x62, 0x6);
+        /* SFP_PRESENT Ports 33-40 */
+        values[4] = accton_i2c_cpld_read(0x62, 0x7);
+        /* SFP_PRESENT Ports 41-48 */
+        values[5] = accton_i2c_cpld_read(0x62, 0x8);
+        /* QSFP_PRESENT Ports 49-54 */
+        values[6] = accton_i2c_cpld_read(0x62, 0x14);
+
+        /* Return values 1 -> 54 in order */
+        return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
+                       values[0], values[1], values[2],
+                       values[3], values[4], values[5],
+                       values[6]);
+    }
+
+    /*
+     * The remaining attributes are gathered on a per-selected-sfp basis.
+     */
+    data = as5710_54x_sfp_update_device(dev, 0);
 
     if (data->active_port == 0 || data->active_port > NUM_OF_SFP_PORT) {
         return sprintf(buf, "0\n");
