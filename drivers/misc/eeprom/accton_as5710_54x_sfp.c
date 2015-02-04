@@ -130,7 +130,20 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
 
     u8 val;
     u8 cpld_port_idx;
-    u8 values[7];
+    int values[7];
+
+    /* Error-check the CPLD read results. */
+#define VALIDATED_READ(_buf, _rv, _read_expr, _invert)  \
+    do {                                                \
+        _rv = (_read_expr);                             \
+        if(_rv < 0) {                                   \
+            return sprintf(_buf, "READ ERROR\n");       \
+        }                                               \
+        if(_invert) {                                   \
+            _rv = ~_rv;                                 \
+        }                                               \
+        _rv &= 0xFF;                                    \
+    } while(0)
 
     if(attr->index == SFP_RX_LOS_ALL) {
         /*
@@ -139,17 +152,17 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
          */
 
         /* RX_LOS Ports 1-8 */
-        values[0] = accton_i2c_cpld_read(0x61, 0x0F);
+        VALIDATED_READ(buf, values[0], accton_i2c_cpld_read(0x61, 0x0F), 0);
         /* RX_LOS Ports 9-16 */
-        values[1] = accton_i2c_cpld_read(0x61, 0x10);
+        VALIDATED_READ(buf, values[1], accton_i2c_cpld_read(0x61, 0x10), 0);
         /* RX_LOS Ports 17-24 */
-        values[2] = accton_i2c_cpld_read(0x61, 0x11);
+        VALIDATED_READ(buf, values[2], accton_i2c_cpld_read(0x61, 0x11), 0);
         /* RX_LOS Ports 25-32 */
-        values[3] = accton_i2c_cpld_read(0x62, 0x0F);
+        VALIDATED_READ(buf, values[3], accton_i2c_cpld_read(0x62, 0x0F), 0);
         /* RX_LOS Ports 33-40 */
-        values[4] = accton_i2c_cpld_read(0x62, 0x10);
+        VALIDATED_READ(buf, values[4], accton_i2c_cpld_read(0x62, 0x10), 0);
         /* RX_LOS Ports 41-48 */
-        values[5] = accton_i2c_cpld_read(0x62, 0x11);
+        VALIDATED_READ(buf, values[5], accton_i2c_cpld_read(0x62, 0x11), 0);
 
         /** Return values 1 -> 48 in order */
         return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x\n",
@@ -164,25 +177,25 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
          */
 
         /* SFP_PRESENT Ports 1-8 */
-        values[0] = accton_i2c_cpld_read(0x61, 0x6);
+        VALIDATED_READ(buf, values[0], accton_i2c_cpld_read(0x61, 0x6), 1);
         /* SFP_PRESENT Ports 9-16 */
-        values[1] = accton_i2c_cpld_read(0x61, 0x7);
+        VALIDATED_READ(buf, values[1], accton_i2c_cpld_read(0x61, 0x7), 1);
         /* SFP_PRESENT Ports 17-24 */
-        values[2] = accton_i2c_cpld_read(0x61, 0x8);
+        VALIDATED_READ(buf, values[2], accton_i2c_cpld_read(0x61, 0x8), 1);
         /* SFP_PRESENT Ports 25-32 */
-        values[3] = accton_i2c_cpld_read(0x62, 0x6);
+        VALIDATED_READ(buf, values[3], accton_i2c_cpld_read(0x62, 0x6), 1);
         /* SFP_PRESENT Ports 33-40 */
-        values[4] = accton_i2c_cpld_read(0x62, 0x7);
+        VALIDATED_READ(buf, values[4], accton_i2c_cpld_read(0x62, 0x7), 1);
         /* SFP_PRESENT Ports 41-48 */
-        values[5] = accton_i2c_cpld_read(0x62, 0x8);
+        VALIDATED_READ(buf, values[5], accton_i2c_cpld_read(0x62, 0x8), 1);
         /* QSFP_PRESENT Ports 49-54 */
-        values[6] = accton_i2c_cpld_read(0x62, 0x14);
+        VALIDATED_READ(buf, values[6], accton_i2c_cpld_read(0x62, 0x14), 1);
 
         /* Return values 1 -> 54 in order */
         return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
                        values[0], values[1], values[2],
                        values[3], values[4], values[5],
-                       values[6]);
+                       values[6] & 0x3F);
     }
 
     /*
