@@ -232,7 +232,7 @@ config GE_IMP3A
 	  This board is a 3U CompactPCI Single Board Computer with a Freescale
 	  P2020 processor.
 
-config AS6700_32X
+config ACCTON_AS6700_32X
 	bool "Accton AS6700_32X"
 	select DEFAULT_UIMAGE
 	select PPC_E500MC
@@ -244,10 +244,10 @@ config AS6700_32X
 	select PPC_EPAPR_HV_PIC
         select HAS_FSL_QBMAN
 	help
-	  This option enables support for the Accton AS6700_32X board
+	  This option enables support for the Accton AS6700_32X platform.
 
-config AS5700_96X
-	bool "Accton AS5700_96X"
+config ACCTON_AS5710_54X
+	bool "Accton AS5710_54X"
 	select DEFAULT_UIMAGE
 	select PPC_E500MC
 	select PHYS_64BIT
@@ -258,21 +258,7 @@ config AS5700_96X
 	select PPC_EPAPR_HV_PIC
         select HAS_FSL_QBMAN
 	help
-	  This option enables support for the Accton AS5700_96X board
-
-config AS5710_96X
-	bool "Accton AS5700_96X"
-	select DEFAULT_UIMAGE
-	select PPC_E500MC
-	select PHYS_64BIT
-	select SWIOTLB
-	select ARCH_REQUIRE_GPIOLIB
-	select GPIO_MPC8XXX
-	select HAS_RAPIDIO
-	select PPC_EPAPR_HV_PIC
-        select HAS_FSL_QBMAN
-	help
-	  This option enables support for the Accton AS5710_96X board
+	  This option enables support for the Accton AS5710_54X platform.
 
 config P2041_RDB
 	bool "Freescale P2041 RDB"

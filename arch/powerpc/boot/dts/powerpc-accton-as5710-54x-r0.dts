@@ -36,7 +36,7 @@
 
 / {
 	model = "powerpc-accton-as5710-54x-r0";
-	compatible = "fsl,P2041RDB";
+	compatible = "accton,as5710_54x";
 	#address-cells = <2>;
 	#size-cells = <2>;
 	interrupt-parent = <&mpic>;

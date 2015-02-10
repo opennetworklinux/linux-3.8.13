@@ -1,5 +1,5 @@
 /*
- * Accton as6700_32x Setup
+ * Accton AS5710_54X Setup
  *
  * Copyright 2011 Freescale Semiconductor Inc.
  *
@@ -34,18 +34,19 @@
 /*
  * Called very early, device-tree isn't unflattened
  */
-static int __init as6700_32x_probe(void)
+static int __init as5710_54x_probe(void)
 {
 	unsigned long root = of_get_flat_dt_root();
 #ifdef CONFIG_SMP
 	extern struct smp_ops_t smp_85xx_ops;
 #endif
 
-	if (of_flat_dt_is_compatible(root, "accton,as6700_32x"))
-		return 1;
+	if (of_flat_dt_is_compatible(root, "accton,as5710_54x")) {
+            return 1;
+        }
 
 	/* Check if we're running under the Freescale hypervisor */
-	if (of_flat_dt_is_compatible(root, "accton,as6700_32x-hv")) {
+	if (of_flat_dt_is_compatible(root, "accton,as5710_54x-hv")) {
 		ppc_md.init_IRQ = ehv_pic_init;
 		ppc_md.get_irq = ehv_pic_get_irq;
 		ppc_md.restart = fsl_hv_restart;
@@ -65,9 +66,9 @@ static int __init as6700_32x_probe(void)
 	return 0;
 }
 
-define_machine(as6700_32x) {
-	.name			= "Accton as6700_32x",
-	.probe			= as6700_32x_probe,
+define_machine(as5710_54x) {
+	.name			= "Accton AS5710_54X",
+	.probe			= as5710_54x_probe,
 	.setup_arch		= corenet_ds_setup_arch,
 	.init_IRQ		= corenet_ds_pic_init,
 #ifdef CONFIG_PCI
@@ -81,8 +82,8 @@ define_machine(as6700_32x) {
 	.init_early		= corenet_ds_init_early,
 };
 
-machine_arch_initcall(as6700_32x, corenet_ds_publish_devices);
+machine_arch_initcall(as5710_54x, corenet_ds_publish_devices);
 
 #ifdef CONFIG_SWIOTLB
-machine_arch_initcall(as6700_32x, swiotlb_setup_bus_notifier);
+machine_arch_initcall(as5710_54x, swiotlb_setup_bus_notifier);
 #endif

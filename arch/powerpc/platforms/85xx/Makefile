@@ -24,9 +24,8 @@ obj-$(CONFIG_P1022_DS)    += p1022_ds.o
 obj-$(CONFIG_P1022_RDK)   += p1022_rdk.o
 obj-$(CONFIG_P1023_RDS)   += p1023_rds.o
 obj-$(CONFIG_TWR_P102x)   += twr_p102x.o
-obj-$(CONFIG_AS6700_32X)  += as6700_32x.o corenet_ds.o
-obj-$(CONFIG_AS5700_96X)  += as5700_96x.o corenet_ds.o
-obj-$(CONFIG_AS5710_96X)  += as5710_96x.o corenet_ds.o
+obj-$(CONFIG_ACCTON_AS6700_32X)  += accton_as6700_32x.o corenet_ds.o
+obj-$(CONFIG_ACCTON_AS5710_54X)  += accton_as5710_54x.o corenet_ds.o
 obj-$(CONFIG_P2041_RDB)   += p2041_rdb.o corenet_ds.o
 obj-$(CONFIG_P3041_DS)    += p3041_ds.o corenet_ds.o
 obj-$(CONFIG_P4080_DS)    += p4080_ds.o corenet_ds.o
@@ -42,3 +41,4 @@ obj-$(CONFIG_KSI8560)	  += ksi8560.o
 obj-$(CONFIG_XES_MPC85xx) += xes_mpc85xx.o
 obj-$(CONFIG_GE_IMP3A)	  += ge_imp3a.o
 obj-$(CONFIG_PPC_QEMU_E500) += qemu_e500.o
+
