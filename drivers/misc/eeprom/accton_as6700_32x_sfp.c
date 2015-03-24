@@ -1,3 +1,4 @@
+
 /*
  * An hwmon driver for accton as6700_32x sfp
  *
@@ -40,7 +41,7 @@
 
 #define AS6700_32X_DRVNAME                        "acc_as6700_32x_sfp"
 
-/* PORT number here is indexed from 1 
+/* PORT number here is indexed from 1
  * as the front port number
  */
 #define AS6700_32X_SFP_NORMAL_PORT_PRESENT_WIDTH  3
@@ -98,7 +99,8 @@ enum as6700_32x_sfp_sysfs_attributes {
     AS6700_32X_ACTIVE_PORT,
     AS6700_32X_EEPROM,
     AS6700_32X_EQUALIZER,
-    AS6700_32X_DEBUG
+    AS6700_32X_DEBUG,
+    AS6700_32X_CPLD_VERSION,
 };
 
 enum as6700_32x_sfp_tranceiver_cable_type {
@@ -109,7 +111,7 @@ enum as6700_32x_sfp_tranceiver_cable_type {
     AS6700_32X_SFP_TRANCEIVER_CABLE_TYPE_COPPER_7M=7
 };
 
-/* Each client has this additional data 
+/* Each client has this additional data
  */
 struct as6700_32x_sfp_data {
     struct device      *hwmon_dev;
@@ -167,8 +169,8 @@ static ssize_t set_sfp_debug(struct device *dev, struct device_attribute *da,
 			     const char *buf, size_t count);
 
 static int as6700_32x_sfp_read_block(struct i2c_client *client, u8 command, u8 *data,int data_len);
-static struct as6700_32x_sfp_data *as6700_32x_sfp_update_present(struct device *dev);             
-static struct as6700_32x_sfp_data *as6700_32x_sfp_update_eeprom(struct device *dev);             
+static struct as6700_32x_sfp_data *as6700_32x_sfp_update_present(struct device *dev);
+static struct as6700_32x_sfp_data *as6700_32x_sfp_update_eeprom(struct device *dev);
 static int as6700_32x_sfp_read_normal_port_present(struct i2c_client *client);
 static int as6700_32x_sfp_read_module_port_present(struct i2c_client *client);
 static int as6700_32x_sfp_read_normal_port_eeprom(struct i2c_client *client);
@@ -177,13 +179,15 @@ static int as6700_32x_sfp_equalizer_write(struct i2c_client *client);
 static void as6700_32x_sfp_debug_present_dump(struct device *dev);
 static void as6700_32x_sfp_debug_eeprom_dump(struct device *dev);
 
-/* sysfs attributes for hwmon 
+/* sysfs attributes for hwmon
  */
 static SENSOR_DEVICE_ATTR(sfp_is_present,  S_IRUGO, show_status,     NULL, AS6700_32X_SFP_IS_PRESENT);
 static SENSOR_DEVICE_ATTR(sfp_active_port, S_IWUSR | S_IRUGO, show_active_port, set_active_port, AS6700_32X_ACTIVE_PORT);
 static SENSOR_DEVICE_ATTR(sfp_eeprom,      S_IRUGO, show_eeprom,    NULL, AS6700_32X_EEPROM);
 static SENSOR_DEVICE_ATTR(sfp_equalizer,   S_IWUSR, NULL, set_sfp_equalizer, AS6700_32X_EQUALIZER);
 static SENSOR_DEVICE_ATTR(sfp_debug,       S_IWUSR | S_IRUGO, show_sfp_debug, set_sfp_debug, AS6700_32X_DEBUG);
+static SENSOR_DEVICE_ATTR(cpld_version,    S_IRUGO, show_status,     NULL, AS6700_32X_CPLD_VERSION);
+
 
 static struct attribute *as6700_32x_sfp_attributes[] = {
     &sensor_dev_attr_sfp_is_present.dev_attr.attr,
@@ -191,33 +195,34 @@ static struct attribute *as6700_32x_sfp_attributes[] = {
     &sensor_dev_attr_sfp_eeprom.dev_attr.attr,
     &sensor_dev_attr_sfp_equalizer.dev_attr.attr,
     &sensor_dev_attr_sfp_debug.dev_attr.attr,
+    &sensor_dev_attr_cpld_version.dev_attr.attr,
     NULL
 };
 
 
 /* STATIC VARIABLE DEFINITIONS
 */
-/* Addresses scanned 
+/* Addresses scanned
  */
 static const unsigned short normal_i2c[] = { 0x50, I2C_CLIENT_END };
 /* CPLD read
  */
-/* {QSFP:  0 ~ 7 (Front port 1~ 8), QSFP:  8 ~ 15,  QSFP: 16 ~ 19} 
+/* {QSFP:  0 ~ 7 (Front port 1~ 8), QSFP:  8 ~ 15,  QSFP: 16 ~ 19}
  */
 static u8 as6700_32x_CPLD_normal_port_present_offset[] =  {0x04, 0x05, 0x06};
 
-/* bit 0: Module 1 (near the front ports); bit 1: Module 2 
+/* bit 0: Module 1 (near the front ports); bit 1: Module 2
  */
 static u8 as6700_32x_CPLD_module_exist_offset[] =  {0x3};
 static u8 as6700_32x_IE_module_io_expander_offset[] =  {0x02};
 
 /* CPLD write
  */
-/* Front port 1~ 20 -> 0x01~ 0x20 
+/* Front port 1~ 20 -> 0x01~ 0x20
  */
 static u8 as6700_32x_SC_normal_port_value[] =  {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x10,
                                                 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x20};
-/* Module 1: 0x21,  Module 2: 0x22} 
+/* Module 1: 0x21,  Module 2: 0x22}
  */
 static u8 as6700_32x_SC_module_port_value[] =  {0x21, 0x22};
 /* {Module 1: Front port 21~26-> 0x01~0x20; Module 2: port 27~32-> 0x01~0x20}
@@ -629,13 +634,19 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
 {
     struct i2c_client *client = to_i2c_client(dev);
     struct as6700_32x_sfp_data *data = i2c_get_clientdata(client);
+    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
+
+    if(attr->index == AS6700_32X_CPLD_VERSION) {
+        return sprintf(buf, "%d\n",
+                       accton_i2c_cpld_read(AS6700_32X_SFP_CPLD_ADDR, 0x0));
+    }
 
     if (data->active_port > AS6700_32X_MAX_NBR_OF_SFP_PORT || data->active_port < AS6700_32X_SFP_NORMAL_PORT_MIN) {
         return -EINVAL;
     }
 
     data = as6700_32x_sfp_update_present(dev);
-    
+
     if (data->is_debug) {
         as6700_32x_sfp_debug_present_dump(dev);
     }
@@ -825,7 +836,7 @@ static int as6700_32x_sfp_probe(struct i2c_client *client,
 
     dev_dbg(&client->dev,"%s: sfp '%s'\n",
          dev_name(data->hwmon_dev), client->name);
-    
+
     return 0;
 
 exit_remove:
@@ -833,7 +844,7 @@ exit_remove:
 exit_free:
     kfree(data);
 exit:
-    
+
     return status;
 }
 
@@ -844,7 +855,7 @@ static int as6700_32x_sfp_remove(struct i2c_client *client)
     hwmon_device_unregister(data->hwmon_dev);
     sysfs_remove_group(&client->dev.kobj, &as6700_32x_sfp_group);
     kfree(data);
-    
+
     return 0;
 }
 
@@ -869,16 +880,16 @@ static int as6700_32x_sfp_read_block(struct i2c_client *client, u8 command, u8 *
               int data_len)
 {
     int result = i2c_smbus_read_i2c_block_data(client, command, data_len, data);
-    
+
     if (unlikely(result < 0))
         goto abort;
     if (unlikely(result != data_len)) {
         result = -EIO;
         goto abort;
     }
-    
+
     result = 0;
-    
+
 abort:
     return result;
 }
@@ -887,7 +898,7 @@ static int as6700_32x_sfp_read_normal_port_present(struct i2c_client *client)
 {
     struct as6700_32x_sfp_data *data = i2c_get_clientdata(client);
     int read_byte = -1, idx=0, reg_offset_size=0;
-    
+
     reg_offset_size =sizeof(as6700_32x_CPLD_normal_port_present_offset);
     for (idx=0; idx < reg_offset_size; idx++)
     {
@@ -946,7 +957,7 @@ static int as6700_32x_sfp_read_module_port_present(struct i2c_client *client)
             data->module_exist[idx] == 1)
         {
             result = accton_i2c_cpld_write(AS6700_32X_SFP_CPLD_ADDR,
-                                           AS6700_32X_SFP_SWITCH_CHANNEL_REG, 
+                                           AS6700_32X_SFP_SWITCH_CHANNEL_REG,
                                            as6700_32x_SC_module_port_value[idx]);
             if (result < 0) {
                 data->update_module_port_status[idx] = AS6700_32X_SFP_ERROR_CODE;
@@ -1019,7 +1030,7 @@ static int as6700_32x_sfp_read_normal_port_eeprom(struct i2c_client *client)
 
     driver_port = AS6700_32X_SFP_MAP_FRONT_2_DRIVER_PORT(data->active_port);
 
-    result = accton_i2c_cpld_write(AS6700_32X_SFP_CPLD_ADDR, 
+    result = accton_i2c_cpld_write(AS6700_32X_SFP_CPLD_ADDR,
                                    AS6700_32X_SFP_SWITCH_CHANNEL_REG,
                                    as6700_32x_SC_normal_port_value[driver_port]);
     if (result < 0) {
@@ -1053,7 +1064,7 @@ static int as6700_32x_sfp_read_normal_port_eeprom(struct i2c_client *client)
 
    /* Inactive the Switch Channel
     */
-    result = accton_i2c_cpld_write(AS6700_32X_SFP_CPLD_ADDR, 
+    result = accton_i2c_cpld_write(AS6700_32X_SFP_CPLD_ADDR,
                                    AS6700_32X_SFP_SWITCH_CHANNEL_REG,
                                    AS6700_32X_SFP_SC_INACTIVATE_VLAUE);
     if (result < 0) {
@@ -1145,7 +1156,7 @@ static int as6700_32x_sfp_read_module_port_eeprom(struct i2c_client *client)
         }
     }
 
-    result = accton_i2c_cpld_write(AS6700_32X_SFP_CPLD_ADDR, 
+    result = accton_i2c_cpld_write(AS6700_32X_SFP_CPLD_ADDR,
                                    AS6700_32X_SFP_SWITCH_CHANNEL_REG,
                                    AS6700_32X_SFP_SC_INACTIVATE_VLAUE);
     if (result < 0) {
@@ -1198,7 +1209,7 @@ static int as6700_32x_sfp_equalizer_write(struct i2c_client *client)
             result = -EINVAL;
             goto abort;
     }
-  
+
     result = accton_i2c_cpld_write(eq_table->tx_sc_activate.addr,
                                    eq_table->tx_sc_activate.reg,
                                    eq_table->tx_sc_activate.value);
@@ -1325,7 +1336,7 @@ static int as6700_32x_sfp_equalizer_write(struct i2c_client *client)
     }
 
     result = 0;
-    
+
 abort:
     data->is_failed = result;
     return (data->is_failed);
@@ -1439,7 +1450,7 @@ static void as6700_32x_sfp_debug_eeprom_dump(struct device *dev)
     mutex_lock(&data->update_lock);
     dev_dbg(&client->dev,"\n---------- Start of as6700_32x sfp debug eeprom dump (Front Port: %ld)\n", data->active_port);
     for (idx = 0; idx < 16; idx++) {
-         dev_dbg(&client->dev,"%2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x\n", 
+         dev_dbg(&client->dev,"%2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x %2x\n",
                 data->eeprom[(16*idx)+0],data->eeprom[(16*idx)+1],data->eeprom[(16*idx)+2],data->eeprom[(16*idx)+3],
                 data->eeprom[(16*idx)+4],data->eeprom[(16*idx)+5],data->eeprom[(16*idx)+6],data->eeprom[(16*idx)+7],
                 data->eeprom[(16*idx)+8],data->eeprom[(16*idx)+9],data->eeprom[(16*idx)+10],data->eeprom[(16*idx)+11],
