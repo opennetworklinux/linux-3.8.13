@@ -151,6 +151,8 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
          * This does not depend on the currently active SFP selector.
          */
 
+        mutex_lock(&data->update_lock);
+
         /* RX_LOS Ports 1-8 */
         VALIDATED_READ(buf, values[0], accton_i2c_cpld_read(0x61, 0x0F), 0);
         /* RX_LOS Ports 9-16 */
@@ -164,6 +166,8 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
         /* RX_LOS Ports 41-48 */
         VALIDATED_READ(buf, values[5], accton_i2c_cpld_read(0x62, 0x11), 0);
 
+        mutex_unlock(&data->update_lock);
+
         /** Return values 1 -> 48 in order */
         return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x\n",
                        values[0], values[1], values[2],
@@ -175,6 +179,8 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
          * Report the SFP_PRESENCE status for all ports.
          * This does not depend on the currently active SFP selector.
          */
+
+        mutex_lock(&data->update_lock);
 
         /* SFP_PRESENT Ports 1-8 */
         VALIDATED_READ(buf, values[0], accton_i2c_cpld_read(0x61, 0x6), 1);
@@ -190,6 +196,8 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
         VALIDATED_READ(buf, values[5], accton_i2c_cpld_read(0x62, 0x8), 1);
         /* QSFP_PRESENT Ports 49-54 */
         VALIDATED_READ(buf, values[6], accton_i2c_cpld_read(0x62, 0x14), 1);
+
+        mutex_unlock(&data->update_lock);
 
         /* Return values 1 -> 54 in order */
         return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
