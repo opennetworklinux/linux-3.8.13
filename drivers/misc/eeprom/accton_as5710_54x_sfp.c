@@ -126,7 +126,8 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
              char *buf)
 {
     struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
-    struct as5710_54x_sfp_data *data;
+    struct i2c_client *client = to_i2c_client(dev);
+    struct as5710_54x_sfp_data *data = i2c_get_clientdata(client);
 
     u8 val;
     u8 cpld_port_idx;
