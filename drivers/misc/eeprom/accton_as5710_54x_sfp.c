@@ -40,6 +40,8 @@
 static ssize_t show_status(struct device *dev, struct device_attribute *da,char *buf);
 static ssize_t set_tx_disable(struct device *dev, struct device_attribute *da,
 			const char *buf, size_t count);
+static ssize_t set_qsfp_reg(struct device *dev, struct device_attribute *da,
+                            const char *buf, size_t count);
 static ssize_t show_active_port(struct device *dev, struct device_attribute *da, char *buf);
 static ssize_t set_active_port(struct device *dev, struct device_attribute *da,
 			const char *buf, size_t count);
@@ -96,6 +98,10 @@ enum as5710_54x_sfp_sysfs_attributes {
     SFP_EEPROM,
     SFP_RX_LOS_ALL,
     SFP_IS_PRESENT_ALL,
+    SFP_LP_MODE,
+    SFP_RESET,
+    CPLD_VERSION,
+    CPLD_DEBUG,
 };
 
 /* sysfs attributes for hwmon
@@ -108,7 +114,10 @@ static SENSOR_DEVICE_ATTR(sfp_active_port, S_IWUSR | S_IRUGO, show_active_port, 
 static SENSOR_DEVICE_ATTR(sfp_eeprom,      S_IRUGO, show_eeprom, NULL, SFP_EEPROM);
 static SENSOR_DEVICE_ATTR(sfp_rx_los_all, S_IRUGO, show_status,NULL, SFP_RX_LOS_ALL);
 static SENSOR_DEVICE_ATTR(sfp_is_present_all, S_IRUGO, show_status,NULL, SFP_IS_PRESENT_ALL);
-
+static SENSOR_DEVICE_ATTR(sfp_lp_mode,  S_IWUSR | S_IRUGO, show_status, set_qsfp_reg, SFP_LP_MODE);
+static SENSOR_DEVICE_ATTR(sfp_reset,  S_IWUSR | S_IRUGO, show_status, set_qsfp_reg, SFP_RESET);
+static SENSOR_DEVICE_ATTR(cpld_version,     S_IRUGO, show_status,NULL, CPLD_VERSION);
+static SENSOR_DEVICE_ATTR(cpld_debug,     S_IRUGO, show_status,NULL, CPLD_DEBUG);
 
 static struct attribute *as5710_54x_sfp_attributes[] = {
     &sensor_dev_attr_sfp_is_present.dev_attr.attr,
@@ -119,6 +128,10 @@ static struct attribute *as5710_54x_sfp_attributes[] = {
     &sensor_dev_attr_sfp_active_port.dev_attr.attr,
     &sensor_dev_attr_sfp_rx_los_all.dev_attr.attr,
     &sensor_dev_attr_sfp_is_present_all.dev_attr.attr,
+    &sensor_dev_attr_sfp_lp_mode.dev_attr.attr,
+    &sensor_dev_attr_sfp_reset.dev_attr.attr,
+    &sensor_dev_attr_cpld_version.dev_attr.attr,
+    &sensor_dev_attr_cpld_debug.dev_attr.attr,
     NULL
 };
 
@@ -136,23 +149,65 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
     /* Error-check the CPLD read results. */
 #define VALIDATED_READ(_buf, _rv, _read_expr, _invert)  \
     do {                                                \
+        mutex_lock(&data->update_lock);                 \
         _rv = (_read_expr);                             \
         if(_rv < 0) {                                   \
+            mutex_unlock(&data->update_lock);           \
             return sprintf(_buf, "READ ERROR\n");       \
         }                                               \
         if(_invert) {                                   \
             _rv = ~_rv;                                 \
         }                                               \
         _rv &= 0xFF;                                    \
+        mutex_unlock(&data->update_lock);               \
     } while(0)
+
+
+    if(attr->index == SFP_RESET || attr->index == SFP_LP_MODE) {
+        int mask; int addr;
+        addr = (attr->index == SFP_RESET) ? 0x15 : 0x16;
+        VALIDATED_READ(buf, mask, accton_i2c_cpld_read(0x62, addr), 0);
+        return sprintf(buf, "0x%.2x\n", mask);
+    }
+
+    if(attr->index == CPLD_VERSION) {
+        mutex_lock(&data->update_lock);
+        values[0] = accton_i2c_cpld_read(0x60, 0x1);
+        values[1] = accton_i2c_cpld_read(0x61, 0x1);
+        values[2] = accton_i2c_cpld_read(0x62, 0x1);
+        mutex_unlock(&data->update_lock);
+        return sprintf(buf, "%d.%d.%d\n", values[0], values[1], values[2]);
+    }
+
+    if(attr->index == CPLD_DEBUG) {
+        char* s = buf;
+        int v;
+        int i;
+
+        mutex_lock(&data->update_lock);
+        for(i = 0; i <= 0x18; i++) {
+            v = accton_i2c_cpld_read(0x60, i);
+            s += sprintf(s, "  SYS[0x%.2x] = 0x%x\n", i, v);
+        }
+        for(i = 0; i <= 0x11; i++) {
+            v = accton_i2c_cpld_read(0x61, i);
+            s += sprintf(s, "CPLD2[0x%.2x] = 0x%x\n", i, v);
+        }
+        for(i = 0; i <= 0x16; i++) {
+            v = accton_i2c_cpld_read(0x62, i);
+            s += sprintf(s, "CPLD3[0x%.2x] = 0x%x\n", i, v);
+        }
+        mutex_unlock(&data->update_lock);
+        return s - buf;
+    }
+
+
 
     if(attr->index == SFP_RX_LOS_ALL) {
         /*
          * Report the RX_LOS status for all ports.
          * This does not depend on the currently active SFP selector.
          */
-
-        mutex_lock(&data->update_lock);
 
         /* RX_LOS Ports 1-8 */
         VALIDATED_READ(buf, values[0], accton_i2c_cpld_read(0x61, 0x0F), 0);
@@ -167,8 +222,6 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
         /* RX_LOS Ports 41-48 */
         VALIDATED_READ(buf, values[5], accton_i2c_cpld_read(0x62, 0x11), 0);
 
-        mutex_unlock(&data->update_lock);
-
         /** Return values 1 -> 48 in order */
         return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x\n",
                        values[0], values[1], values[2],
@@ -180,8 +233,6 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
          * Report the SFP_PRESENCE status for all ports.
          * This does not depend on the currently active SFP selector.
          */
-
-        mutex_lock(&data->update_lock);
 
         /* SFP_PRESENT Ports 1-8 */
         VALIDATED_READ(buf, values[0], accton_i2c_cpld_read(0x61, 0x6), 1);
@@ -197,8 +248,6 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
         VALIDATED_READ(buf, values[5], accton_i2c_cpld_read(0x62, 0x8), 1);
         /* QSFP_PRESENT Ports 49-54 */
         VALIDATED_READ(buf, values[6], accton_i2c_cpld_read(0x62, 0x14), 1);
-
-        mutex_unlock(&data->update_lock);
 
         /* Return values 1 -> 54 in order */
         return sprintf(buf, "%.2x %.2x %.2x %.2x %.2x %.2x %.2x\n",
@@ -281,6 +330,30 @@ static ssize_t show_active_port(struct device *dev, struct device_attribute *da,
 
     return sprintf(buf, "%d", data->active_port);
 }
+
+static ssize_t set_qsfp_reg(struct device *dev, struct device_attribute *da,
+                            const char *buf, size_t count)
+{
+    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
+    struct i2c_client *client = to_i2c_client(dev);
+    struct as5710_54x_sfp_data *data = i2c_get_clientdata(client);
+
+    int error;
+    long value;
+    int addr;
+
+    error = kstrtol(buf, 0, &value);
+    if(error) {
+        return error;
+    }
+    addr = (attr->index == SFP_RESET) ? 0x15 : 0x16;
+    mutex_lock(&data->update_lock);
+    accton_i2c_cpld_write(0x62, addr, value);
+    mutex_unlock(&data->update_lock);
+
+    return count;
+}
+
 
 static ssize_t set_active_port(struct device *dev, struct device_attribute *da,
 			const char *buf, size_t count)
