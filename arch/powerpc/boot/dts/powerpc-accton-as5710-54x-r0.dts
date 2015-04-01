@@ -180,6 +180,10 @@
 				compatible = "acc_as5710_54x_sfp";
 				reg = <0x50>;
 			};
+                        sfp_dom@51 {
+                                compatible = "at,24c02";
+                                reg = <0x51>;
+                        };
 		};
 
 		usb1: usb@211000 {
