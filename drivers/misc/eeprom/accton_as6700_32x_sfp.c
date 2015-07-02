@@ -101,6 +101,7 @@ enum as6700_32x_sfp_sysfs_attributes {
     AS6700_32X_EQUALIZER,
     AS6700_32X_DEBUG,
     AS6700_32X_CPLD_VERSION,
+    AS6700_32X_SFP_IS_PRESENT_ALL
 };
 
 enum as6700_32x_sfp_tranceiver_cable_type {
@@ -182,6 +183,7 @@ static void as6700_32x_sfp_debug_eeprom_dump(struct device *dev);
 /* sysfs attributes for hwmon
  */
 static SENSOR_DEVICE_ATTR(sfp_is_present,  S_IRUGO, show_status,     NULL, AS6700_32X_SFP_IS_PRESENT);
+static SENSOR_DEVICE_ATTR(sfp_is_present_all, S_IRUGO, show_status,NULL, AS6700_32X_SFP_IS_PRESENT_ALL);
 static SENSOR_DEVICE_ATTR(sfp_active_port, S_IWUSR | S_IRUGO, show_active_port, set_active_port, AS6700_32X_ACTIVE_PORT);
 static SENSOR_DEVICE_ATTR(sfp_eeprom,      S_IRUGO, show_eeprom,    NULL, AS6700_32X_EEPROM);
 static SENSOR_DEVICE_ATTR(sfp_equalizer,   S_IWUSR, NULL, set_sfp_equalizer, AS6700_32X_EQUALIZER);
@@ -196,6 +198,7 @@ static struct attribute *as6700_32x_sfp_attributes[] = {
     &sensor_dev_attr_sfp_equalizer.dev_attr.attr,
     &sensor_dev_attr_sfp_debug.dev_attr.attr,
     &sensor_dev_attr_cpld_version.dev_attr.attr,
+    &sensor_dev_attr_sfp_is_present_all.dev_attr.attr,
     NULL
 };
 
@@ -640,21 +643,42 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
         return sprintf(buf, "%d\n",
                        accton_i2c_cpld_read(AS6700_32X_SFP_CPLD_ADDR, 0x0));
     }
+    else if (attr->index == AS6700_32X_SFP_IS_PRESENT_ALL) {
+        int values[4];
+        /* Update present status */
+        as6700_32x_sfp_read_module_port_present(client);
+        as6700_32x_sfp_read_normal_port_present(client);
+        
+        /*
+         * Report the SFP_PRESENCE status for all ports.
+         */
+         
+        /* SFP_PRESENT Ports 1-8 */
+        values[0] = data->normal_port_present[0];
+        values[1] = data->normal_port_present[1];
+        values[2] = (data->normal_port_present[2] & 0xF) | ((data->module_port_present[0] << 2) & 0xF0);
+        values[3] = (data->module_port_present[0] >> 6) | (data->module_port_present[1]);
 
-    if (data->active_port > AS6700_32X_MAX_NBR_OF_SFP_PORT || data->active_port < AS6700_32X_SFP_NORMAL_PORT_MIN) {
-        return -EINVAL;
+        /* Return values 1 -> 32 in order */
+        return sprintf(buf, "%.2x %.2x %.2x %.2x\n",
+                       values[0], values[1], values[2], values[3]);
     }
+    else {/* AS6700_32X_SFP_IS_PRESENT */
+        if (data->active_port > AS6700_32X_MAX_NBR_OF_SFP_PORT || data->active_port < AS6700_32X_SFP_NORMAL_PORT_MIN) {
+            return -EINVAL;
+        }
 
-    data = as6700_32x_sfp_update_present(dev);
+        data = as6700_32x_sfp_update_present(dev);
+        
+        if (data->is_debug) {
+            as6700_32x_sfp_debug_present_dump(dev);
+        }
 
-    if (data->is_debug) {
-        as6700_32x_sfp_debug_present_dump(dev);
-    }
-
-    if (data->is_failed < 0) {
-        return (data->is_failed);
-    } else {
-        return sprintf(buf, "%d", data->is_present);
+        if (data->is_failed < 0) {
+            return (data->is_failed);
+        } else {
+            return sprintf(buf, "%d", data->is_present);
+        }
     }
 }
 
