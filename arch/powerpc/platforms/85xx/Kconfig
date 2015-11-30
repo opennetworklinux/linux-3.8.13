@@ -260,6 +260,20 @@ config ACCTON_AS5710_54X
 	help
 	  This option enables support for the Accton AS5710_54X platform.
 
+config QUANTA_P2041_RDB
+	bool "QUANTA P2041 RDB"
+	select DEFAULT_UIMAGE
+	select PPC_E500MC
+	select PHYS_64BIT
+	select SWIOTLB
+	select ARCH_REQUIRE_GPIOLIB
+	select GPIO_MPC8XXX
+	select HAS_RAPIDIO
+	select PPC_EPAPR_HV_PIC
+        select HAS_FSL_QBMAN
+	help
+	  This option enables support for the QUANTA P2041 RDB board
+
 config P2041_RDB
 	bool "Freescale P2041 RDB"
 	select DEFAULT_UIMAGE
