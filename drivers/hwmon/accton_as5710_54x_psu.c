@@ -31,15 +31,30 @@
 #include <linux/sysfs.h>
 #include <linux/slab.h>
 
+#define DEBUG_MODE 0
+
+#if (DEBUG_MODE == 1)
+    #define DEBUG_PRINT(fmt, args...)     \
+        printk (KERN_INFO "%s:%s[%d]: " fmt "\r\n", __FILE__, __FUNCTION__, __LINE__, ##args)
+#else
+    #define DEBUG_PRINT(fmt, args...)
+#endif
+
+#define MAX_MODEL_NAME          16
+#define DC12V_FAN_DIR_OFFSET    0x34
+#define DC12V_FAN_DIR_LEN       3
+#define IS_PRESENT(id, value)    (!((value) >> (((id) - 1) * 4) & 0x1))
+#define IS_POWER_GOOD(id, value) ((value) >> (((id) - 1) * 4 + 1) & 0x1)
+
 static ssize_t show_index(struct device *dev, struct device_attribute *da, char *buf);
 static ssize_t show_status(struct device *dev, struct device_attribute *da, char *buf);
-static ssize_t show_model_name(struct device *dev, struct device_attribute *da, char *buf);
+static ssize_t show_string(struct device *dev, struct device_attribute *da, char *buf);
 static int as5710_54x_psu_read_block(struct i2c_client *client, u8 command, u8 *data,int data_len);
 extern int accton_i2c_cpld_read(unsigned short cpld_addr, u8 reg);
 
 /* Addresses scanned 
  */
-static const unsigned short normal_i2c[] = { 0x38, 0x3b, 0x50, 0x53, I2C_CLIENT_END };
+static const unsigned short normal_i2c[] = { I2C_CLIENT_END };
 
 /* Each client has this additional data 
  */
@@ -50,7 +65,8 @@ struct as5710_54x_psu_data {
     unsigned long       last_updated;    /* In jiffies */
     u8  index;           /* PSU index */
     u8  status;          /* Status(present/power_good) register read from CPLD */
-    char model_name[14]; /* Model name, read from eeprom */
+    char model_name[MAX_MODEL_NAME+1]; /* Model name, read from eeprom */
+    char fan_dir[DC12V_FAN_DIR_LEN+1]; /* DC12V fan direction */
 };
 
 static struct as5710_54x_psu_data *as5710_54x_psu_update_device(struct device *dev);             
@@ -59,21 +75,24 @@ enum as5710_54x_psu_sysfs_attributes {
     PSU_INDEX,
     PSU_PRESENT,
     PSU_MODEL_NAME,
-    PSU_POWER_GOOD
+    PSU_POWER_GOOD,
+    PSU_FAN_DIR /* For DC12V only */
 };
 
 /* sysfs attributes for hwmon 
  */
 static SENSOR_DEVICE_ATTR(psu_index,      S_IRUGO, show_index,     NULL, PSU_INDEX);
 static SENSOR_DEVICE_ATTR(psu_present,    S_IRUGO, show_status,    NULL, PSU_PRESENT);
-static SENSOR_DEVICE_ATTR(psu_model_name, S_IRUGO, show_model_name,NULL, PSU_MODEL_NAME);
+static SENSOR_DEVICE_ATTR(psu_model_name, S_IRUGO, show_string,    NULL, PSU_MODEL_NAME);
 static SENSOR_DEVICE_ATTR(psu_power_good, S_IRUGO, show_status,    NULL, PSU_POWER_GOOD);
+static SENSOR_DEVICE_ATTR(psu_fan_dir,    S_IRUGO, show_string,    NULL, PSU_FAN_DIR);
 
 static struct attribute *as5710_54x_psu_attributes[] = {
     &sensor_dev_attr_psu_index.dev_attr.attr,
     &sensor_dev_attr_psu_present.dev_attr.attr,
     &sensor_dev_attr_psu_model_name.dev_attr.attr,
     &sensor_dev_attr_psu_power_good.dev_attr.attr,
+    &sensor_dev_attr_psu_fan_dir.dev_attr.attr,
     NULL
 };
 
@@ -93,22 +112,39 @@ static ssize_t show_status(struct device *dev, struct device_attribute *da,
     struct as5710_54x_psu_data *data = as5710_54x_psu_update_device(dev);
     u8 status = 0;
 
+    if (!data->valid) {
+        return -EIO;
+    }
+
     if (attr->index == PSU_PRESENT) {
-        status = !(data->status >> ((data->index - 1) * 4) & 0x1);
+        status = IS_PRESENT(data->index, data->status);
     }
     else { /* PSU_POWER_GOOD */
-        status = data->status >> ((data->index - 1) * 4 + 1) & 0x1;
+        status = IS_POWER_GOOD(data->index, data->status);
     }
 
     return sprintf(buf, "%d\n", status);
 }
 
-static ssize_t show_model_name(struct device *dev, struct device_attribute *da,
+static ssize_t show_string(struct device *dev, struct device_attribute *da,
              char *buf)
 {
+    struct sensor_device_attribute *attr = to_sensor_dev_attr(da);
     struct as5710_54x_psu_data *data = as5710_54x_psu_update_device(dev);
-    
-    return sprintf(buf, "%s", data->model_name);
+    char *ptr = NULL;
+
+    if (!data->valid) {
+        return -EIO;
+    }
+
+    if (attr->index == PSU_MODEL_NAME) {
+        ptr = data->model_name;
+    }
+    else { /* PSU_FAN_DIR */
+        ptr = data->fan_dir;
+    }
+
+    return sprintf(buf, "%s\n", ptr);
 }
 
 static const struct attribute_group as5710_54x_psu_group = {
@@ -218,6 +254,63 @@ abort:
     return result;
 }
 
+enum psu_type {
+    PSU_TYPE_AC_110V_F2B,
+    PSU_TYPE_AC_110V_B2F,
+    PSU_TYPE_DC_48V_F2B,
+    PSU_TYPE_DC_48V_B2F,
+    PSU_TYPE_DC_12V_NON,
+};
+
+struct model_name_info {
+    enum psu_type type;
+    u8 offset;
+    u8 length;
+    char* model_name;
+};
+
+struct model_name_info models[] = {
+{PSU_TYPE_AC_110V_F2B, 0x26, 13, "CPR-4011-4M11"},
+{PSU_TYPE_AC_110V_B2F, 0x26, 13, "CPR-4011-4M21"},
+{PSU_TYPE_DC_48V_F2B, 0x50,  12, "um400d01-01G"},
+{PSU_TYPE_DC_48V_B2F, 0x50,   9, "um400d01G"},
+{PSU_TYPE_DC_12V_NON, 0x00,  11, "PSU-12V-650"},
+};
+
+static int as5710_54x_psu_model_name_get(struct device *dev)
+{
+    struct i2c_client *client = to_i2c_client(dev);
+    struct as5710_54x_psu_data *data = i2c_get_clientdata(client);
+    int i, status;
+
+    for (i = 0; i < ARRAY_SIZE(models); i++) {
+        memset(data->model_name, 0, sizeof(data->model_name));
+
+        status = as5710_54x_psu_read_block(client, models[i].offset,
+                                           data->model_name, models[i].length);
+        if (status < 0) {
+            data->model_name[0] = '\0';
+            dev_dbg(&client->dev, "unable to read model name from (0x%x) offset(0x%x)\n", 
+                                  client->addr, models[i].offset);
+            continue;
+        }
+        else {
+            data->model_name[models[i].length] = '\0';
+        }
+
+        /* Determine if the model name is known, if not, read next index
+         */
+        if (strncmp(data->model_name, models[i].model_name, models[i].length) == 0) {
+            return 0;
+        }
+        else {
+            data->model_name[0] = '\0';
+        }
+    }
+
+    return -ENODATA;
+}
+
 static struct as5710_54x_psu_data *as5710_54x_psu_update_device(struct device *dev)
 {
     struct i2c_client *client = to_i2c_client(dev);
@@ -229,42 +322,46 @@ static struct as5710_54x_psu_data *as5710_54x_psu_update_device(struct device *d
         || !data->valid) {
         int status = -1;
 
+        data->valid = 0;
         dev_dbg(&client->dev, "Starting as5710_54x update\n");
-
-        /* Read model name */
-        if (client->addr == 0x38 || client->addr == 0x3b) {
-            /* AC power */
-            status = as5710_54x_psu_read_block(client, 0x26, data->model_name, 
-                                               ARRAY_SIZE(data->model_name)-1);
-        }
-        else {
-            /* DC power */
-            status = as5710_54x_psu_read_block(client, 0x50, data->model_name, 
-                                               ARRAY_SIZE(data->model_name)-1);            
-        }
-        
-        if (status < 0) {
-            data->model_name[0] = '\0';
-            dev_dbg(&client->dev, "unable to read model name from (0x%x)\n", client->addr);
-        }
-        else {
-            data->model_name[ARRAY_SIZE(data->model_name)-1] = '\0';
-        }
 
         /* Read psu status */
         status = accton_i2c_cpld_read(0x60, 0x2);
         
         if (status < 0) {
             dev_dbg(&client->dev, "cpld reg 0x60 err %d\n", status);
+			goto exit;
         }
         else {
             data->status = status;
+        }
+
+        if (IS_PRESENT(data->index, status)) {
+            if (as5710_54x_psu_model_name_get(dev) < 0) {
+				data->model_name[0] = '\0';
+            }
+
+            if (strncmp(data->model_name, 
+                        models[PSU_TYPE_DC_12V_NON].model_name,
+                        models[PSU_TYPE_DC_12V_NON].length) == 0) {
+                /* Read dc12v fan direction */
+                status = as5710_54x_psu_read_block(client, DC12V_FAN_DIR_OFFSET, 
+                                                   data->fan_dir, DC12V_FAN_DIR_LEN);
+
+                if (status < 0) {
+                    data->fan_dir[0] = '\0';
+                    dev_dbg(&client->dev, "unable to read fan direction from (0x%x) offset(0x%x)\n", 
+                                          client->addr, DC12V_FAN_DIR_OFFSET);
+                    goto exit;
+                }
+            }
         }
         
         data->last_updated = jiffies;
         data->valid = 1;
     }
 
+exit:
     mutex_unlock(&data->update_lock);
 
     return data;
